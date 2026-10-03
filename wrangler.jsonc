@@ -1,0 +1,96 @@
+// Konfigurasi Worker Lexa.
+//
+// PERHATIAN sebelum mengaktifkan deploy otomatis dari Git ke produksi:
+// berkas ini disusun TANPA akses ke pengaturan live Worker `lexa`. Semua yang
+// BELUM terverifikasi ditandai "TODO(verifikasi)". Cocokkan dengan dashboard
+// (Workers & Pages > lexa > Settings) atau ambil konfigurasi aslinya dengan:
+//
+//   npx wrangler init --from-dash lexa
+//
+// Panduan lengkap: docs/hubungkan-github-cloudflare.md
+//
+// Sengaja gagal-aman: nama indeks Vectorize di bawah masih placeholder, jadi
+// `wrangler deploy` akan ditolak sampai berkas ini Anda lengkapi. Itu lebih baik
+// daripada deploy yang diam-diam mencopot binding dari Worker produksi.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lexa",
+  "main": "src/worker/index.ts",
+
+  // TODO(verifikasi): samakan dengan dashboard (Settings > Runtime). Tanggal ini
+  // diperkirakan dari tanggal pembuatan Worker (5 Agu 2026).
+  "compatibility_date": "2026-08-05",
+
+  // Worker produksi mengunggah sourcemap (itulah sebabnya kode ini bisa dipulihkan).
+  "upload_source_maps": true,
+
+  // Pertahankan variabel (vars) yang diset lewat dashboard: EMBEDDING_MODEL,
+  // SUMMARY_MODEL, BPK_BASE, PASAL_API_BASE, SEARCH_CACHE_TTL. Tanpa ini, deploy
+  // pertama dari Git akan MENGHAPUS variabel yang tidak ada di berkas ini.
+  // TODO(verifikasi): setelah nilai-nilainya dipindahkan ke "vars" di bawah dan
+  // dicocokkan, nilai ini boleh dihapus agar repo menjadi sumber kebenaran.
+  "keep_vars": true,
+
+  // --- Resource yang sudah ada di akun Cloudflare (terverifikasi) ---
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lexa-db",
+      "database_id": "5bafb2d1-b42c-4e5a-9bf3-735e2eb2c6b8",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    { "binding": "CACHE", "id": "4bba573824b4423d9a31a7b73e855eb1" }
+  ],
+  "r2_buckets": [
+    { "binding": "DOCS", "bucket_name": "lexa-pdfs" }
+  ],
+  "ai": { "binding": "AI" },
+
+  // Cron harian: log sinkronisasi menunjukkan eksekusi sekitar 19:00 UTC
+  // (02:00 WIB) setiap hari.
+  // TODO(verifikasi): pastikan tidak ada jadwal cron lain di dashboard.
+  "triggers": { "crons": ["0 19 * * *"] },
+
+  // --- Belum terverifikasi: wajib dilengkapi sebelum deploy ---
+
+  // TODO(verifikasi): nama indeks Vectorize (dashboard: Storage & Databases >
+  // Vectorize, atau `npx wrangler vectorize list`). Model embedding bge-m3 =>
+  // 1024 dimensi, metrik cosine; metadata index: jenis, status.
+  "vectorize": [
+    { "binding": "VECTORIZE", "index_name": "TODO-isi-nama-indeks-vectorize" }
+  ],
+
+  // TODO(verifikasi): nama queue diduga "lexa-ingest" (dari nama DLQ pada komentar
+  // di src/worker/index.ts: "lexa-ingest-dlq"). Nilai konsumer di bawah juga
+  // diduga dari komentar kode; samakan max_batch_size, max_batch_timeout,
+  // max_retries, dan retry_delay dengan dashboard (Queues > lexa-ingest).
+  "queues": {
+    "producers": [{ "binding": "INGEST_QUEUE", "queue": "lexa-ingest" }],
+    "consumers": [
+      {
+        "queue": "lexa-ingest",
+        "max_concurrency": 1,
+        "dead_letter_queue": "lexa-ingest-dlq"
+      }
+    ]
+  }
+
+  // TODO(verifikasi): ASET STATIS (SPA). Komentar di src/worker/index.ts
+  // menyebut bahwa selain /api/* permintaan "jatuh ke static assets SPA", tetapi
+  // kode frontend TIDAK ikut dalam bundel yang dipulihkan, jadi sumbernya tidak
+  // ada di repo ini. Jika Worker live memakai aset statis, deploy dari Git TANPA
+  // blok "assets" akan menghapus aset itu dari versi baru (pulihkan lewat
+  // Dashboard > Deployments > Rollback). Aktifkan blok di bawah setelah folder
+  // build frontend tersedia di repo, dan sesuaikan nilainya dengan dashboard:
+  //
+  // , "assets": {
+  //   "directory": "./dist/client",
+  //   "not_found_handling": "single-page-application",
+  //   "run_worker_first": ["/api/*", "/robots.txt", "/sitemap.xml"]
+  // }
+
+  // Tidak diatur karena nilai live tidak diketahui: observability, placement,
+  // limits (cpu_ms), compatibility_flags, route/custom domain. Periksa di dashboard.
+}
