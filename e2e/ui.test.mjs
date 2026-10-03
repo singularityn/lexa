@@ -204,6 +204,63 @@ describe("pencarian", () => {
   });
 });
 
+describe("telusur dengan banyak data", () => {
+  const impor = (dokumen) =>
+    fetch(`${BASE}/api/impor/manifest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": "token-admin-uji" },
+      body: JSON.stringify({ versi: 1, dokumen }),
+    });
+
+  it("paginasi memakai tautan nyata, menandai halaman aktif, dan bisa dibuka langsung", async () => {
+    await reset();
+    const dokumen = Array.from({ length: 30 }, (_, i) => ({
+      bpk_id: String(9000 + i),
+      meta: { Judul: `Peraturan Contoh ${i + 1}`, "Bentuk Singkat": "PERMEN", Nomor: String(i + 1), Tahun: "2024", Status: "Berlaku" },
+      relasi: [],
+    }));
+    expect((await impor(dokumen)).status).toBe(200);
+
+    await page.goto(BASE + "/telusuri", { waitUntil: "networkidle" });
+    await page.waitForSelector("nav.paginasi");
+    expect(await page.textContent(".ringkas-hasil")).toBe("41 peraturan");
+    expect(await page.locator(".daftar-hasil .hasil").count()).toBe(20);
+    expect(await page.textContent("nav.paginasi a[aria-current=page]")).toBe("1");
+
+    await page.click("nav.paginasi a[rel=next]");
+    await page.waitForURL(/page=2/);
+    await page.waitForFunction(() => document.querySelector("nav.paginasi a[aria-current=page]")?.textContent === "2");
+    expect(await page.locator(".daftar-hasil .hasil").count()).toBe(20);
+
+    // Halaman terakhir dibuka langsung lewat URL; tombol "Berikutnya" nonaktif.
+    await page.goto(BASE + "/telusuri?page=3", { waitUntil: "networkidle" });
+    await page.waitForSelector("nav.paginasi");
+    expect(await page.locator(".daftar-hasil .hasil").count()).toBe(1);
+    expect(await page.locator("nav.paginasi a[rel=next]").count()).toBe(0);
+
+    // Mengubah filter kembali ke halaman pertama.
+    await page.check("input[name=jenis][value=PERMEN]");
+    await page.waitForFunction(() => document.querySelector(".ringkas-hasil")?.textContent === "30 peraturan");
+    expect(page.url()).not.toContain("page=");
+    expect(await page.locator(".daftar-hasil .hasil").count()).toBe(20);
+    await reset();
+  });
+
+  it("di ponsel panel filter tertutup sampai tombol Filter ditekan", async () => {
+    const hp = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await hp.newPage();
+    await p.goto(BASE + "/telusuri", { waitUntil: "networkidle" });
+    expect(await p.locator(".filter-isi").isVisible()).toBe(false);
+    await p.click(".filter-toggle");
+    expect(await p.locator(".filter-isi").isVisible()).toBe(true);
+    expect(await p.getAttribute(".filter-toggle", "aria-expanded")).toBe("true");
+    await p.check("input[name=status][value=dicabut]");
+    await p.waitForFunction(() => location.search.includes("status=dicabut"));
+    expect(await p.textContent(".filter-toggle .lencana-jumlah")).toBe("1");
+    await hp.close();
+  });
+});
+
 describe("halaman peraturan", () => {
   it("menampilkan metadata, pasal berayat, dan tanda 'dicabut' beserta peraturan penggantinya", async () => {
     await page.goto(BASE + urlUU("/akn/id/act/uu/2020/11"), { waitUntil: "networkidle" });
