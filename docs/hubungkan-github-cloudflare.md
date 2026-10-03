@@ -1,140 +1,134 @@
 # Menghubungkan repo GitHub ke Worker `lexa`
 
-Panduan ini menghubungkan `singularityn/lexa` ke Worker `lexa` yang **sudah berjalan** di akun Cloudflare
-lewat **Workers Builds** (integrasi Git bawaan Cloudflare: build dan deploy otomatis saat push, URL pratinjau
-per branch/PR, dan check run di GitHub). Bagian dashboard hanya bisa dilakukan oleh pemilik akun.
+Panduan ini menyelesaikan koneksi `singularityn/lexa` ke Worker `lexa` yang **sudah berjalan** di akun
+Cloudflare lewat **Workers Builds** (integrasi Git bawaan Cloudflare: build dan deploy otomatis saat push,
+URL pratinjau per branch/PR, dan check run di GitHub). Langkah di dashboard hanya bisa dilakukan pemilik akun.
 
-## Mengapa tidak langsung "Connect"
+## Keadaan repo saat ini
 
-Worker produksi dibuat dari kode yang tidak ada di Git. Repo ini adalah **rekonstruksinya**: kode aplikasi
-identik byte-per-byte dengan produksi (terverifikasi lewat sourcemap), tetapi konfigurasinya
-(`wrangler.jsonc`) disusun tanpa akses ke pengaturan live. Deploy pertama dari Git akan **menimpa
-pengaturan Worker** dengan isi berkas itu. Jika ada yang tidak cocok, akibatnya bisa berupa binding yang
-tercopot, variabel yang terhapus, cron yang hilang, atau aset statis yang lenyap. Karena itu urutannya:
-**rekonsiliasi dulu, hubungkan dengan deploy dinonaktifkan, uji, baru aktifkan deploy.**
+- Kode Worker identik byte-per-byte dengan produksi v0.1 (terverifikasi lewat sourcemap), ditambah perbaikan
+  bug yang ditemukan lewat tes (lihat README, "Riwayat perubahan penting").
+- `wrangler.jsonc` sudah lengkap: Vectorize `lexa-index`, antrean `lexa-ingest`, D1/KV/R2/AI, cron harian,
+  dan aset statis dari `./public`. Tidak ada lagi placeholder yang membuat deploy ditolak.
+- Antarmuka (SPA) ada di `public/`. Frontend v0.1 tidak bisa dipulihkan (tidak ikut dalam bundel Worker),
+  jadi repo ini membawa antarmuka baru.
+- `npm run check` (typecheck + tes) lolos, `npm run build` (`wrangler deploy --dry-run`) menampilkan 6
+  binding dan 36 aset, dan CI GitHub hijau (termasuk tes e2e di Chromium).
 
-Pengaman bawaan: nama indeks Vectorize di `wrangler.jsonc` masih placeholder, jadi `wrangler deploy`
-(tanpa `--dry-run`) akan ditolak sampai Anda melengkapinya.
+## Yang berubah pada deploy pertama dari Git
 
-## Tahap 0: Rekonsiliasi konfigurasi (±15 menit)
+Deploy dari Git **menimpa pengaturan Worker dengan isi `wrangler.jsonc`**. Rinciannya:
 
-Cocokkan `wrangler.jsonc` dengan pengaturan live. Cara tercepat, dari mesin Anda:
+| Hal | Efek pada deploy pertama |
+|---|---|
+| Kode Worker | diganti dengan kode repo (sama dengan produksi + perbaikan bug) |
+| Antarmuka di URL dasar | **diganti** dengan `public/`. Bila sebelumnya ada UI lama, ia tidak ikut dipertahankan (lihat Rollback) |
+| Binding `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE` | ditetapkan sesuai berkas. **Binding lain yang hanya ada di dashboard akan terlepas** (kode tidak memakai yang lain) |
+| Variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `PASAL_API_BASE`, `SEARCH_CACHE_TTL`) | dipertahankan (`keep_vars: true`) |
+| Secret (`ADMIN_TOKEN`, `PASAL_API_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) | tidak tersentuh |
+| Cron | ditetapkan `0 19 * * *` (sesuai jam eksekusi di log sinkronisasi) |
+| Konsumer antrean (batch, retry, jeda, konkurensi, DLQ) | **tidak tersentuh**: sengaja tidak dideklarasikan |
+| Compatibility date | `2026-08-05` (diperkirakan dari tanggal pembuatan Worker) |
+| Observability, placement, limits, rute/domain khusus | tidak dicantumkan; periksa di dashboard setelah deploy |
 
-```bash
-mkdir /tmp/lexa-dash && cd /tmp/lexa-dash
-npx wrangler login
-npx wrangler init --from-dash lexa     # mengunduh kode dan konfigurasi Worker dari dashboard
-```
+Bila ada pengaturan di dashboard yang tidak ada dalam daftar di atas (mis. binding tambahan atau domain
+khusus), catat dulu: itu yang perlu dicocokkan sebelum deploy produksi.
 
-Bandingkan berkas konfigurasi hasilnya dengan `wrangler.jsonc`. Bila perintah itu tidak tersedia di versi
-Anda, ambil nilainya dari dashboard (Workers & Pages > `lexa` > Settings):
+## Langkah
 
-| Item | Lihat di | Isi di `wrangler.jsonc` |
-|---|---|---|
-| Nama indeks Vectorize | Settings > Bindings (`VECTORIZE`), atau `npx wrangler vectorize list` | `vectorize[0].index_name` (**wajib**; ini pengaman) |
-| Nama queue dan pengaturan konsumer | Settings > Bindings (`INGEST_QUEUE`); Queues > queue > Settings | `queues.producers[0].queue`, `queues.consumers[0]` (batch, timeout, retries, concurrency, DLQ) |
-| Jadwal cron | Settings > Trigger events | `triggers.crons` (kini `0 19 * * *`, diduga dari log) |
-| Variabel teks | Settings > Variables and secrets | tambahkan ke `vars`: `EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `PASAL_API_BASE`, `SEARCH_CACHE_TTL`; setelah itu hapus `keep_vars` |
-| Secret (hanya nama) | Settings > Variables and secrets | tidak masuk Git; **tidak terhapus oleh deploy**: `ADMIN_TOKEN`, `PASAL_API_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
-| Compatibility date dan flags | Settings > Runtime | `compatibility_date` (kini `2026-08-05`, diperkirakan), `compatibility_flags` bila ada |
-| **Aset statis (SPA)** | buka `https://<URL-worker>/` | lihat peringatan di bawah |
-| Observability, placement, limits (CPU), custom domain/route | Settings | tambahkan bila diaktifkan |
+### 1. Branch
 
-### Peringatan: aset statis (SPA)
+Repo awalnya kosong, sehingga branch yang pertama kali di-push (`claude/zealous-brown-63ek65`) menjadi
+branch default di GitHub. `main` sudah dibuat dari commit yang sama dan terus diperbarui.
 
-Komentar di `src/worker/index.ts` menyebut bahwa selain `/api/*`, permintaan "jatuh ke static assets SPA".
-Kode frontend **tidak ada di repo ini**. Cara cek: buka alamat dasar Worker Anda (`https://<nama>.<subdomain>.workers.dev/`).
+1. GitHub > **Settings > Branches > Default branch**: ubah ke `main`.
+2. Cloudflare > Workers & Pages > `lexa` > **Settings > Builds > Branch control**: **Production branch** = `main`.
+3. Setelah keduanya beres, hapus branch lama: `git push origin --delete claude/zealous-brown-63ek65`
+   (GitHub menolak menghapus branch default, jadi lakukan setelah langkah 1).
 
-- Muncul halaman aplikasi: Worker memakai aset statis. Deploy dari Git **tanpa** blok `assets` akan
-  menghapusnya dari versi baru. Jangan aktifkan deploy sebelum frontend masuk repo dan blok `assets` di
-  `wrangler.jsonc` (sudah disiapkan sebagai komentar) diaktifkan dengan folder build yang benar.
-  Kalau terlanjur terhapus: Deployments > pilih versi sebelumnya > Rollback.
-- Muncul "404 Not Found" biasa: tidak ada aset statis, dan blok `assets` tidak perlu diaktifkan.
+### 2. Pengaturan build
 
-Setelah semuanya cocok: `grep -n "TODO" wrangler.jsonc` sebaiknya tidak menghasilkan apa pun, lalu commit.
+Cloudflare > `lexa` > **Settings > Builds**:
 
-## Tahap 1: Siapkan branch produksi
+| Kolom | Nilai |
+|---|---|
+| Root directory | `/` |
+| Build command | `npm run check` (typecheck + tes; dependensi dipasang otomatis dari `package-lock.json`; Node mengikuti `.nvmrc` = 22) |
+| Deploy command | `npx wrangler deploy` |
+| Non-production branch deploy command | `npx wrangler versions upload` (bawaan) |
+| Build non-production branches | aktif |
 
-Repo ini awalnya kosong, sehingga branch yang pertama kali di-push (`claude/zealous-brown-63ek65`)
-otomatis menjadi branch default di GitHub. Disarankan membuat `main` dari commit terbaru lalu menjadikannya
-default (GitHub > Settings > Branches > Default branch), dan memakai `main` sebagai branch produksi.
+Nama Worker di dashboard (`lexa`) harus sama persis dengan `name` di `wrangler.jsonc`; kalau tidak, build gagal.
+`npm run check` sengaja tidak menjalankan tes e2e (butuh peramban); itu dikerjakan CI GitHub.
 
-## Tahap 2: Hubungkan repo (deploy masih dinonaktifkan)
+> Ingin lebih hati-hati? Pakai `npx wrangler deploy --dry-run` sebagai Deploy command untuk satu putaran:
+> build memverifikasi konfigurasi dan bundel tanpa mengubah Worker produksi. Lalu ganti ke `npx wrangler deploy`.
 
-1. Cloudflare dashboard > **Workers & Pages** > `lexa` > **Settings** > **Builds** > **Connect**.
-2. Pilih **GitHub**. Pasang/otorisasi aplikasi **Cloudflare Workers & Pages** untuk akun `singularityn`,
-   pilih repository `lexa` (cukup "Only select repositories").
-3. Isi pengaturan build:
+### 3. Lihat dulu di URL pratinjau (tanpa memengaruhi produksi)
 
-   | Kolom | Nilai |
-   |---|---|
-   | Production branch | `main` |
-   | Root directory | `/` |
-   | Build command | `npm run check` (typecheck + tes; dependensi dipasang otomatis dari `package-lock.json`) |
-   | **Deploy command (sementara)** | `npx wrangler deploy --dry-run` |
-   | Build non-production branches | aktif |
+Push ke branch selain `main` (atau buka pull request): Workers Builds mengunggah versi baru tanpa
+mengaktifkannya dan memasang URL pratinjau serta check run **Workers Builds: lexa** di GitHub.
 
-   Memakai `--dry-run` membuat setiap build memverifikasi konfigurasi dan bundel tanpa mengubah Worker produksi.
-4. Nama Worker di dashboard (`lexa`) harus sama persis dengan `name` di `wrangler.jsonc`; kalau tidak, build gagal.
+- Buka URL pratinjau: beranda, `/cari?q=pesangon`, `/telusuri`, satu halaman peraturan, `/tanya`.
+- API: `/api/stats`, `/api/search?q=pesangon`, `/api/laws?per_page=5`, `/robots.txt`, `/sitemap.xml`.
 
-## Tahap 3: Uji tanpa risiko
+> Pratinjau memakai **resource produksi yang sama** (D1, KV, R2, Queue) kecuali Anda mengatur isolasi di
+> pengaturan Previews. Cron dan konsumer antrean tidak berjalan di pratinjau. Hindari memicu endpoint penulisan
+> (`/api/admin/*`, `/api/impor/*`) dari pratinjau. Pencarian dan koleksi tamu bersifat baca/lokal sehingga aman.
 
-1. Push satu commit kecil ke branch uji dan buka pull request. Anda akan melihat check run **Workers
-   Builds: lexa** di GitHub dan komentar berisi URL pratinjau.
-2. Pada log build, pastikan `npm run check` lolos dan daftar binding hasil `--dry-run` sama dengan yang ada
-   di dashboard (D1, KV, R2, AI, Vectorize, Queue).
-3. Di URL pratinjau, coba `/api/stats`, `/api/search?q=pesangon`, `/api/laws?per_page=5`, dan `/robots.txt`.
+### 4. Deploy produksi
 
-> Pratinjau memakai **resource produksi yang sama** (D1, KV, R2, Queue) kecuali Anda mengatur isolasi
-> resource di pengaturan Previews. Cron dan konsumer antrean tidak berjalan di pratinjau. Hindari memicu
-> endpoint penulisan (`/api/admin/*`, `/api/impor/*`) dari pratinjau.
-
-## Tahap 4: Aktifkan deploy
-
-Setelah Tahap 0 selesai dan pratinjau sehat:
-
-1. Ubah **Deploy command** menjadi `npx wrangler deploy`.
-2. Push ke `main` atau tekan **Retry build** pada build terakhir.
-3. Verifikasi (daftar periksa di bawah). Siapkan rollback sebelum mulai.
+Push ke `main` (atau **Retry build** pada build terakhir) setelah Deploy command diset ke `npx wrangler deploy`.
+Siapkan Rollback (di bawah) sebelum mulai.
 
 ### Daftar periksa pasca-deploy pertama
 
 | Periksa | Di mana | Harapan |
 |---|---|---|
 | Versi aktif | Deployments | versi baru bersumber GitHub, aktif |
+| Antarmuka | buka URL dasar | beranda Lexa tampil dengan statistik; `/tentang` dibuka langsung tanpa 404 |
 | Binding | Settings > Bindings | `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE` utuh |
 | Variabel | Settings > Variables and secrets | kelima variabel teks dan keempat secret masih ada |
-| Cron | Settings > Trigger events | `0 19 * * *` (atau jadwal live Anda) |
-| Konsumer antrean | Queues > queue ingest | terhubung ke `lexa`, DLQ sesuai |
-| Aset statis (bila ada) | buka `/` | aplikasi tampil |
+| Cron | Settings > Trigger events | `0 19 * * *` |
+| Konsumer antrean | Queues > lexa-ingest | masih terhubung ke `lexa`, DLQ dan retry seperti sebelumnya |
 | API | `/api/stats`, `/api/search?q=pesangon`, `/robots.txt`, `/sitemap.xml` | 200 dengan data |
+| Pencarian kata bertanda hubung | `/cari?q=perundang-undangan&mode=keyword` | ada hasil (bug lama: nihil) |
 | Token admin | `GET /api/admin/cek-token` dengan header `x-admin-token` | `secret_terpasang: true`, `cocok: true` |
+| Login Google (bila diaktifkan) | `/akun` > Masuk dengan Google | kembali ke Lexa dalam keadaan masuk |
 | Cron berjalan | D1: `SELECT * FROM sync_log ORDER BY id DESC LIMIT 5;` | entri `jadwal_sinkronisasi` baru sekitar 19:00 UTC |
+
+Setelah beberapa hari, lihat `sync_log` dan `/status`: jenis PERMEN, POJK, dan PBI seharusnya mulai bergerak
+(perbaikan pembuangan pesan saat kena batas laju pasal.id).
 
 ### Rollback
 
 Dashboard > `lexa` > **Deployments** > pilih versi sebelumnya > **Rollback** (atau `npx wrangler rollback`).
-Rollback mengembalikan kode dan konfigurasi Worker, **bukan** data D1 maupun migrasi yang sudah diterapkan.
+Rollback mengembalikan kode, konfigurasi, **dan aset statis** versi itu, jadi UI lama (bila ada) kembali.
+Rollback **tidak** mengembalikan data D1 maupun migrasi yang sudah diterapkan.
 
 ## Migrasi D1 dan pipeline
 
 Jangan menjalankan migrasi dari build. Terapkan secara sengaja sebelum men-deploy kode yang membutuhkannya:
 `npm run d1:migrate:remote`. Rancang migrasi agar kompatibel mundur (tambah dulu, hapus kemudian), supaya
-rollback kode tetap aman. Sebelum migrasi besar, catat bookmark D1 Time Travel.
+rollback kode tetap aman. Sebelum migrasi besar, catat bookmark D1 Time Travel. Perbaikan di v0.2 **tidak**
+memerlukan migrasi baru.
 
 ## Rahasia
 
 Rahasia tidak pernah masuk Git. Karena deploy dilakukan oleh Workers Builds di sisi Cloudflare, GitHub
-Actions **tidak** membutuhkan token Cloudflare; CI di repo ini (`.github/workflows/ci.yml`) hanya
-menjalankan typecheck, tes, bundling, dan migrasi pada D1 kosong.
+Actions **tidak** membutuhkan token Cloudflare; CI di repo ini (`.github/workflows/ci.yml`) hanya menjalankan
+typecheck, tes, bundling, migrasi pada D1 kosong, dan tes e2e.
 
 ## Jebakan yang perlu diingat
 
 - Nama Worker di dashboard harus sama dengan `name` di `wrangler.jsonc`.
 - Variabel yang hanya ada di dashboard dihapus oleh deploy kecuali tercantum di `vars` atau `keep_vars` aktif.
-- Deploy tanpa blok `assets` menghapus aset statis dari versi baru.
-- `wrangler.jsonc` adalah sumber kebenaran: setelan yang diubah manual di dashboard akan tertimpa deploy
-  berikutnya. Ubah lewat Git.
+- `wrangler.jsonc` adalah sumber kebenaran untuk yang dicantumkannya: setelan yang diubah manual di dashboard
+  akan tertimpa deploy berikutnya. Ubah lewat Git. (Pengecualian: konsumer antrean, observability, dan
+  setelan lain yang sengaja tidak dicantumkan.)
+- Mendeklarasikan `queues.consumers` di `wrangler.jsonc` menimpa pengaturan konsumer di dashboard dengan nilai
+  bawaan (batch 10, retry 3). Pipeline ingest bergantung pada retry yang lebih longgar, jadi cocokkan dulu
+  bila ingin memindahkannya ke Git.
 - Memutus koneksi: Settings > Builds > Disconnect. Worker tetap berjalan dengan versi terakhir.
 
 ## Alternatif: deploy lewat GitHub Actions

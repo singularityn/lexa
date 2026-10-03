@@ -458,17 +458,21 @@ Skala usaha: **S** ≤ 1 minggu, **M** 1–3 minggu, **L** > 3 minggu. Nilai: T 
 5. **Penanggung jawab** komunikasi dengan BPK dan entitas yang mengelola Lexa (syarat penggunaan, privasi, takedown).
 6. **Domain** produksi.
 
-**Status pengerjaan (diperbarui setelah kode dipulihkan):**
+**Status pengerjaan (Okt 2026, v0.2):**
 
-- Selesai: kode v0.1 dipulihkan ke repo dan terbukti identik dengan produksi; scaffolding (npm, TypeScript strict, tipe `Env` dan tipe bersama); `wrangler.jsonc` selaras dengan resource yang ada (bagian yang belum terverifikasi ditandai `TODO(verifikasi)` dan dibuat gagal-aman); 5 migrasi D1 direkonstruksi dan skemanya terbukti sama dengan produksi; 79 tes karakterisasi (+2 bug terdokumentasi); CI GitHub Actions; panduan koneksi di `docs/hubungkan-github-cloudflare.md`.
-- Menunggu Anda (hanya bisa dilakukan di dashboard Cloudflare/GitHub): menghubungkan repo lewat Workers Builds dengan urutan aman pada panduan itu, serta mengisi nilai yang tidak bisa saya baca (nama indeks Vectorize, nama queue dan pengaturan konsumernya, variabel, cron, ada tidaknya aset statis).
+- Selesai dan terverifikasi di sandbox: kode v0.1 dipulihkan dan terbukti identik dengan produksi; migrasi D1 direkonstruksi dan skemanya sama dengan produksi; ratusan tes (unit, integrasi di atas SQLite sungguhan, dan fungsi murni antarmuka) ditambah tes e2e di Chromium (termasuk axe-core terang/gelap); CI GitHub Actions; `wrangler deploy --dry-run` lolos dengan 6 binding dan 36 aset.
+- Antarmuka (SPA) ditulis ulang di `public/` karena frontend v0.1 tidak ikut dalam bundel Worker dan tidak bisa dipulihkan. Memakai API yang sudah ada dan URL sitemap yang sudah ada (`/peraturan?uri=`).
+- Bug v0.1 yang ditemukan lewat tes dan sudah diperbaiki (masing-masing dengan tes): pencarian kata kunci nihil untuk kata bertanda hubung; sinkronisasi Cron membuang pesan saat kena 429 (kandidat utama penyebab "sering terhenti"); open redirect setelah login Google; tiga kueri yang melampaui batas 100 parameter D1 (graf relasi, manifest impor, filter jenis); pasal fiktif dari potongan vektor dan vektor yatim; saran ketik yang cocok dengan semua judul untuk masukan `%%`.
+- Menunggu Anda (hanya bisa dilakukan di dashboard): menjadikan `main` branch default di GitHub dan branch produksi di Cloudflare, mengubah perintah deploy menjadi `npx wrangler deploy`, lalu memeriksa daftar pasca-deploy di `docs/hubungkan-github-cloudflare.md`.
 
 **Berikutnya (perlu persetujuan karena mengubah perilaku atau setelan produksi):**
 
-- Memperbaiki bug FTS kata bertanda hubung (kutip token), menambah awalan "be-" pada stemmer, dan mengenali sitasi nama panjang; semuanya sudah punya tes yang akan berubah dari `fails`/`todo` menjadi lulus.
-- Mengaktifkan read replication D1 dan memakai Sessions API (setelan produksi; perlu persetujuan).
-- Menjalankan uji akses BPK (Fase 0): bisa lewat Worker uji, atau, bila Anda mengizinkan host `peraturan.bpk.go.id` di pengaturan jaringan environment sesi ini (Network access → Custom → Allowed domains; panduan: https://code.claude.com/docs/en/cloud-environments#network-access), saya bisa memeriksa `robots.txt`, struktur halaman, dan perilaku anti-bot dari sandbox. Perlu dicatat, hasil dari sandbox tidak sama dengan perilaku terhadap egress Cloudflare Workers.
-- Mendapatkan kembali frontend (SPA) dan skrip panen BPK: keduanya tidak ada di Worker, jadi harus berasal dari Anda atau dari aset yang disajikan Worker.
+- Menambah awalan "be-" pada stemmer dan mengenali sitasi nama panjang (`it.todo` di `test/query.test.ts`).
+- Ambang relevansi Tanya Lexa saat ini berbasis peringkat RRF (0,012), bukan kemiripan mutlak: untuk kueri apa pun, enam hasil vektor teratas selalu lolos. Perlindungan utamanya prompt yang tegas; ambang yang sesungguhnya memerlukan skor kosinus dari Vectorize.
+- Vektor lama tidak dihapus dari Vectorize saat peraturan diingest ulang (kini disaring saat pencarian, tetapi menumpuk).
+- Mengaktifkan read replication D1 dan memakai Sessions API (setelan produksi).
+- Halaman peraturan dirender di klien; untuk SEO yang baik, sisipkan judul dan deskripsi dari Worker (rute `/peraturan` perlu masuk `run_worker_first`).
+- Menjalankan uji akses BPK (Fase 0), dan memulihkan skrip panen BPK yang tidak ada di Worker (`scripts/bpk-console-harvest.js` disebut di komentar kode).
 
 ---
 
