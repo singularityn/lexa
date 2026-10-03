@@ -243,7 +243,9 @@ api.get("/suggest", async (c) => {
   // Wildcard LIKE dibuang lebih dulu, lalu panjangnya diperiksa: "%%" tidak boleh
   // lolos sebagai kueri dua karakter yang kemudian berubah menjadi pola "%" (cocok semua).
   const q = (c.req.query("q") ?? "").trim().replace(/[%_]/g, "");
-  if (q.length < 2) return c.json({ suggestions: [] });
+  // D1 menolak pola LIKE lebih dari 50 byte; pola di bawah adalah "%q%", jadi kueri yang
+  // lebih panjang dari ini bukan lagi pencarian awalan judul melainkan kalimat.
+  if (q.length < 2 || new TextEncoder().encode(q).length > 44) return c.json({ suggestions: [] });
 
   const pola = `${q}%`;
   const [laws, populer] = await Promise.all([

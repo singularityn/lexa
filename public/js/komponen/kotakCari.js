@@ -102,7 +102,8 @@ export function kotakCari(opsi) {
 
   const ambilSaran = tunda(async () => {
     const q = input.value.trim();
-    if (q.length < 2) {
+    // Saran hanya untuk awalan judul; kalimat panjang tidak ada gunanya diminta (dan ditolak server).
+    if (q.length < 2 || q.length > 40) {
       saran = [];
       gambar();
       return;

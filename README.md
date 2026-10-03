@@ -164,7 +164,9 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 - Open redirect setelah login Google (`kembali=//host`).
 - Tiga kueri melampaui batas 100 parameter D1 pada data besar: graf relasi, manifest impor, filter jenis.
 - Potongan pasal panjang (`~n`) dan vektor yatim muncul sebagai pasal fiktif di hasil pencarian.
-- `/api/suggest?q=%%` cocok dengan semua judul.
+- `/api/suggest?q=%%` cocok dengan semua judul, dan kueri panjang ditolak D1 (pola LIKE maksimal 50 byte).
+- Filter bidang memakai `LIKE` dengan pola yang melampaui 50 byte untuk nama bidang BPK yang panjang (mis.
+  "PEMBENTUKAN, PERUBAHAN, DAN PEMBUBARAN KOMISI / KOMITE / …"); kini memakai `INSTR`.
 
 ## Isu yang diketahui
 
@@ -175,6 +177,11 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
   kosinus dari Vectorize.
 - Vektor lama tidak dihapus dari Vectorize saat peraturan diingest ulang (disaring saat pencarian, tetapi
   menumpuk).
+- Peraturan hasil ekstraksi PDF versi lama dapat memuat bagian Penjelasan yang bercampur dengan pasal (baris
+  berulang dengan id berakhiran `~n`; di produksi, UU 13/2003 punya 72 baris seperti itu dan UU 11/2020 744).
+  Parser saat ini berhenti di judul "PENJELASAN"; dokumen lama perlu diekstrak ulang untuk membersihkannya.
+  Antarmuka hanya merapikan tampilan penanda halaman PDF ("### Page 97 PRESIDEN REPUBLIK INDONESIA- 18 -");
+  data di database tidak diubah.
 - D1 dan R2 berada di Amerika Timur dengan read replication nonaktif, sehingga latensi dari Indonesia tinggi.
 - Pembatas laju `/api/tanya` berbasis KV (tidak atomik); sitemap dibatasi 5.000 URL dan memakai URL
   berparameter.

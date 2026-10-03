@@ -60,6 +60,15 @@ export class PernyataanPalsu {
     // D1 menolak kueri dengan lebih dari 100 parameter terikat (SQLite biasa mengizinkan puluhan ribu).
     // Tanpa pagar ini, daftar IN yang panjang lolos di tes dan baru gagal di produksi.
     if (nilai.length > 100) throw new Error(`D1_ERROR: too many SQL variables (${nilai.length} > 100)`);
+    // D1 juga menolak pola LIKE/GLOB lebih dari 50 byte. Parameter yang menjadi pola dicari lewat
+    // posisi tanda tanya pada "LIKE ?" / "GLOB ?".
+    for (const m of this.sql.matchAll(/\b(?:LIKE|GLOB)\s+\?/gi)) {
+      const posisi = (this.sql.slice(0, (m.index ?? 0) + m[0].length).match(/\?/g) ?? []).length - 1;
+      const pola = nilai[posisi];
+      if (typeof pola === "string" && new TextEncoder().encode(pola).length > 50) {
+        throw new Error("D1_ERROR: LIKE or GLOB pattern too complex");
+      }
+    }
     return new PernyataanPalsu(this.db, this.sql, nilai.map(keNilaiD1));
   }
 

@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  angka, bacaFilter, bacaTeksModel, blokKeTeks, istilahDariKueri, jangkarDariId, kelompokkanPasal,
+  angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, istilahDariKueri, jangkarDariId, kelompokkanPasal,
   kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, queryString, sisiUnik, sitasi,
   sitasiPasal, tanggalIndonesia, tataLetakGraf, urlPeraturan,
 } from "../public/js/format.js";
@@ -170,5 +170,28 @@ describe("bacaTeksModel (jawaban model)", () => {
 
   it("blokKeTeks mengembalikan teks polos untuk disalin", () => {
     expect(blokKeTeks(bacaTeksModel("Halo **dunia**\n\n- a\n- b"))).toBe("Halo dunia\n\n- a\n- b");
+  });
+});
+
+describe("bersihkanArtefak (penanda halaman hasil konversi PDF)", () => {
+  it.each([
+    ["Cukup jelas    ### Page 97 PRESIDEN REPUBLIK INDONESIA- 18 -", "Cukup jelas"],
+    ["### Page 98 PRESIDEN REPUBLIK INDONESIA- 19 -Ayat (1) Cukup jelas Ayat (2) Yang dimaksud", "Ayat (1) Cukup jelas Ayat (2) Yang dimaksud"],
+    ["### Page 91 PRESIDEN REPUBLIK INDONESIA- 12 -Sertifikasi dapat dilakukan", "Sertifikasi dapat dilakukan"],
+    ["kalimat awal ### Page 5 MENTERI KEUANGAN REPUBLIK INDONESIA - 3 - lanjutan kalimat", "kalimat awal lanjutan kalimat"],
+    ["teks ### Page 12 lanjutan", "teks lanjutan"],
+  ])("%j -> %j", (masukan, harapan) => {
+    expect(bersihkanArtefak(masukan)).toBe(harapan);
+  });
+
+  it("teks biasa, kata 'Page' dalam kalimat, dan rujukan pasal tidak tersentuh", () => {
+    for (const t of ["Dalam hal terjadi pemutusan hubungan kerja.", "Lihat Page 3 dari lampiran.", "Pasal 5 ayat (2) ### bukan penanda"]) {
+      expect(bersihkanArtefak(t)).toBe(t);
+    }
+  });
+
+  it("null dan kosong menghasilkan string kosong", () => {
+    expect(bersihkanArtefak(null)).toBe("");
+    expect(bersihkanArtefak("")).toBe("");
   });
 });

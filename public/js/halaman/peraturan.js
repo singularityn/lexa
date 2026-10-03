@@ -2,7 +2,7 @@
 import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
-  angka, istilahDariKueri, jangkarDariId, kelompokkanPasal, labelJenis, labelRelasi, namaLengkap,
+  angka, bersihkanArtefak, istilahDariKueri, jangkarDariId, kelompokkanPasal, labelJenis, labelRelasi, namaLengkap,
   queryString, sitasi, sitasiPasal, tanggalIndonesia, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
 import { ikon } from "../komponen/ikon.js";
@@ -280,15 +280,15 @@ function panelIsi(d, q) {
       h("div", { class: "pasal-kepala" }, h("h3", null, `Pasal ${g.nomor}`), aksiPasal),
       g.judul ? h("p", { class: "pasal-judul" }, g.judul) : null,
       satuTeks
-        ? h("p", { class: "isi-pasal" }, g.butir[0].isi)
+        ? h("p", { class: "isi-pasal" }, bersihkanArtefak(g.butir[0].isi))
         : g.butir.map((b) =>
             b.ayat === null
-              ? h("p", { class: "isi-pasal" }, b.isi)
-              : h("div", { class: "ayat", id: jangkarDariId(b.id) }, h("span", { class: "no" }, `(${b.ayat})`), h("span", { class: "isi" }, b.isi)),
+              ? h("p", { class: "isi-pasal" }, bersihkanArtefak(b.isi))
+              : h("div", { class: "ayat", id: jangkarDariId(b.id) }, h("span", { class: "no" }, `(${b.ayat})`), h("span", { class: "isi" }, bersihkanArtefak(b.isi))),
           ),
     );
     daftar.appendChild(el);
-    indeks.push({ el, teks: `pasal ${g.nomor} ${g.judul ?? ""} ${g.butir.map((b) => b.isi).join(" ")}`.toLowerCase() });
+    indeks.push({ el, teks: `pasal ${g.nomor} ${g.judul ?? ""} ${g.butir.map((b) => bersihkanArtefak(b.isi)).join(" ")}`.toLowerCase() });
   }
 
   // --- Pencarian di dalam peraturan --------------------------------------

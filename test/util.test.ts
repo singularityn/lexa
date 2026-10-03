@@ -68,18 +68,17 @@ describe("bidang hukum", () => {
     expect(pecahBidang("  ")).toEqual([]);
   });
 
-  it("klausaBidang mencocokkan posisi: sendiri, awal, akhir, tengah", () => {
+  it("klausaBidang membungkus kolom dengan pemisah dan mencari ' - X - ' utuh", () => {
     const k = klausaBidang("bidang");
-    expect(k.sql).toBe(
-      "(bidang = ? OR bidang LIKE ? ESCAPE '\\' OR bidang LIKE ? ESCAPE '\\' OR bidang LIKE ? ESCAPE '\\')",
-    );
-    expect(k.params("PAJAK")).toEqual(["PAJAK", "PAJAK - %", "% - PAJAK", "% - PAJAK - %"]);
+    expect(k.sql).toBe("INSTR(LOWER(' - ' || bidang || ' - '), LOWER(?)) > 0");
+    expect(k.params("PAJAK")).toEqual([" - PAJAK - "]);
   });
 
-  it("klausaBidang melucuti wildcard LIKE dari masukan pengguna", () => {
-    const [persis, awal] = klausaBidang("bidang").params("A_B%");
-    expect(persis).toBe("A_B%");
-    expect(awal).toBe("A\\_B\\% - %");
+  it("klausaBidang tidak memakai LIKE/GLOB (D1 membatasi pola 50 byte) dan tidak punya wildcard", () => {
+    const k = klausaBidang("l.bidang");
+    expect(k.sql).not.toMatch(/\b(LIKE|GLOB)\b/i);
+    // `%` dan `_` dari masukan pengguna adalah karakter biasa.
+    expect(k.params("A_B%")).toEqual([" - A_B% - "]);
   });
 });
 

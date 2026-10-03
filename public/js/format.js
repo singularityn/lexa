@@ -187,6 +187,20 @@ export function bacaFilter(p) {
   };
 }
 
+/**
+ * Penanda halaman hasil konversi PDF yang terselip di tengah teks pasal, mis.
+ * "Cukup jelas    ### Page 97 PRESIDEN REPUBLIK INDONESIA- 18 -" atau
+ * "### Page 98 PRESIDEN REPUBLIK INDONESIA- 19 -Ayat (1) Cukup jelas". Itu kepala halaman, bukan
+ * bunyi peraturan. Hanya tampilan yang dirapikan; data di database tidak diubah.
+ */
+const RE_PENANDA_HALAMAN = /\s*#{1,6}\s*Page\s+\d+(?:\s+[A-Z][A-Z .,/&()-]*?\s*-\s*\d+\s*-)?\s*/g;
+
+/** @param {string | null | undefined} teks */
+export function bersihkanArtefak(teks) {
+  if (!teks) return "";
+  return teks.replace(RE_PENANDA_HALAMAN, " ").replace(/[ \t]+\n/g, "\n").trim();
+}
+
 const KATA_HENTI = new Set([
   "yang", "dan", "atau", "di", "ke", "dari", "untuk", "pada", "dengan", "dalam", "adalah", "ini", "itu",
   "oleh", "tentang", "akan", "telah", "dapat", "tidak", "juga", "serta", "bagi", "atas", "para", "agar",

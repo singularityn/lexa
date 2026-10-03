@@ -106,6 +106,30 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
       expect(ekonomi.laws.map((x) => x.frbr_uri).sort()).toEqual(["/akn/id/act/uu/2020/11", "/akn/id/act/uu/2023/6"]);
     });
 
+    it("filter bidang dengan nama panjang (pola LIKE D1 maksimal 50 byte) tetap bekerja, termasuk di tengah rangkaian", async () => {
+      const panjang = "PEMBENTUKAN, PERUBAHAN, DAN PEMBUBARAN KOMISI / KOMITE / BADAN / DEWAN / STAF KHUSUS / TIM / PANITIA";
+      await sisipkan(l, [
+        { uri: "/akn/id/act/perpres/2020/1", jenis: "PERPRES", nomor: "1", tahun: 2020, judul: "Komisi Contoh", bidang: panjang },
+        { uri: "/akn/id/act/perpres/2021/2", jenis: "PERPRES", nomor: "2", tahun: 2021, judul: "Lembaga Contoh", bidang: `ADMINISTRASI - ${panjang} - PEREKONOMIAN` },
+        { uri: "/akn/id/act/perpres/2022/3", jenis: "PERPRES", nomor: "3", tahun: 2022, judul: "Lain", bidang: "PEREKONOMIAN" },
+      ]);
+      const res = await panggil(l, `/api/laws?bidang=${encodeURIComponent(panjang)}`);
+      expect(res.status).toBe(200);
+      const b = await json<Telusur>(res);
+      expect(b.laws.map((x) => x.frbr_uri).sort()).toEqual(["/akn/id/act/perpres/2020/1", "/akn/id/act/perpres/2021/2"]);
+      // Juga lewat pencarian kata kunci.
+      const cari = await panggil(l, `/api/search?q=contoh&mode=keyword&bidang=${encodeURIComponent(panjang)}`);
+      const hasil = await json<{ hits: Array<{ frbr_uri: string }> }>(cari);
+      expect(new Set(hasil.hits.map((h) => h.frbr_uri))).toEqual(new Set(["/akn/id/act/perpres/2020/1", "/akn/id/act/perpres/2021/2"]));
+    });
+
+    it("karakter wildcard pada filter bidang adalah karakter biasa, bukan pola", async () => {
+      const semua = await ambil("?bidang=%25");
+      expect(semua.total).toBe(0);
+      const garis = await ambil("?bidang=_");
+      expect(garis.total).toBe(0);
+    });
+
     it("daftar filter jenis yang sangat panjang tidak menjatuhkan permintaan", async () => {
       const banyak = Array.from({ length: 300 }, (_, i) => `JENIS${i}`).join(",");
       const res = await panggil(l, `/api/laws?jenis=UU,${banyak}`);
@@ -208,6 +232,12 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
     it("wildcard di tengah kueri dibuang, bukan dijadikan pola", async () => {
       const b = await json<{ suggestions: Array<{ teks: string }> }>(await panggil(l, "/api/suggest?q=k%25et"));
       expect(b.suggestions.map((s) => s.teks)).toEqual(["UU 13/2003 — Ketenagakerjaan"]);
+    });
+
+    it("kueri yang lebih panjang dari pola LIKE yang diizinkan D1 dijawab kosong, bukan 500", async () => {
+      const res = await panggil(l, `/api/suggest?q=${encodeURIComponent("ketenagakerjaan dan pemutusan hubungan kerja pekerja kontrak")}`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ suggestions: [] });
     });
 
     it("kueri populer dari log pencarian ikut disarankan, hanya yang pernah ada hasilnya", async () => {

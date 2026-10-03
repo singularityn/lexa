@@ -35,21 +35,23 @@ export function pecahBidang(mentah: string | null | undefined): string[] {
  *
  * Tidak bisa `bidang = ?` karena nilainya mungkin gabungan, dan tidak boleh
  * `LIKE '%X%'` karena itu akan menganggap "PERPAJAKAN" cocok dengan bidang lain
- * yang kebetulan memuat potongan katanya. Yang dicocokkan adalah posisi
- * bidang di dalam rangkaian: sendirian, di awal, di akhir, atau di tengah.
+ * yang kebetulan memuat potongan katanya. Yang dicocokkan adalah posisi bidang
+ * di dalam rangkaian: kolom dibungkus pemisah di kedua ujung, lalu dicari
+ * " - X - " utuh (sendirian, di awal, di akhir, atau di tengah sekaligus).
+ *
+ * Sengaja memakai INSTR, bukan LIKE: D1 menolak pola LIKE/GLOB lebih dari 50 byte
+ * ("LIKE or GLOB pattern too complex"), sedangkan nama bidang BPK bisa panjang
+ * (mis. "PEMBENTUKAN, PERUBAHAN, DAN PEMBUBARAN KOMISI / KOMITE / BADAN / DEWAN …"
+ * lebih dari 100 karakter). INSTR juga tidak punya karakter wildcard, jadi `%`
+ * dan `_` dari parameter URL tidak perlu dilucuti. Perbandingan tidak peka huruf
+ * besar/kecil (ASCII), seperti LIKE sebelumnya.
  */
 export function klausaBidang(
   kolom: string,
 ): { sql: string; params: (nilai: string) => string[] } {
   return {
-    sql: `(${kolom} = ? OR ${kolom} LIKE ? ESCAPE '\\' OR ${kolom} LIKE ? ESCAPE '\\' OR ${kolom} LIKE ? ESCAPE '\\')`,
-    params: (nilai: string) => {
-      // `%` dan `_` tidak pernah muncul di nama bidang BPK, tetapi nilai ini
-      // datang dari parameter URL — jadi tetap dilepas supaya tidak ada yang
-      // bisa memperluas kecocokan lewat pola LIKE.
-      const aman = nilai.replace(/([\\%_])/g, "\\$1");
-      return [nilai, `${aman}${PEMISAH}%`, `%${PEMISAH}${aman}`, `%${PEMISAH}${aman}${PEMISAH}%`];
-    },
+    sql: `INSTR(LOWER('${PEMISAH}' || ${kolom} || '${PEMISAH}'), LOWER(?)) > 0`,
+    params: (nilai: string) => [`${PEMISAH}${nilai}${PEMISAH}`],
   };
 }
 

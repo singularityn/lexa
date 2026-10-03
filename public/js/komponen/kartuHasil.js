@@ -1,6 +1,6 @@
 // @ts-check
 import { cuplikan, h } from "../dom.js";
-import { jangkarDariId, sitasi, urlPeraturan } from "../format.js";
+import { bersihkanArtefak, jangkarDariId, sitasi, urlPeraturan } from "../format.js";
 import { lencanaJenis, lencanaStatus } from "./umum.js";
 import { tombolTandai } from "./tombolTandai.js";
 
@@ -32,7 +32,7 @@ export function kartuHasil(hit, opsi = {}) {
       lencanaStatus(hit.status),
     ),
     h("h3", { class: "hasil-judul" }, h("a", { href }, hit.judul)),
-    hit.snippet ? h("p", { class: "hasil-cuplikan" }, cuplikan(hit.snippet)) : hit.tentang ? h("p", { class: "hasil-cuplikan redup" }, hit.tentang) : null,
+    hit.snippet ? h("p", { class: "hasil-cuplikan" }, cuplikan(bersihkanArtefak(hit.snippet))) : hit.tentang ? h("p", { class: "hasil-cuplikan redup" }, hit.tentang) : null,
     h(
       "div",
       { class: "hasil-kaki" },
