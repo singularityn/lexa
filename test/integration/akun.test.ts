@@ -262,13 +262,22 @@ describe.skipIf(!sqliteAda)("akun", () => {
         expect(await selesaikan("https://jahat.example/")).toBe("/");
       });
 
-      // Bug v0.1: "//jahat.example" diawali "/" sehingga lolos pemeriksaan, padahal peramban
-      // membacanya sebagai URL protokol-relatif ke situs lain (open redirect setelah login).
-      it.fails("URL protokol-relatif tidak boleh menjadi tujuan", async () => {
-        expect(await selesaikan("//jahat.example/")).toBe("/");
+      // Bug v0.1 yang sudah diperbaiki: "//jahat.example" diawali "/" sehingga lolos pemeriksaan, padahal
+      // peramban membacanya sebagai URL protokol-relatif ke situs lain (open redirect setelah login).
+      it.each([
+        ["//jahat.example/", "protokol-relatif"],
+        ["/\\jahat.example", "garis miring terbalik yang dinormalkan peramban menjadi '//'"],
+        ["/\t/jahat.example", "tab yang dibuang parser URL sehingga menjadi '//'"],
+        ["/\n/jahat.example", "baris baru yang dibuang parser URL"],
+        ["///jahat.example", "tiga garis miring"],
+        ["javascript:alert(1)", "skema javascript"],
+        ["jahat.example", "tanpa garis miring awal"],
+      ])("tujuan %j (%s) jatuh ke beranda", async (kembali) => {
+        expect(await selesaikan(kembali)).toBe("/");
       });
-      it.fails("garis miring terbalik yang dinormalkan peramban menjadi '//' tidak boleh lolos", async () => {
-        expect(await selesaikan("/\\jahat.example")).toBe("/");
+
+      it("kueri dan hash pada jalur lokal dipertahankan", async () => {
+        expect(await selesaikan("/cari?q=pesangon&mode=keyword#hasil")).toBe("/cari?q=pesangon&mode=keyword#hasil");
       });
     });
   });

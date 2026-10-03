@@ -11,7 +11,7 @@
 import { Hono } from "hono";
 import {
   idSesiBaru, simpanSesi, hapusSesi, bacaSesi, idSesiDariCookie,
-  cookieSesi, cookieHapus,
+  cookieSesi, cookieHapus, tujuanAman,
 } from "../lib/sesi";
 
 type Bindings = Env;
@@ -64,7 +64,7 @@ auth.get("/google", async (c) => {
   // `state` mengikat permintaan ini dengan callback-nya. Tanpa itu, penyerang
   // bisa memancing korban menyelesaikan alur OAuth milik akun penyerang.
   const state = idSesiBaru();
-  const kembaliKe = c.req.query("kembali") ?? "/";
+  const kembaliKe = tujuanAman(c.req.query("kembali"));
 
   await c.env.CACHE.put(
     `oauth:${state}`,
@@ -181,7 +181,7 @@ auth.get("/google/callback", async (c) => {
     dibuat: Date.now(),
   });
 
-  const tujuan = tersimpan.kembaliKe.startsWith("/") ? tersimpan.kembaliKe : "/";
+  const tujuan = tujuanAman(tersimpan.kembaliKe);
   return new Response(null, {
     status: 302,
     headers: { Location: tujuan, "Set-Cookie": cookieSesi(idSesi, aman) },

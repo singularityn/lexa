@@ -12,7 +12,7 @@ import {
   idSesiDariCookie,
   kunciSesi,
   simpanSesi,
-  type Sesi,
+  type Sesi,  tujuanAman,
 } from "../src/worker/lib/sesi";
 
 describe("tokenSah (token admin)", () => {
@@ -192,5 +192,43 @@ describe("sesi login", () => {
     expect(await bacaSesi(kv, `lexa_sesi=${id}`)).toEqual(sesi);
     expect(await bacaSesi(kv, "lexa_sesi=tidak-ada")).toBeNull();
     expect(await bacaSesi(kv, undefined)).toBeNull();
+  });
+});
+
+describe("tujuanAman (tujuan setelah masuk)", () => {
+  it.each([
+    ["/", "/"],
+    ["/koleksi", "/koleksi"],
+    ["/cari?q=pesangon&mode=keyword#hasil", "/cari?q=pesangon&mode=keyword#hasil"],
+    ["/peraturan?uri=%2Fakn%2Fid%2Fact%2Fuu%2F2003%2F13#pasal-82-ayat-1", "/peraturan?uri=%2Fakn%2Fid%2Fact%2Fuu%2F2003%2F13#pasal-82-ayat-1"],
+    ["/a/../b", "/b"],
+  ])("jalur lokal %j diteruskan", (masukan, harapan) => {
+    expect(tujuanAman(masukan)).toBe(harapan);
+  });
+
+  it.each([
+    "//jahat.example",
+    "//jahat.example/jalur",
+    "///jahat.example",
+    "/\\jahat.example",
+    "/\t/jahat.example",
+    "/\n/jahat.example",
+    "/\r/jahat.example",
+    "\\jahat.example",
+    "https://jahat.example",
+    "http://jahat.example/",
+    "javascript:alert(1)",
+    "data:text/html,<script>1</script>",
+    "jahat.example",
+    "koleksi",
+    " /koleksi",
+    "",
+  ])("tujuan mencurigakan %j jatuh ke beranda", (masukan) => {
+    expect(tujuanAman(masukan)).toBe("/");
+  });
+
+  it("null dan undefined jatuh ke beranda", () => {
+    expect(tujuanAman(null)).toBe("/");
+    expect(tujuanAman(undefined)).toBe("/");
   });
 });

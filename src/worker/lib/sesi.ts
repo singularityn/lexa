@@ -83,3 +83,27 @@ export function cookieHapus(aman: boolean): string {
     "Max-Age=0",
   ].filter(Boolean).join("; ");
 }
+
+/**
+ * Tujuan setelah masuk: hanya jalur di situs ini.
+ *
+ * `startsWith("/")` saja tidak cukup. "//jahat.example" dan "/\\jahat.example" diawali
+ * "/" tetapi dibaca peramban sebagai URL ke situs lain, dan karakter tab/baris baru
+ * dibuang oleh parser URL ("/\t/jahat.example" menjadi "//jahat.example"). Karena itu
+ * tujuan diurai dengan parser URL yang sama lalu asalnya dibandingkan.
+ *
+ * @returns jalur+query+hash yang aman, atau "/" bila tujuannya mencurigakan
+ */
+export function tujuanAman(tujuan: string | null | undefined): string {
+  if (!tujuan) return "/";
+  const pangkal = "https://lexa.invalid";
+  try {
+    const u = new URL(tujuan, pangkal);
+    if (u.origin !== pangkal) return "/";
+    // Hanya jalur relatif yang ditulis dengan satu "/" di depan yang diteruskan.
+    if (!tujuan.startsWith("/")) return "/";
+    return `${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    return "/";
+  }
+}
