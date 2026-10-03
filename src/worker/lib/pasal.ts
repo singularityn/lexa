@@ -67,10 +67,34 @@ function keStatus(v: unknown): StatusPeraturan {
   return "berlaku";
 }
 
+/** Nama kunci yang lazim memuat teks pada objek bersarang, mis. `issuing_body: { id: 3, name: "..." }`. */
+const KUNCI_NAMA = ["name", "nama", "title", "judul", "label", "uraian", "value", "text", "teks"];
+
+/**
+ * Nilai API menjadi teks polos. Objek dan larik TIDAK boleh melewati `String(v)`: hasilnya
+ * "[object Object]", dan itulah yang pernah tersimpan di kolom `instansi` pada 124 dari 181
+ * peraturan produksi. Objek diambil nama-nya; yang bentuknya tak dikenal dianggap kosong,
+ * karena nilai kosong lebih jujur daripada teks sampah.
+ */
 function keTeks(v: unknown): string | null {
   if (v === undefined || v === null) return null;
-  const s = String(v).trim();
-  return s === "" ? null : s;
+  if (typeof v === "string") {
+    const s = v.trim();
+    return s === "" || /^\[object \w+\]$/.test(s) ? null : s;
+  }
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v);
+  if (Array.isArray(v)) {
+    const bagian = v.map(keTeks).filter((x): x is string => x !== null);
+    return bagian.length ? [...new Set(bagian)].join(", ") : null;
+  }
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    for (const k of KUNCI_NAMA) {
+      const t = keTeks(o[k]);
+      if (t) return t;
+    }
+  }
+  return null;
 }
 
 /** Normalkan tanggal apa pun bentuknya menjadi YYYY-MM-DD. */

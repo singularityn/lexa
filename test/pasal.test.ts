@@ -45,6 +45,42 @@ describe("petakanLaw", () => {
     expect(petakanLaw({ title: "Tanpa URI" })).toBeNull();
     expect(petakanLaw({ frbr_uri: "/akn/id/act/uu/2003/13" })).toBeNull();
   });
+
+  describe("nilai bersarang tidak pernah menjadi \"[object Object]\"", () => {
+    const dasar = { frbr_uri: "/akn/id/act/uu/2003/13", title: "Judul" };
+    const instansi = (issuing_body: unknown) => petakanLaw({ ...dasar, issuing_body })?.instansi;
+
+    it("objek diambil namanya, apa pun nama kuncinya yang lazim", () => {
+      expect(instansi({ id: 3, name: "Pemerintah Pusat" })).toBe("Pemerintah Pusat");
+      expect(instansi({ id: 3, nama: "Kementerian Keuangan" })).toBe("Kementerian Keuangan");
+      expect(instansi({ kode: "X", uraian: "Presiden" })).toBe("Presiden");
+      expect(instansi({ detail: { name: "Bersarang" }, name: { name: "Dalam" } })).toBe("Dalam");
+    });
+
+    it("larik digabung, yang kosong dan kembar dibuang", () => {
+      expect(instansi([{ name: "Presiden" }, { name: "DPR" }, { name: "Presiden" }, {}, null])).toBe("Presiden, DPR");
+      expect(instansi([])).toBeNull();
+    });
+
+    it("objek yang bentuknya tak dikenal dan teks '[object Object]' yang sudah telanjur ada dianggap kosong", () => {
+      expect(instansi({ id: 3, kode: "PP" })).toBeNull();
+      expect(instansi({})).toBeNull();
+      expect(instansi("[object Object]")).toBeNull();
+    });
+
+    it("teks biasa, angka, dan nilai kosong tetap seperti semula", () => {
+      expect(instansi("  Presiden  ")).toBe("Presiden");
+      expect(instansi(42)).toBe("42");
+      expect(instansi("")).toBeNull();
+      expect(instansi(null)).toBeNull();
+      expect(instansi(undefined)).toBeNull();
+    });
+
+    it("berlaku juga untuk bidang dan ringkasan, bukan hanya instansi", () => {
+      const law = petakanLaw({ ...dasar, bidang: { label: "PERPAJAKAN" }, summary: ["Satu", "Dua"] });
+      expect(law).toMatchObject({ bidang: "PERPAJAKAN", ringkasan: "Satu, Dua" });
+    });
+  });
 });
 
 describe("petakanJenisRelasi", () => {

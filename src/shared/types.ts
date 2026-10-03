@@ -117,6 +117,11 @@ export interface SearchResponse {
   /** Istilah hasil normalisasi (stem, sinonim) yang dipakai pada sisi kata kunci. */
   expanded_terms: string[];
   cached: boolean;
+  /**
+   * Ada bila hasil memuat cadangan longgar: pencarian ketat (semua kata) menemukan terlalu sedikit,
+   * sehingga ditambah peraturan yang memuat sebagian kata. `penuh` = jumlah hasil yang memuat semua kata.
+   */
+  longgar?: { penuh: number };
 }
 
 /** Satu butir facet pada halaman telusur. */

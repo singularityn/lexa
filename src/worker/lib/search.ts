@@ -26,13 +26,31 @@ const RRF_K = 60;
  */
 const BOBOT = { sitasi: 12.0, fts: 1.0, vector: 0.8 } as const;
 
+/**
+ * Kueri yang punya sinonim dicari dua kali: dengan sinonim (`BOBOT_FTS_SINONIM`) dan hanya dengan
+ * kata yang diketik pengguna (`BOBOT_FTS_HARFIAH`, lebih berat). Dokumen yang memuat kata itu sendiri
+ * dan juga sinonimnya menerima keduanya; yang hanya memuat sinonim, hanya yang pertama. Jumlah
+ * keduanya sedikit di atas bobot FTS biasa agar imbangannya terhadap pencarian makna tidak berubah.
+ */
+const BOBOT_FTS_HARFIAH = 0.9;
+const BOBOT_FTS_SINONIM = 0.5;
+/** Cadangan longgar (OR) hanya menambah; ia tidak boleh mengalahkan hasil yang cocok seluruh kata. */
+const BOBOT_FTS_LONGGAR = 0.4;
+/** Bila pencarian ketat (semua kata) menemukan kurang dari ini, pencarian longgar dijalankan. */
+const MIN_HASIL_KETAT = 3;
+
 export interface KandidatMentah {
   frbr_uri: string;
   article_id: string | null;
   peringkat: number;
   snippet: string | null;
   sumber: "fts" | "vector" | "sitasi";
+  /** Menggantikan bobot bawaan sumbernya (lihat BOBOT_FTS_*). */
+  bobot?: number;
 }
+
+/** Salinan daftar kandidat dengan bobot sendiri. */
+const denganBobot = (daftar: KandidatMentah[], bobot: number): KandidatMentah[] => daftar.map((k) => ({ ...k, bobot }));
 
 function kunciKandidat(k: { frbr_uri: string; article_id: string | null }): string {
   return k.article_id ?? k.frbr_uri;
@@ -295,7 +313,7 @@ export function gabungRRF(daftar: KandidatMentah[][]): Map<string, {
   for (const kandidatList of daftar) {
     for (const k of kandidatList) {
       const kunci = kunciKandidat(k);
-      const kontribusi = BOBOT[k.sumber] / (RRF_K + k.peringkat);
+      const kontribusi = (k.bobot ?? BOBOT[k.sumber]) / (RRF_K + k.peringkat);
       const ada = gabungan.get(kunci);
 
       if (ada) {
@@ -412,7 +430,8 @@ export interface KonteksPencarian {
  * tampak tidak berfungsi sama sekali — padahal kuerinya tidak pernah dijalankan.
  *
  * Versi kunci dinaikkan ke v2 supaya entri lama yang sudah telanjur salah
- * tidak terpakai lagi setelah perbaikan ini disebar.
+ * tidak terpakai lagi setelah perbaikan ini disebar. v3: peringkat kata-yang-diketik di atas sinonim,
+ * cadangan longgar, dan penanda `longgar` pada jawaban.
  */
 export function kunciCache(o: OpsiPencarian): string {
   const f = o.filters ?? {};
@@ -427,7 +446,7 @@ export function kunciCache(o: OpsiPencarian): string {
     f.instansi ?? "",
     f.bidang ?? "",
   ];
-  return `cari:v2:${bagian.join("|")}`;
+  return `cari:v3:${bagian.join("|")}`;
 }
 
 export async function cari(
@@ -451,6 +470,7 @@ export async function cari(
   // tiap sumber menyumbang cukup dalam untuk saling melengkapi.
   const kedalaman = Math.min(limit * 3, 100);
   const daftar: KandidatMentah[][] = [];
+  let longgar: SearchResponse["longgar"];
 
   // Sitasi diperiksa pada semua mode, termasuk "makna". Pengguna yang mengetik
   // "UU 13/2003" menginginkan dokumen itu, bukan yang menyerupainya — apa pun
@@ -460,11 +480,38 @@ export async function cari(
   }
 
   if (mode === "hybrid" || mode === "keyword") {
-    const [peraturan, pasal] = await Promise.all([
+    const adaSinonim = terurai.ftsLiteral !== terurai.fts;
+    const [peraturan, pasal, peraturanHarfiah, pasalHarfiah] = await Promise.all([
       cariFtsPeraturan(ctx.db, terurai.fts, filters, kedalaman).catch(() => []),
       cariFtsPasal(ctx.db, terurai.fts, filters, kedalaman).catch(() => []),
+      adaSinonim ? cariFtsPeraturan(ctx.db, terurai.ftsLiteral, filters, kedalaman).catch(() => []) : [],
+      adaSinonim ? cariFtsPasal(ctx.db, terurai.ftsLiteral, filters, kedalaman).catch(() => []) : [],
     ]);
-    daftar.push(peraturan, pasal);
+    if (adaSinonim) {
+      // Daftar harfiah lebih dulu: bila dokumen yang sama muncul di kedua daftar, cuplikannya (yang
+      // menandai kata persis yang diketik) yang dipakai.
+      daftar.push(
+        denganBobot(peraturanHarfiah, BOBOT_FTS_HARFIAH),
+        denganBobot(pasalHarfiah, BOBOT_FTS_HARFIAH),
+        denganBobot(peraturan, BOBOT_FTS_SINONIM),
+        denganBobot(pasal, BOBOT_FTS_SINONIM),
+      );
+    } else {
+      daftar.push(peraturan, pasal);
+    }
+
+    // Kueri berbentuk kalimat ("uang pesangon PHK karyawan kontrak") jarang memuat semua katanya di satu
+    // pasal. Bila pencarian ketat nyaris kosong, cari lagi dengan salah satu kata, diurutkan BM25
+    // (dokumen yang memuat lebih banyak kata langka naik sendiri).
+    const kandidatKetat = new Set([...peraturan, ...pasal, ...peraturanHarfiah, ...pasalHarfiah].map(kunciKandidat));
+    if (kandidatKetat.size < MIN_HASIL_KETAT && terurai.ftsLonggar) {
+      const [peraturanLonggar, pasalLonggar] = await Promise.all([
+        cariFtsPeraturan(ctx.db, terurai.ftsLonggar, filters, kedalaman).catch(() => []),
+        cariFtsPasal(ctx.db, terurai.ftsLonggar, filters, kedalaman).catch(() => []),
+      ]);
+      daftar.push(denganBobot(peraturanLonggar, BOBOT_FTS_LONGGAR), denganBobot(pasalLonggar, BOBOT_FTS_LONGGAR));
+      if (peraturanLonggar.length + pasalLonggar.length > 0) longgar = { penuh: kandidatKetat.size };
+    }
   }
 
   if (mode === "hybrid" || mode === "semantic") {
@@ -519,6 +566,7 @@ export async function cari(
     durasi_ms: Date.now() - mulai,
     expanded_terms: terurai.terms,
     cached: false,
+    ...(longgar ? { longgar } : {}),
   };
 }
 

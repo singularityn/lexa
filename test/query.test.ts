@@ -76,6 +76,66 @@ describe("uraiKueri", () => {
   });
 });
 
+describe("uraiKueri: kata yang diketik, sinonim, dan pencarian longgar", () => {
+  it("tanpa sinonim, ekspresi harfiah sama dengan ekspresi biasa", () => {
+    const k = uraiKueri("perundang-undangan");
+    expect(k.ftsLiteral).toBe(k.fts);
+    expect(k.ftsLonggar).toBe("");
+  });
+
+  it("sinonim hanya ada di ekspresi biasa, tidak di ekspresi harfiah", () => {
+    const k = uraiKueri("pesangon");
+    expect(k.fts).toContain('"kompensasi"');
+    expect(k.fts).toContain('"uang pesangon"');
+    expect(k.ftsLiteral).not.toContain("kompensasi");
+    expect(k.ftsLiteral).toContain('"pesangon"');
+  });
+
+  it("singkatan dan ejaan lain dari kata yang sama dihitung sebagai kata yang diketik (bukan sinonim)", () => {
+    // Pengguna "PHK" menginginkan pasal tentang pemutusan hubungan kerja; ekspresinya tak perlu dibedakan.
+    const phk = uraiKueri("PHK");
+    expect(phk.ftsLiteral).toBe(phk.fts);
+    expect(phk.ftsLiteral).toContain('"pemutusan hubungan kerja"');
+    // "perlindungan" harus menemukan "Pelindungan" (ejaan resmi UU 27/2022) lewat jalur harfiah.
+    const lindung = uraiKueri("perlindungan data pribadi");
+    expect(lindung.ftsLiteral).toContain('"pelindungan"');
+    expect(uraiKueri("pelindungan").ftsLiteral).toContain('"perlindungan"');
+    expect(uraiKueri("izin usaha").ftsLiteral).toContain('"ijin"');
+  });
+
+  it("frasa berkutip tetap di kedua ekspresi dan wajib pada ekspresi longgar", () => {
+    const k = uraiKueri('"pemutusan hubungan kerja" pesangon karyawan kontrak');
+    for (const e of [k.fts, k.ftsLiteral, k.ftsLonggar]) expect(e.startsWith('"pemutusan hubungan kerja" AND ')).toBe(true);
+  });
+
+  it("kata tanya dan kata ganti orang tidak dicari", () => {
+    const k = uraiKueri("berapa lama cuti melahirkan bagi pekerja perempuan? apakah saya boleh");
+    expect(k.terms).not.toEqual(expect.arrayContaining(["berapa", "apakah", "saya", "bagi"]));
+    expect(k.terms).toEqual(expect.arrayContaining(["lama", "cuti", "melahirkan", "pekerja", "perempuan", "boleh"]));
+  });
+
+  it("ekspresi longgar: kueri pendek (kurang dari tiga kata) tidak dilonggarkan", () => {
+    expect(uraiKueri("kapal selam").ftsLonggar).toBe("");
+    expect(uraiKueri("cuti").ftsLonggar).toBe("");
+    expect(uraiKueri("").ftsLonggar).toBe("");
+  });
+
+  it("ekspresi longgar: tiga kata menjadi tiga pasangan 'dua dari tiga', empat kata enam pasangan", () => {
+    const pasangan = (e: string) => (e.match(/\) AND \(/g) ?? []).length; // satu "AND" antar-kelompok per pasangan
+    expect(uraiKueri("sanksi pidana korupsi").ftsLonggar.split(" OR (").length).toBeGreaterThan(1);
+    expect(pasangan(uraiKueri("sanksi pidana korupsi").ftsLonggar)).toBe(3);
+    expect(pasangan(uraiKueri("sanksi pidana korupsi negara").ftsLonggar)).toBe(6);
+  });
+
+  it("ekspresi longgar dibatasi enam kata pertama (15 pasangan)", () => {
+    const k = uraiKueri("satu dua tiga empat lima enam tujuh delapan sembilan");
+    expect((k.ftsLonggar.match(/\) AND \(/g) ?? []).length).toBe(15);
+    expect(k.ftsLonggar).not.toContain("tujuh");
+    // Ekspresi biasa tetap memuat semua kata.
+    expect(k.fts).toContain("sembilan");
+  });
+});
+
 describe("kueriUntukEmbedding", () => {
   it("merapikan spasi dan membuang tanda kurung tanpa membuang kata", () => {
     expect(kueriUntukEmbedding("PHK dan pesangon?  (sanksi)")).toBe("PHK dan pesangon? sanksi");
@@ -118,6 +178,21 @@ describe("kompatibilitas ekspresi dengan FTS5 sungguhan", () => {
   // melempar "no such column". Di produksi galat ini ditelan (`.catch(() => [])`),
   // jadi jalur kata kunci diam-diam kosong untuk kueri seperti
   // "peraturan perundang-undangan".
+  it.skipIf(!fts5Ada).each([
+    "pesangon", "PHK pesangon", "berapa lama cuti melahirkan bagi pekerja perempuan", "sanksi pidana korupsi",
+    '"pemutusan hubungan kerja" uang pesangon karyawan kontrak', "perundang-undangan nasional dasar peraturan", "a-b c-d e-f",
+  ])("ekspresi harfiah dan longgar untuk %j juga valid di FTS5", (kueri) => {
+    const { ftsLiteral, ftsLonggar } = uraiKueri(kueri);
+    expect(() => indeks!.cocok(ftsLiteral)).not.toThrow();
+    if (ftsLonggar) expect(() => indeks!.cocok(ftsLonggar)).not.toThrow();
+  });
+
+  it.skipIf(!fts5Ada)("ekspresi longgar menemukan dokumen yang hanya memuat sebagian kata, ekspresi ketat tidak", () => {
+    const { fts, ftsLonggar } = uraiKueri("pesangon pekerja kapal");
+    expect(indeks!.cocok(fts)).toBe(0);
+    expect(indeks!.cocok(ftsLonggar)).toBeGreaterThan(0);
+  });
+
   it.skipIf(!fts5Ada)("kata bertanda hubung ('perundang-undangan') menghasilkan ekspresi valid yang menemukan dokumennya", () => {
     const { fts } = uraiKueri("peraturan perundang-undangan");
     expect(() => indeks!.cocok(fts)).not.toThrow();

@@ -59,6 +59,21 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
       expect(b.facets.tahun.map((f) => f.value)).toEqual(["2023", "2021", "2020", "2003"]);
     });
 
+    it("instansi yang tersimpan sebagai sisa data buruk dirapikan di telusur dan detail, tanpa mengubah isi tabel", async () => {
+      await l.db.prepare(`UPDATE laws SET instansi = '[object Object]' WHERE frbr_uri = '/akn/id/act/uu/2003/13'`).run();
+      await l.db.prepare(`UPDATE laws SET instansi = 'Indonesia, Pemerintah Pusat' WHERE frbr_uri = '/akn/id/act/uu/2020/11'`).run();
+      const b = await ambil();
+      const instansi = (uri: string) => (b.laws as Array<Hukum & { instansi: string | null }>).find((x) => x.frbr_uri === uri)?.instansi;
+      expect(instansi("/akn/id/act/uu/2003/13")).toBeNull();
+      expect(instansi("/akn/id/act/uu/2020/11")).toBe("Pemerintah Pusat");
+      expect(instansi("/akn/id/act/pp/2021/35")).toBeNull(); // "Indonesia" saja tidak bermakna
+
+      const detail = await json<{ law: { instansi: string | null } }>(await panggil(l, `/api/laws/detail?uri=${encodeURIComponent("/akn/id/act/uu/2020/11")}`));
+      expect(detail.law.instansi).toBe("Pemerintah Pusat");
+      const mentah = await l.db.prepare(`SELECT instansi FROM laws WHERE frbr_uri = '/akn/id/act/uu/2003/13'`).first<{ instansi: string }>();
+      expect(mentah?.instansi).toBe("[object Object]");
+    });
+
     it("urutan bawaan: tahun terbaru dulu", async () => {
       const b = await ambil();
       expect(b.laws.map((x) => x.tahun)).toEqual([2023, 2021, 2020, 2003]);

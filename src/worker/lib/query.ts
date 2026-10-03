@@ -20,7 +20,39 @@ const STOPWORDS = new Set([
   "adalah", "ini", "itu", "sebagai", "oleh", "tentang", "akan", "telah", "dapat",
   "tidak", "juga", "serta", "bagi", "atas", "para", "agar", "bila", "jika",
   "yaitu", "yakni", "ialah", "maka", "namun", "tetapi", "karena", "sehingga",
+  // Kata tanya dan kata ganti orang: pertanyaan sehari-hari ("berapa lama cuti melahirkan bagi pekerja
+  // perempuan?") penuh dengan kata ini, dan tidak satu pun muncul sebagai istilah di batang tubuh pasal.
+  // Menyertakannya membuat kueri AND tidak pernah menemukan apa-apa.
+  "apa", "apakah", "berapa", "bagaimana", "siapa", "siapakah", "kapan", "mengapa", "kenapa",
+  "dimana", "mana", "adakah", "saya", "kami", "kita", "anda", "kamu", "aku", "ingin", "mau",
+  "tolong", "mohon",
 ]);
+
+/**
+ * Singkatan dan ejaan lain dari kata yang SAMA. Perluasannya ikut dianggap "kata yang diketik"
+ * (lihat `ftsLiteral`): pengguna yang mengetik "PHK" menginginkan pasal-pasal tentang pemutusan
+ * hubungan kerja, bukan hanya pasal yang kebetulan menyebut singkatan "PHK"; dan "perlindungan"
+ * harus menemukan UU "Pelindungan Data Pribadi" (ejaan resmi terbaru memakai "pelindungan").
+ */
+const VARIAN_KATA: Record<string, string[]> = {
+  phk: ["pemutusan hubungan kerja", "pemutusan"],
+  ite: ["informasi dan transaksi elektronik"],
+  ciptaker: ["cipta kerja"],
+  ojk: ["otoritas jasa keuangan"],
+  bpjs: ["badan penyelenggara jaminan sosial"],
+  umkm: ["usaha mikro kecil dan menengah"],
+  pt: ["perseroan terbatas"],
+  perlindungan: ["pelindungan"],
+  pelindungan: ["perlindungan"],
+  izin: ["ijin"],
+  ijin: ["izin"],
+  asas: ["azas"],
+  azas: ["asas"],
+  risiko: ["resiko"],
+  resiko: ["risiko"],
+  analisis: ["analisa"],
+  analisa: ["analisis"],
+};
 
 /**
  * Istilah hukum yang sering ditulis berbeda oleh pengguna awam vs teks resmi.
@@ -29,9 +61,12 @@ const STOPWORDS = new Set([
  * Contoh yang memotivasi: kueri "cuti melahirkan" semula nihil hasil, padahal
  * UU 13/2003 Pasal 82 mengaturnya — undang-undang memakai kata "istirahat",
  * bukan "cuti". Tidak ada algoritma pelucut imbuhan yang bisa menjembatani itu.
+ *
+ * Berbeda dari `VARIAN_KATA`, ini kata LAIN yang bermakna dekat. Dokumen yang memuat sinonimnya
+ * saja tidak boleh mengalahkan dokumen yang memuat kata yang diketik (contoh nyata: "pesangon"
+ * menempatkan Perpres tentang "uang kompensasi" anggota KPU di atas UU Ketenagakerjaan).
  */
 const SINONIM: Record<string, string[]> = {
-  phk: ["pemutusan hubungan kerja", "pemutusan"],
   pesangon: ["uang pesangon", "kompensasi"],
   buruh: ["pekerja", "karyawan", "tenaga kerja"],
   pekerja: ["buruh", "karyawan", "tenaga kerja"],
@@ -56,14 +91,11 @@ const SINONIM: Record<string, string[]> = {
   warisan: ["pewarisan", "waris"],
   tanah: ["pertanahan", "agraria"],
   lingkungan: ["lingkungan hidup"],
-  ite: ["informasi dan transaksi elektronik"],
-  ciptaker: ["cipta kerja"],
-  ojk: ["otoritas jasa keuangan"],
-  bpjs: ["badan penyelenggara jaminan sosial"],
-  umkm: ["usaha mikro kecil dan menengah"],
-  pt: ["perseroan terbatas"],
   koperasi: ["perkoperasian"],
 };
+
+/** Jumlah kelompok kata terdepan yang dipakai membentuk pasangan pada pencarian longgar. */
+const MAKS_KATA_LONGGAR = 6;
 
 const PARTIKEL = /(?:-?(?:lah|kah|tah|pun))$/;
 const POSESIF = /(?:-?(?:ku|mu|nya))$/;
@@ -150,8 +182,23 @@ function bersihkanToken(token: string): string {
 }
 
 export interface KueriTerurai {
-  /** Ekspresi siap dikirim ke `MATCH`. */
+  /** Ekspresi siap dikirim ke `MATCH`: semua kelompok kata harus ada (AND), dengan sinonim. */
   fts: string;
+  /**
+   * Sama dengan `fts` tetapi TANPA sinonim: hanya kata yang diketik pengguna (dan kata dasarnya).
+   * Dipakai untuk memberi peringkat lebih tinggi pada dokumen yang memuat kata itu sendiri; tanpa ini
+   * "pesangon" menempatkan Perpres tentang "uang kompensasi" anggota KPU di atas UU Ketenagakerjaan,
+   * karena kata "kompensasi" (sinonim) muncul dua kali di judulnya. Sama dengan `fts` bila kueri
+   * tidak punya sinonim.
+   */
+  ftsLiteral: string;
+  /**
+   * Cadangan untuk kueri berbentuk kalimat (tiga kata atau lebih): cukup DUA dari kelompok kata yang
+   * muncul bersama, alih-alih semuanya; frasa berkutip tetap wajib. Kosong untuk kueri yang lebih
+   * pendek: melonggarkan "kapal selam" menjadi salah satu kata hanya mendatangkan sampah (awalan "selam"
+   * cocok dengan "selama"). Hanya dijalankan bila `fts` hampir tidak menemukan apa pun.
+   */
+  ftsLonggar: string;
   /** Frasa dalam tanda kutip yang diminta pengguna secara eksplisit. */
   frasa: string[];
   /** Semua term yang akhirnya dicari — ditampilkan ke pengguna. */
@@ -188,11 +235,15 @@ export function uraiKueri(raw: string): KueriTerurai {
     .map((t) => t.replace(/^-+|-+$/g, ""))
     .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
 
-  const kelompok: string[] = [];
+  const kelompokFrasa: string[] = [];
+  /** Kelompok kata dengan sinonim, dan tanpa sinonim; sejajar satu sama lain. */
+  const kelompokKata: string[] = [];
+  const kelompokLiteral: string[] = [];
   const semuaTerm = new Set<string>();
+  let adaSinonim = false;
 
   for (const f of frasa) {
-    kelompok.push(`"${f}"`);
+    kelompokFrasa.push(`"${f}"`);
     semuaTerm.add(f);
   }
 
@@ -210,17 +261,37 @@ export function uraiKueri(raw: string): KueriTerurai {
     }
     // Token asli selalu ikut, dengan bobot alami lebih tinggi karena persis.
     varian.add(`"${token}"`);
+    // Singkatan dan ejaan lain dari kata yang sama dihitung sebagai kata yang diketik.
+    for (const v of VARIAN_KATA[token] ?? []) {
+      varian.add(`"${v}"`);
+      semuaTerm.add(v);
+    }
+    kelompokLiteral.push(`(${[...varian].join(" OR ")})`);
 
     for (const sin of SINONIM[token] ?? []) {
       varian.add(`"${sin}"`);
       semuaTerm.add(sin);
+      adaSinonim = true;
     }
-
-    kelompok.push(`(${[...varian].join(" OR ")})`);
+    kelompokKata.push(`(${[...varian].join(" OR ")})`);
   }
 
+  const fts = [...kelompokFrasa, ...kelompokKata].join(" AND ");
+  const ftsLiteral = adaSinonim ? [...kelompokFrasa, ...kelompokLiteral].join(" AND ") : fts;
+  // Cadangan: dua kelompok kata mana pun yang muncul bersama (maksimal enam kelompok pertama agar
+  // ekspresinya tidak membengkak: C(6,2) = 15 pasangan).
+  const ftsLonggar = (() => {
+    const kata = kelompokKata.slice(0, MAKS_KATA_LONGGAR);
+    if (kata.length < 3) return "";
+    const pasangan: string[] = [];
+    for (let i = 0; i < kata.length; i++) for (let j = i + 1; j < kata.length; j++) pasangan.push(`(${kata[i]} AND ${kata[j]})`);
+    return [...kelompokFrasa, `(${pasangan.join(" OR ")})`].join(" AND ");
+  })();
+
   return {
-    fts: kelompok.join(" AND "),
+    fts,
+    ftsLiteral,
+    ftsLonggar,
     frasa,
     terms: [...semuaTerm],
     sitasi,

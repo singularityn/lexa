@@ -79,6 +79,87 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
     });
   });
 
+  describe("relevansi: kata yang diketik di atas sinonim, ejaan, dan pencarian longgar", () => {
+    it("dokumen yang memuat kata yang diketik mengalahkan dokumen yang hanya memuat sinonimnya", async () => {
+      // Kasus nyata di produksi: "pesangon" menempatkan Perpres tentang "uang kompensasi" anggota KPU di atas
+      // UU Ketenagakerjaan karena "kompensasi" (sinonim) muncul di judul dan tentang-nya.
+      await sisipkan(l, [
+        {
+          uri: "/akn/id/act/perpres/2015/22", jenis: "PERPRES", nomor: "22", tahun: 2015,
+          judul: "Pemberian Uang Kompensasi Bagi Ketua dan Anggota Komisi Pemilihan Umum", tentang: "Uang kompensasi anggota komisi",
+          pasal: [{ nomor: "1", isi: "Uang kompensasi diberikan sekali kepada anggota komisi. Kompensasi dibayarkan dari anggaran." }],
+        },
+      ]);
+      const b = await cari(q("pesangon", "mode=keyword"));
+      const urutan = uris(b.hits);
+      const literal = ["/akn/id/act/uu/2003/13#pasal-156-ayat-1", "/akn/id/act/pp/2021/35#pasal-40-ayat-1"];
+      const sinonim = urutan.findIndex((u) => u.startsWith("/akn/id/act/perpres/2015/22"));
+      expect(sinonim, "yang hanya bersinonim tetap ditemukan").toBeGreaterThanOrEqual(0);
+      for (const u of literal) expect(urutan.indexOf(u), u).toBeLessThan(sinonim);
+    });
+
+    it("ejaan resmi terbaru ditemukan dari ejaan lama: 'perlindungan' menemukan 'Pelindungan Data Pribadi' di peringkat pertama", async () => {
+      await sisipkan(l, [
+        { uri: "/akn/id/act/uu/2022/27", jenis: "UU", nomor: "27", tahun: 2022, judul: "Pelindungan Data Pribadi", tentang: "Pelindungan data pribadi" },
+        { uri: "/akn/id/act/uu/1999/8", jenis: "UU", nomor: "8", tahun: 1999, judul: "Perlindungan Konsumen", tentang: "Perlindungan konsumen",
+          pasal: [{ nomor: "4", isi: "Hak konsumen adalah hak atas data pribadi dan perlindungan." }] },
+      ]);
+      const b = await cari(q("perlindungan data pribadi", "mode=keyword"));
+      expect(b.hits.map((h) => h.frbr_uri)).toContain("/akn/id/act/uu/2022/27");
+      expect(b.hits[0].frbr_uri).toBe("/akn/id/act/uu/2022/27");
+    });
+
+    it("kalimat yang tak punya satu pasal pun memuat semua katanya tetap menemukan pasal yang tepat, dan ditandai longgar", async () => {
+      const b = await cari(q("berapa lama cuti melahirkan bagi pekerja perempuan", "mode=keyword"));
+      expect(uris(b.hits)).toContain("/akn/id/act/uu/2003/13#pasal-82-ayat-1");
+      expect(b.longgar).toEqual({ penuh: 0 });
+    });
+
+    it("pencarian dua kata yang tidak ada tidak dilonggarkan (awalan 'selam' tidak boleh menemukan 'selama')", async () => {
+      const b = await cari(q("kapal selam", "mode=keyword"));
+      expect(b.hits).toEqual([]);
+      expect(b.longgar).toBeUndefined();
+    });
+
+    it("longgar tidak dijalankan bila pencarian ketat sudah menemukan cukup hasil", async () => {
+      await sisipkan(l, [1, 2, 3].map((n) => ({
+        uri: `/akn/id/act/pp/2020/${n}`, jenis: "PP", nomor: String(n), tahun: 2020, judul: `Peraturan Malam ${n}`,
+        pasal: [{ nomor: "1", isi: "Pekerja perempuan dilarang bekerja pada malam hari tanpa pengawalan." }],
+      })));
+      const b = await cari(q("pekerja perempuan malam", "mode=keyword"));
+      expect(b.longgar).toBeUndefined();
+      expect(b.hits.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("hasil yang memuat semua kata tetap di depan hasil yang memuat sebagian, dan jumlahnya dilaporkan", async () => {
+      // Kata karangan agar tidak bersinggungan dengan sinonim atau awalan mana pun.
+      await sisipkan(l, [
+        { uri: "/akn/id/act/pp/2020/71", jenis: "PP", nomor: "71", tahun: 2020, judul: "Satwa Satu", pasal: [{ nomor: "1", isi: "Harimau, gajah, dan badak dilindungi." }] },
+        { uri: "/akn/id/act/pp/2020/72", jenis: "PP", nomor: "72", tahun: 2020, judul: "Satwa Dua", pasal: [{ nomor: "1", isi: "Harimau dan gajah tidak boleh diburu." }] },
+        { uri: "/akn/id/act/pp/2020/73", jenis: "PP", nomor: "73", tahun: 2020, judul: "Satwa Tiga", pasal: [{ nomor: "1", isi: "Gajah dan badak dikelola kawasan konservasi." }] },
+      ]);
+      const b = await cari(q("harimau gajah badak", "mode=keyword"));
+      expect(b.longgar).toEqual({ penuh: 1 });
+      expect(uris(b.hits)).toEqual([
+        "/akn/id/act/pp/2020/71#pasal-1", // memuat ketiganya
+        expect.stringMatching(/pp\/2020\/7[23]#pasal-1/),
+        expect.stringMatching(/pp\/2020\/7[23]#pasal-1/),
+      ]);
+    });
+
+    it("longgar bekerja juga pada mode gabungan (hybrid), tanpa menggeser sitasi", async () => {
+      const b = await cari(q("berapa lama cuti melahirkan bagi pekerja perempuan"));
+      expect(b.longgar).toBeDefined();
+      const sitasi = await cari(q("UU 13/2003"));
+      expect(sitasi.hits[0].frbr_uri).toBe("/akn/id/act/uu/2003/13");
+    });
+
+    it("sumber hasil tetap 'fts' (pembobotan harfiah/sinonim/longgar tidak bocor ke antarmuka)", async () => {
+      const b = await cari(q("pesangon", "mode=keyword"));
+      for (const h of b.hits) expect(h.sources).toEqual(["fts"]);
+    });
+  });
+
   describe("sitasi", () => {
     it("'UU 13/2003' menempatkan peraturan itu di peringkat teratas dengan sumber sitasi", async () => {
       const b = await cari(q("UU 13/2003"));
@@ -279,7 +360,7 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
     it("hasil yang ada isinya di-cache di KV; panggilan kedua bertanda cached", async () => {
       const pertama = await cari(q("pesangon", "mode=keyword"));
       expect(pertama.cached).toBe(false);
-      const kunci = [...l.kv.isi.keys()].filter((k) => k.startsWith("cari:v2:"));
+      const kunci = [...l.kv.isi.keys()].filter((k) => k.startsWith("cari:v3:"));
       expect(kunci).toHaveLength(1);
       const kedua = await cari(q("pesangon", "mode=keyword"));
       expect(kedua.cached).toBe(true);

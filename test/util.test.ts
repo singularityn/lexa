@@ -3,6 +3,7 @@ import { diagnosaToken, tokenSah } from "../src/worker/lib/auth";
 import { klausaBidang, pecahBidang } from "../src/worker/lib/bidang";
 import { headerCors } from "../src/worker/lib/cors";
 import { potongTeks } from "../src/worker/lib/ingest";
+import { rapikanInstansi, rapikanLaw } from "../src/shared/label";
 import { gabungRRF, kunciCache, type KandidatMentah } from "../src/worker/lib/search";
 import {
   bacaSesi,
@@ -88,7 +89,7 @@ describe("kunciCache", () => {
   it("menormalkan kueri dan mengurutkan filter agar kunci stabil", () => {
     const a = kunciCache({ ...dasar, filters: { jenis: ["PP", "UU"], status: ["berlaku"], tahun_min: 2000 } });
     const b = kunciCache({ ...dasar, query: "phk pesangon", filters: { jenis: ["UU", "PP"], status: ["berlaku"], tahun_min: 2000 } });
-    expect(a).toBe("cari:v2:phk pesangon|hybrid|20|PP,UU|berlaku|2000|||");
+    expect(a).toBe("cari:v3:phk pesangon|hybrid|20|PP,UU|berlaku|2000|||");
     expect(b).toBe(a);
   });
 
@@ -229,5 +230,33 @@ describe("tujuanAman (tujuan setelah masuk)", () => {
   it("null dan undefined jatuh ke beranda", () => {
     expect(tujuanAman(null)).toBe("/");
     expect(tujuanAman(undefined)).toBe("/");
+  });
+});
+
+describe("rapikanInstansi / rapikanLaw", () => {
+  it.each([
+    ["[object Object]", null],
+    ["[object Array]", null],
+    ["", null],
+    ["   ", null],
+    [null, null],
+    [undefined, null],
+    ["Indonesia", null],
+    ["indonesia", null],
+    ["Indonesia, ", null],
+    ["Indonesia, Pemerintah Pusat", "Pemerintah Pusat"],
+    ["INDONESIA , Presiden", "Presiden"],
+    ["Pemerintah Pusat", "Pemerintah Pusat"],
+    ["Kementerian Keuangan Republik Indonesia", "Kementerian Keuangan Republik Indonesia"],
+  ])("%j -> %j", (masukan, harapan) => {
+    expect(rapikanInstansi(masukan as string | null | undefined)).toBe(harapan);
+  });
+
+  it("rapikanLaw hanya mengganti instansi, dan mengembalikan objek yang sama bila tidak ada yang berubah", () => {
+    const bersih = { judul: "x", instansi: "Presiden" };
+    expect(rapikanLaw(bersih)).toBe(bersih);
+    const kotor = { judul: "x", instansi: "[object Object]", tahun: 2003 };
+    expect(rapikanLaw(kotor)).toEqual({ judul: "x", instansi: null, tahun: 2003 });
+    expect(kotor.instansi).toBe("[object Object]"); // tidak mengubah masukan
   });
 });
