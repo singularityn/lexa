@@ -9,6 +9,7 @@
  *
  *   npm run dev:node            # http://localhost:8787
  *   PORT=3000 npm run dev:node
+ *   LEXA_DATA_NYATA=.dev/data-nyata.json npm run dev:node   # salinan data produksi, lihat muatDataNyata
  *
  * Aturan routing meniru wrangler.jsonc: /api/*, /robots.txt, dan /sitemap.xml
  * dilayani Worker; selainnya aset statis dengan fallback SPA. Header dari
@@ -31,13 +32,46 @@ const PDF_CONTOH = new TextEncoder().encode(
     "5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
 );
 
+const DATA_NYATA = process.env.LEXA_DATA_NYATA;
+// Hanya untuk tes e2e service worker: tanpa ini jawaban API yang masih "segar" menurut cache HTTP peramban
+// dilayani tanpa menyentuh jaringan, sehingga jalur cadangan service worker saat luring tak teruji.
+const TANPA_CACHE_API = process.env.LEXA_TANPA_CACHE_API === "1";
+
+/**
+ * Muat salinan baris produksi (laws, articles, relations) dari berkas JSON lokal, supaya tampilan
+ * dinilai dengan judul, pasal, dan relasi yang sungguhan. Berkasnya tidak boleh masuk Git (.dev/
+ * sudah diabaikan). Format: {"laws": [...], "articles": [...], "relations": [...]} dengan nama
+ * kolom persis seperti tabelnya.
+ */
+async function muatDataNyata(l: Lingkungan, berkas: string): Promise<string[]> {
+  const data = JSON.parse(new TextDecoder().decode(await readFile(berkas))) as Record<"laws" | "articles" | "relations", Array<Record<string, unknown>>>;
+  const ada = new Set((data.laws ?? []).map((b) => String(b.frbr_uri)));
+  for (const tabel of ["laws", "articles", "relations"] as const) {
+    for (const baris of data[tabel] ?? []) {
+      // Kunci asing: pasal dan relasi hanya boleh bersumber dari peraturan yang ikut dimuat.
+      if (tabel === "articles" && !ada.has(String(baris.frbr_uri))) continue;
+      if (tabel === "relations" && !ada.has(String(baris.from_uri))) continue;
+      const kolom = Object.keys(baris);
+      await l.db
+        .prepare(`INSERT OR IGNORE INTO ${tabel} (${kolom.join(",")}) VALUES (${kolom.map(() => "?").join(",")})`)
+        .bind(...kolom.map((k) => baris[k]))
+        .run();
+    }
+  }
+  return [...new Set((data.articles ?? []).map((a) => String(a.frbr_uri)))];
+}
+
 async function siapkan(): Promise<Lingkungan> {
   const l = buatLingkungan();
   // Kunci tiruan agar tombol "Masuk dengan Google" tampil; alurnya dialihkan ke /__dev/masuk (lihat bawah).
   Object.assign(l.env, { GOOGLE_CLIENT_ID: "pratinjau-lokal", GOOGLE_CLIENT_SECRET: "pratinjau-lokal" });
   l.ai.jawaban = (masukan) => jawabanContoh(masukan.messages.at(-1)?.content ?? "");
-  await isiDataContoh(l, sisipkan, sisipkanRelasi);
-  await indeksSemua(l, PERATURAN_CONTOH.map((p) => p.uri));
+  if (DATA_NYATA) {
+    await indeksSemua(l, await muatDataNyata(l, DATA_NYATA));
+  } else {
+    await isiDataContoh(l, sisipkan, sisipkanRelasi);
+    await indeksSemua(l, PERATURAN_CONTOH.map((p) => p.uri));
+  }
 
   // Satu peraturan lengkap dengan arsip PDF dan teks, untuk memperagakan tab Naskah.
   const uri = "/akn/id/act/uu/2003/13";
@@ -59,6 +93,7 @@ const TIPE: Record<string, string> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
+  ".png": "image/png",
   ".json": "application/json",
   ".txt": "text/plain; charset=utf-8",
   ".webmanifest": "application/manifest+json",
@@ -86,7 +121,9 @@ async function bacaHeaderStatik(): Promise<Record<string, string>> {
   return hasil;
 }
 
-const PITA = '<div class="pita-dev" role="note">Pratinjau lokal · data contoh, bukan naskah resmi</div>';
+const PITA = DATA_NYATA
+  ? '<div class="pita-dev" role="note">Pratinjau lokal · salinan data produksi, hanya untuk dinilai</div>'
+  : '<div class="pita-dev" role="note">Pratinjau lokal · data contoh, bukan naskah resmi</div>';
 
 async function main() {
   let l = await siapkan();
@@ -173,6 +210,7 @@ async function main() {
         respons.headers.forEach((v, k) => {
           if (k !== "set-cookie") keluar[k] = v;
         });
+        if (TANPA_CACHE_API && url.pathname.startsWith("/api/")) keluar["cache-control"] = "no-store";
         const cookie = respons.headers.getSetCookie();
         if (cookie.length) keluar["set-cookie"] = cookie;
         res.writeHead(respons.status, keluar);
@@ -214,7 +252,7 @@ async function main() {
     process.stdout.write(
       `\nLexa (pratinjau lokal) berjalan di http://localhost:${PORT}\n` +
         `  - Worker asli + SQLite sungguhan; AI, Vectorize, KV, R2, Queue berupa tiruan\n` +
-        `  - Data contoh: ${PERATURAN_CONTOH.length} peraturan (bukan naskah resmi)\n` +
+        `  - ${DATA_NYATA ? `Salinan data produksi dari ${DATA_NYATA}` : `Data contoh: ${PERATURAN_CONTOH.length} peraturan (bukan naskah resmi)`}\n` +
         `  - Token admin lokal: ${TOKEN_ADMIN}\n` +
         `  - Tekan Ctrl+C untuk berhenti\n\n`,
     );

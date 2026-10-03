@@ -78,6 +78,9 @@ async function minta(path, opsi = {}) {
     throw new GalatApi(0, "jaringan", "Tidak dapat menghubungi server. Periksa koneksi Anda lalu coba lagi.");
   }
 
+  // Service worker menandai jawaban yang berasal dari salinan di perangkat (public/sw.js).
+  if (res.headers.get("x-lexa-salinan")) globalThis.dispatchEvent?.(new CustomEvent("lexa:salinan"));
+
   if (opsi.teks && res.ok) return res.text();
   if (res.status === 204) return null;
 

@@ -2,6 +2,7 @@
 import { h, isi } from "../dom.js";
 import { api } from "../api.js";
 import { angka, kodeJenis, queryString, sitasi, urlPeraturan } from "../format.js";
+import { ajakanPasang } from "../komponen/ajakanPasang.js";
 import { kotakCari } from "../komponen/kotakCari.js";
 import { modeTersimpan, pilihMode } from "../komponen/pilihMode.js";
 
@@ -36,6 +37,7 @@ export default async function beranda(ctx) {
         CONTOH.map((c) => h("a", { class: "chip", href: `/cari${queryString({ q: c })}` }, c)),
       ),
     ),
+    ajakanPasang(),
     statistik,
     bidang,
     terbaru,

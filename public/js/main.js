@@ -10,7 +10,10 @@ import { pasangNavigasi, pergi } from "./navigasi.js";
 import { koleksi, pantau, sesi, siap, tema } from "./state.js";
 import { ikon } from "./komponen/ikon.js";
 import { kotakCari } from "./komponen/kotakCari.js";
+import { bangunNavBawah } from "./komponen/navBawah.js";
+import { bangunPitaLuring } from "./komponen/pitaLuring.js";
 import { buatAreaToast, toast } from "./komponen/toast.js";
+import { modeMandiri, mulaiPwa } from "./pwa.js";
 import { queryString } from "./format.js";
 
 const VERSI = "0.2.0";
@@ -29,6 +32,9 @@ const rute = {
 };
 /** @type {import("./router.js").Rute} */
 const tidakDitemukan = { halaman: "tidak-ditemukan", muat: () => import("./halaman/tidakDitemukan.js") };
+
+/** Halaman puncak tiap tab; selainnya (hasil, detail, dst.) dapat "kembali". */
+const HALAMAN_AKAR = new Set(["/", "/telusuri", "/tanya", "/koleksi", "/akun"]);
 
 const NAV = [
   ["/telusuri", "Telusuri"],
@@ -70,6 +76,19 @@ function bangunHeader() {
     saatKirim: (q) => pergi(`/cari${queryString({ q })}`),
   });
   const bungkusCari = h("div", { class: "header-cari" }, cari);
+
+  // Aplikasi yang dibuka dari layar utama tidak punya tombol kembali peramban (iOS) atau hanya gestur; sediakan sendiri.
+  const tombolKembali = h(
+    "button",
+    {
+      type: "button",
+      class: "tombol tombol-hantu tombol-ikon tombol-kembali",
+      "aria-label": "Kembali",
+      hidden: true,
+      onclick: () => (history.length > 1 ? history.back() : pergi("/")),
+    },
+    ikon("kiri"),
+  );
 
   const tombolTema = h("button", { type: "button", class: "tombol tombol-hantu tombol-ikon", onclick: () => tema.alihkan() });
   const gambarTema = () => {
@@ -115,12 +134,14 @@ function bangunHeader() {
     h(
       "div",
       { class: "bungkus header-isi" },
-      h("a", { class: "merek", href: "/", "aria-label": "Lexa, ke beranda" }, h("img", { src: "/favicon.svg", alt: "", width: "30", height: "30" }), "Lexa"),
+      tombolKembali,
+      h("a", { class: "merek", href: "/", "aria-label": "Lexa, ke beranda" }, h("img", { src: "/favicon.svg", alt: "", width: "30", height: "30" }), h("span", { class: "merek-teks" }, "Lexa")),
       tombolMenu,
       nav,
       bungkusCari,
       h("div", { class: "header-aksi" }, tombolTema, akun),
     ),
+    bangunPitaLuring(),
   );
 
   /** @param {string} path */
@@ -132,6 +153,7 @@ function bangunHeader() {
     }
     nav.classList.remove("terbuka");
     tombolMenu.setAttribute("aria-expanded", "false");
+    tombolKembali.hidden = !(modeMandiri() && !HALAMAN_AKAR.has(path));
     // Halaman yang sudah punya kotak cari sendiri tidak memerlukan yang di header.
     bungkusCari.classList.toggle("sembunyi", path === "/" || path === "/cari");
   }
@@ -162,9 +184,10 @@ function bangunFooter() {
 async function mulai() {
   const app = /** @type {HTMLElement} */ (document.getElementById("app"));
   const { header, tandaiAktif } = bangunHeader();
+  const navBawah = bangunNavBawah();
   const konten = h("main", { id: "konten", tabindex: "-1", class: "bungkus" });
   const pengumuman = h("div", { class: "sr-only", role: "status", "aria-live": "polite" });
-  isi(app, header, konten, bangunFooter(), buatAreaToast(), pengumuman);
+  isi(app, header, konten, bangunFooter(), navBawah.nav, buatAreaToast(), pengumuman);
 
   const router = buatRouter({
     rute,
@@ -173,6 +196,7 @@ async function mulai() {
     tidakDitemukan,
     saatBerubah: (path) => {
       tandaiAktif(path);
+      navBawah.tandaiAktif(path);
       document.body.dataset.halaman = (rute[path] ?? tidakDitemukan).halaman;
     },
   });
@@ -195,6 +219,8 @@ async function mulai() {
     if (digabung) toast(`${digabung} peraturan dari perangkat ini digabung ke koleksi akun Anda.`);
   });
 
+  // Sebelum rute pertama: panggilan API halaman pertama pun bisa dijawab dari salinan luring, dan pendengarnya harus sudah ada.
+  mulaiPwa();
   await router.mulai();
 }
 

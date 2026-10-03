@@ -12,11 +12,29 @@ export function buatAreaToast() {
 
 /**
  * @param {string} pesan
- * @param {{ galat?: boolean, durasi?: number }} [opsi]
+ * @param {{ galat?: boolean, durasi?: number, aksi?: { label: string, saat: () => void } }} [opsi]
  */
 export function toast(pesan, opsi = {}) {
   if (!area) return;
-  const el = h("div", { class: ["toast", opsi.galat ? "galat-toast" : ""] }, pesan);
+  const el = h(
+    "div",
+    { class: ["toast", opsi.galat ? "galat-toast" : "", opsi.aksi ? "toast-berisi-aksi" : ""] },
+    h("span", null, pesan),
+    opsi.aksi
+      ? h(
+          "button",
+          {
+            type: "button",
+            class: "toast-aksi",
+            onclick: () => {
+              el.remove();
+              opsi.aksi?.saat();
+            },
+          },
+          opsi.aksi.label,
+        )
+      : null,
+  );
   area.appendChild(el);
   setTimeout(() => el.remove(), opsi.durasi ?? (opsi.galat ? 6000 : 3500));
 }

@@ -2,7 +2,9 @@
 <html lang="id">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- viewport-fit=cover: isi halaman boleh mengisi area di balik takik/bilah gestur; css memakai env(safe-area-inset-*) agar tidak tertutup.
+       interactive-widget=resizes-content: papan ketik mengecilkan layar (bukan menutupi), agar kotak tanya tetap terlihat. Zoom pengguna sengaja tidak dikunci. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Lexa: cari peraturan perundang-undangan Indonesia</title>
   <meta name="description" content="Cari dan baca peraturan perundang-undangan Indonesia: undang-undang, peraturan pemerintah, peraturan presiden, dan peraturan menteri. Pencarian sitasi, kata kunci, dan makna, serta tanya jawab yang bersandar pada pasal.">
   <meta name="color-scheme" content="light dark">
@@ -11,7 +13,16 @@
   <meta property="og:site_name" content="Lexa">
   <meta property="og:title" content="Lexa: cari peraturan perundang-undangan Indonesia">
   <meta property="og:description" content="Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dengan tanya jawab yang selalu menyebut pasal sumbernya.">
+  <meta name="application-name" content="Lexa">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Lexa">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="format-detection" content="telephone=no">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/ikon/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/ikon/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
   <script src="/js/tema.js"></script>
   <link rel="stylesheet" href="/css/app.css">
   <link rel="modulepreload" href="/js/main.js">

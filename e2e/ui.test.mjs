@@ -10,16 +10,13 @@
  * Tiap tes memakai konteks peramban baru; data server dikembalikan ke awal sebelum
  * setiap berkas tes dan setelah tes yang mengubahnya.
  */
-import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { chromium } from "playwright-core";
+import { mulaiPratinjau, pasangPengumpul, UU13, urlUU } from "./pembantu.mjs";
 
 const require = createRequire(import.meta.url);
 const PORT = 4789;
 const BASE = `http://localhost:${PORT}`;
-const UU13 = "/akn/id/act/uu/2003/13";
-const urlUU = (uri, ekstra = "") => `/peraturan?uri=${encodeURIComponent(uri)}${ekstra}`;
 
 let server;
 let browser;
@@ -30,22 +27,7 @@ async function reset() {
 }
 
 beforeAll(async () => {
-  execFileSync("npm", ["run", "build:dev", "--silent"], { stdio: "inherit" });
-  server = spawn(process.execPath, [".dev/dev-node.mjs"], {
-    env: { ...process.env, PORT: String(PORT) },
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-  await new Promise((selesai, gagal) => {
-    const batas = setTimeout(() => gagal(new Error("server pratinjau tidak siap dalam 60 detik")), 60_000);
-    server.stdout.on("data", (d) => {
-      if (String(d).includes("berjalan di")) {
-        clearTimeout(batas);
-        selesai();
-      }
-    });
-    server.on("exit", (kode) => gagal(new Error(`server pratinjau berhenti (kode ${kode})`)));
-  });
-  browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
+  ({ server, browser } = await mulaiPratinjau(PORT));
 });
 
 afterAll(async () => {
@@ -62,21 +44,11 @@ let masalah;
 
 beforeEach(async () => {
   masalah = [];
-  ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, permissions: ["clipboard-read", "clipboard-write"] });
+  // Service worker diblokir di sini supaya tes lain deterministik (route(), data yang di-reset, dst.);
+  // perilakunya diuji khusus di e2e/pwa.test.mjs.
+  ctx = await browser.newContext({ serviceWorkers: "block", viewport: { width: 1280, height: 900 }, permissions: ["clipboard-read", "clipboard-write"] });
   page = await ctx.newPage();
-  page.on("console", (m) => {
-    // Peramban mencatat setiap respons 4xx/5xx sebagai galat konsol; statusnya diperiksa di penangan "response".
-    if (["error", "warning"].includes(m.type()) && !m.text().startsWith("Failed to load resource")) masalah.push(`[${m.type()}] ${m.text()}`);
-  });
-  page.on("pageerror", (e) => masalah.push(`[pageerror] ${e.message}`));
-  page.on("requestfailed", (r) => {
-    // Permintaan basi yang sengaja dibatalkan aplikasi (AbortController) bukan kegagalan.
-    if (r.failure()?.errorText !== "net::ERR_ABORTED") masalah.push(`[requestfailed] ${r.url()} ${r.failure()?.errorText}`);
-  });
-  page.on("response", (r) => {
-    // 404 pada detail dan 429/503 pada tanya sengaja terjadi di beberapa skenario; yang lain berarti ada yang rusak.
-    if (r.status() >= 400 && !r.url().includes("/api/laws/detail") && !r.url().includes("/api/tanya")) masalah.push(`[http ${r.status()}] ${r.url()}`);
-  });
+  pasangPengumpul(page, masalah);
 });
 
 afterEach(async () => {
@@ -320,7 +292,7 @@ describe("telusur dengan banyak data", () => {
   });
 
   it("di ponsel panel filter tertutup sampai tombol Filter ditekan", async () => {
-    const hp = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const hp = await browser.newContext({ serviceWorkers: "block", viewport: { width: 390, height: 844 } });
     const p = await hp.newPage();
     await p.goto(BASE + "/telusuri", { waitUntil: "networkidle" });
     expect(await p.locator(".filter-isi").isVisible()).toBe(false);
@@ -614,8 +586,8 @@ describe("tampilan dan aksesibilitas", () => {
     expect(await page.textContent("[aria-live=polite].sr-only")).toBe("Tentang Lexa");
   });
 
-  it("tampilan ponsel: tanpa gulir horizontal di semua halaman utama, menu dapat dibuka", async () => {
-    const hp = await browser.newContext({ viewport: { width: 375, height: 800 } });
+  it("tampilan ponsel: tanpa gulir horizontal di semua halaman utama; navigasi utama ada di bilah bawah", async () => {
+    const hp = await browser.newContext({ serviceWorkers: "block", viewport: { width: 375, height: 800 } });
     const p = await hp.newPage();
     const galat = [];
     p.on("console", (m) => m.type() === "error" && galat.push(m.text()));
@@ -623,8 +595,10 @@ describe("tampilan dan aksesibilitas", () => {
       await p.goto(BASE + path, { waitUntil: "networkidle" });
       expect(await p.evaluate(() => document.documentElement.scrollWidth), path).toBeLessThanOrEqual(375);
     }
-    await p.click(".tombol-menu");
-    expect(await p.locator(".nav.terbuka").count()).toBe(1);
+    // Menu hamburger digantikan bilah navigasi bawah (terjangkau ibu jari); keduanya tidak tampil bersamaan.
+    expect(await p.locator(".tombol-menu").isVisible()).toBe(false);
+    expect(await p.locator(".nav-bawah").isVisible()).toBe(true);
+    expect(await p.locator(".nav-bawah .tab-label").allTextContents()).toEqual(["Cari", "Telusuri", "Tanya", "Koleksi", "Masuk"]);
     expect(galat).toEqual([]);
     await hp.close();
   });
@@ -647,7 +621,7 @@ describe("tampilan dan aksesibilitas", () => {
     for (const tema of ["terang", "gelap"]) {
       it.each(halaman)(`%s (tema ${tema})`, async (_nama, path) => {
         // bypassCSP hanya agar axe bisa disuntikkan; aplikasinya sendiri diuji dengan CSP aktif di tes lain.
-        const konteks = await browser.newContext({ viewport: { width: 1280, height: 900 }, bypassCSP: true, colorScheme: tema === "gelap" ? "dark" : "light" });
+        const konteks = await browser.newContext({ serviceWorkers: "block", viewport: { width: 1280, height: 900 }, bypassCSP: true, colorScheme: tema === "gelap" ? "dark" : "light" });
         const p = await konteks.newPage();
         await p.goto(BASE + path, { waitUntil: "networkidle" });
         await p.waitForTimeout(300);

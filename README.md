@@ -65,6 +65,20 @@ Rute: `/` beranda, `/cari`, `/telusuri`, `/peraturan?uri=…` (sama dengan URL p
 `innerHTML`), CSP ketat lewat `public/_headers`, dan JavaScript-nya dicek tipenya (`checkJs`) lewat
 `tsconfig.web.json`.
 
+#### Ponsel dan layar utama (PWA)
+
+Lexa dirancang mobile-first dan dapat dipasang ke layar utama (Android/Chrome lewat tombol Pasang, iOS lewat
+Bagikan > Tambahkan ke Layar Utama; panduannya tampil di aplikasi dan di halaman Akun). Di layar sempit
+navigasi utama ada di bilah bawah, dan area aman (takik, bilah gestur) dihormati.
+
+- `public/manifest.webmanifest` dan ikon PNG di `public/ikon/` (dibuat oleh `npm run ikon`; hasilnya di-commit).
+- `public/sw.js` menyimpan cangkang aplikasi dan peraturan yang pernah dibuka agar terbaca tanpa jaringan.
+  Strateginya **jaringan dulu**: saat daring pengguna tidak pernah disuguhi salinan usang; salinan hanya
+  dipakai bila jaringan gagal, lambat, atau server 5xx. Pencarian, tanya jawab, sesi, dan koleksi tidak pernah
+  disentuh.
+- **Setiap kali berkas di `public/` berubah, jalankan `npm run sw`** (menulis ulang daftar precache dan
+  versi di `sw.js`). `npm test` gagal bila lupa, supaya pengguna tidak terjebak di cangkang lama.
+
 ## Struktur repo
 
 ```
@@ -78,7 +92,7 @@ public/                  antarmuka (index.html, css/, js/, _headers, favicon)
 migrations/              migrasi D1 0000-0004 (direkonstruksi dari skema produksi)
 test/                    tes unit; test/integration: Worker asli di atas SQLite sungguhan
 e2e/                     tes antarmuka di Chromium
-scripts/                 pratinjau lokal (dev-node.ts) dan data contoh
+scripts/                 pratinjau lokal (dev-node.ts), data contoh, pembuat ikon, pembaruan sw.js
 docs/                    analisis kelayakan dan panduan koneksi GitHub-Cloudflare
 wrangler.jsonc           konfigurasi Worker
 ```
@@ -92,6 +106,7 @@ npm ci
 npm run check            # typecheck (Worker + antarmuka) + ratusan tes
 npm run dev:node         # pratinjau lokal di http://localhost:8787, tanpa akun Cloudflare
 npm run e2e              # tes antarmuka di Chromium (butuh: npx playwright-core install chromium)
+npm run sw               # perbarui daftar precache service worker setelah mengubah isi public/
 npm run d1:migrate:local # buat D1 lokal dari migrasi
 cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignore Git
 ```
@@ -136,7 +151,7 @@ npm run d1:migrate:remote    # produksi; jalankan manual, bukan dari pipeline bu
 
 ## Mengubah kode dengan aman
 
-1. Ubah kode, jalankan `npm run check` (dan `npm run e2e` bila menyentuh antarmuka).
+1. Ubah kode, jalankan `npm run check` (dan `npm run e2e` bila menyentuh antarmuka; `npm run sw` bila menyentuh `public/`).
 2. Perubahan perilaku wajib disertai tes. Bug yang sudah diketahui tetapi belum diperbaiki
    didokumentasikan dengan `it.fails` (gagal yang diharapkan) atau `it.todo`; saat diperbaiki, `it.fails`
    akan memberi tahu agar dihapus.

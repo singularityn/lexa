@@ -18,6 +18,8 @@
     "d1:migrate:remote": "wrangler d1 migrations apply lexa-db --remote",
     "dev:node": "npm run build:dev --silent && node .dev/dev-node.mjs",
     "build:dev": "esbuild scripts/dev-node.ts --bundle --platform=node --format=esm --target=node22 --outfile=.dev/dev-node.mjs --log-level=warning",
+    "sw": "node scripts/perbarui-sw.mjs",
+    "ikon": "node scripts/buat-ikon.mjs",
     "e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {

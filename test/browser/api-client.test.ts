@@ -59,9 +59,29 @@ describe("klien API: jawaban 2xx yang tak terbaca", () => {
     const batal = new DOMException("dibatalkan", "AbortError");
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({ ok: true, status: 200, json: async () => { throw batal; }, text: async () => "" }) as unknown as Response),
+      vi.fn(async () => ({ ok: true, status: 200, headers: new Headers(), json: async () => { throw batal; }, text: async () => "" }) as unknown as Response),
     );
     await expect(api.statusAuth()).rejects.toBe(batal);
+  });
+});
+
+describe("klien API: penanda salinan dari service worker", () => {
+  it("jawaban bertanda x-lexa-salinan memicu peristiwa lexa:salinan di jendela; yang tidak bertanda tidak", async () => {
+    const kirim = vi.fn();
+    vi.stubGlobal("dispatchEvent", kirim);
+    balasDengan(JSON.stringify({ masuk: false, login_tersedia: false, pengguna: null }));
+    await api.statusAuth();
+    expect(kirim).not.toHaveBeenCalled();
+
+    balasDengan(JSON.stringify({ masuk: false, login_tersedia: false, pengguna: null }), { headers: { "content-type": "application/json", "x-lexa-salinan": "1" } });
+    await api.statusAuth();
+    expect(kirim).toHaveBeenCalledTimes(1);
+    expect(kirim.mock.calls[0][0].type).toBe("lexa:salinan");
+  });
+
+  it("tanpa dispatchEvent global (bukan peramban) penanda diabaikan tanpa galat", async () => {
+    balasDengan("{}", { headers: { "content-type": "application/json", "x-lexa-salinan": "1" } });
+    await expect(api.statusAuth()).resolves.toEqual({});
   });
 });
 

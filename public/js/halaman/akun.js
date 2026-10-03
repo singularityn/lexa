@@ -3,6 +3,7 @@ import { h, isi } from "../dom.js";
 import { api, GalatApi } from "../api.js";
 import { koleksi, sesi, siap } from "../state.js";
 import { toast } from "../komponen/toast.js";
+import { kartuPasang } from "../komponen/ajakanPasang.js";
 import { kerangka, peringatan } from "../komponen/umum.js";
 import { pergi } from "../navigasi.js";
 
@@ -12,6 +13,22 @@ const PESAN_GALAT = /** @type {Record<string, string>} */ ({
   token: "Google menolak pertukaran kode masuk. Silakan coba lagi.",
   verifikasi: "Identitas dari Google tidak dapat diverifikasi, sehingga Anda tidak dimasukkan.",
 });
+
+/** Tautan yang di layar lebar ada di header/footer, tetapi tidak di bilah navigasi bawah ponsel. */
+function kartuInformasi() {
+  return h(
+    "div",
+    { class: "kartu", style: { marginTop: "16px" } },
+    h("h2", { class: "kartu-judul" }, "Informasi"),
+    h(
+      "ul",
+      { class: "daftar-tautan" },
+      h("li", null, h("a", { href: "/tentang" }, "Tentang dan batasan Lexa")),
+      h("li", null, h("a", { href: "/status" }, "Status data dan sinkronisasi")),
+      h("li", null, h("a", { href: "https://peraturan.bpk.go.id", target: "_blank", rel: "noopener noreferrer" }, "Naskah resmi di peraturan.bpk.go.id")),
+    ),
+  );
+}
 
 /** @param {import("../router.js").Konteks} ctx */
 export default async function akun(ctx) {
@@ -35,10 +52,15 @@ export default async function akun(ctx) {
           h("h2", { class: "kartu-judul" }, "Anda memakai Lexa sebagai tamu"),
           h("p", null, "Semua fitur, termasuk pencarian, membaca pasal, tanya jawab, dan koleksi, berfungsi tanpa akun. Akun hanya menambah satu hal: koleksi dan riwayat tanya jawab Anda tersinkron antarperangkat."),
           tersedia
-            ? h("p", null, h("a", { class: "tombol tombol-utama", href: `/api/auth/google?kembali=${encodeURIComponent("/koleksi")}`, "data-luar": "" }, "Masuk dengan Google"), " ", h("span", { class: "bantu" }, "Lexa hanya meminta identitas dasar (nama, email, foto), bukan akses ke Gmail atau Drive."))
+            ? [
+                h("p", null, h("a", { class: "tombol tombol-utama", href: `/api/auth/google?kembali=${encodeURIComponent("/koleksi")}`, "data-luar": "" }, "Masuk dengan Google")),
+                h("p", { class: "bantu" }, "Lexa hanya meminta identitas dasar (nama, email, foto), bukan akses ke Gmail atau Drive."),
+              ]
             : h("p", { class: "redup" }, "Masuk dengan Google belum diaktifkan di instalasi ini. Mode tamu tetap berfungsi penuh."),
           koleksi.jumlah ? h("p", { class: "bantu" }, `${koleksi.jumlah} peraturan di koleksi perangkat ini akan dibawa ke akun saat Anda masuk.`) : null,
         ),
+        h("div", { style: { marginTop: "16px" } }, kartuPasang()),
+        kartuInformasi(),
       ),
     );
     return;
@@ -93,6 +115,8 @@ export default async function akun(ctx) {
           },
         }, "Keluar"),
       ),
+      h("div", { style: { marginTop: "16px" } }, kartuPasang()),
+      kartuInformasi(),
     ),
   );
 }
