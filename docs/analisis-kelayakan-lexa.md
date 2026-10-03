@@ -41,7 +41,7 @@ Penanda tingkat bukti yang dipakai di seluruh dokumen:
 | Binding lain (dari kode) | `AI` (Workers AI), `VECTORIZE`, `INGEST_QUEUE` | Indeks Vectorize dan konfigurasi Queue tidak bisa saya inspeksi dengan tool yang tersedia [?] |
 | Vars/secrets (nama saja) | `ADMIN_TOKEN`, `PASAL_API_TOKEN`, `GOOGLE_CLIENT_ID/SECRET`, `EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `PASAL_API_BASE`, `SEARCH_CACHE_TTL` | Nilainya tidak terlihat dan tidak saya baca |
 
-Tidak ada binding `ASSETS` dan tidak ada HTML yang disajikan, jadi **antarmuka web belum terlihat di Worker ini**. Mungkin ada di tempat lain (mis. Pages), yang tidak bisa saya lihat dari tool yang ada. [V][?]
+Tidak ada binding `ASSETS` dan tidak ada HTML yang disajikan oleh kode Worker. Namun komentar di `src/worker/index.ts` menyebut bahwa selain `/api/*`, permintaan "jatuh ke static assets SPA", dan tipe bersama (`src/shared/types`) dipakai juga oleh frontend. Jadi **kemungkinan ada frontend (SPA) yang kodenya tidak ikut ter-bundle ke Worker**, sehingga tidak bisa dipulihkan dari sourcemap, dan aset statisnya tidak bisa saya lihat dari tool yang ada. Bentuk keluaran bundel produksi (`const` dan `class` apa adanya, tanpa pembungkus `__name`) menyiratkan produksi dibangun dengan Vite/`@cloudflare/vite-plugin`, bukan `wrangler deploy` biasa. [V][I]
 
 ### 1.2 Isi data [V]
 
@@ -102,7 +102,17 @@ src/worker/routes/api.ts       (515)   impor.ts (195)  dokumen.ts (151)  fitur.t
 src/worker/routes/auth.ts      (268)   tanya.ts (223)  koleksi.ts (99)
 ```
 
-Hasil pemulihan saya simpan sementara di direktori scratchpad sesi (bukan di repo) dan tidak ikut ter-commit. Jika Anda setuju, ini bisa menjadi commit pertama repo.
+**Status: sudah dikerjakan.** Kode ini kini ada di repo (commit "chore: pulihkan kode sumber Lexa v0.1 dari sourcemap Worker produksi") dan terbukti identik byte-per-byte dengan sourcemap produksi (17 dari 17 berkas, dibandingkan lewat SHA-256).
+
+### 1.7 Temuan tambahan setelah kode dibaca penuh [V]
+
+- **Panen BPK berbasis peramban.** `lib/cors.ts` hanya mengizinkan origin `https://peraturan.bpk.go.id` dan `https://www.peraturan.bpk.go.id`. Bersama pesan galat "sesi BPK mungkin kedaluwarsa dan yang terunduh adalah halaman challenge", ini menunjukkan metadata dan PDF diambil oleh skrip yang berjalan **di dalam sesi peramban pada situs BPK**, lalu dikirim ke `POST /api/impor/manifest` dan `PUT /api/impor/pdf`. Skripnya tidak ada di repo.
+- **Metadata BPK sangat lengkap.** Dari 1.459 dokumen yang dipanen dari BPK: 100% punya instansi dan ringkasan (abstrak); 99,6% punya bidang dan "tentang"; 99,0% punya tanggal penetapan; 99,3% punya tanggal berlaku.
+- **Model data BPK yang terungkap lewat kode:** satu peraturan bisa bertanda beberapa bidang yang dirangkai dengan " - " (mis. "APBN - BUMN"; menurut komentar kode, 13 dari 60 nama bidang adalah gabungan); setiap dokumen punya daftar relasi berlabel (Mengubah, Diubah oleh, Mencabut, Dicabut oleh, Dasar Hukum, Pelaksana).
+- **Bug di produksi:** ekspresi FTS5 untuk kata bertanda hubung (mis. "perundang-undangan") tidak dikutip sehingga SQLite membacanya sebagai filter kolom dan melempar "no such column"; galatnya ditelan, jadi jalur kata kunci diam-diam kosong. Diverifikasi terhadap FTS5 sungguhan dan didokumentasikan dengan tes `it.fails`. Belum diperbaiki agar deploy pertama tetap setara dengan produksi.
+- **Celah pencarian lain:** stemmer belum melucuti awalan "be-" ("bekerja" tidak menghasilkan "kerja"), dan nama panjang seperti "Peraturan Pemerintah Nomor 35 Tahun 2021" belum dikenali sebagai sitasi (keduanya tercatat sebagai `it.todo`).
+- **Paritas build.** Dua build berbeda hanya pada pustaka dan pembungkus (Hono lokal lebih baru karena memuat perbaikan batas kedalaman objek bersarang; produksi tidak memakai `__name`). Sumber aplikasi identik, jadi perbedaan itu bukan perubahan perilaku aplikasi.
+- **Rencana awal penulis v0.1** (komentar di `lib/bpk.ts`): "BPK sebagai sumber utama" bertumpu pada mata rantai PDF → `toMarkdown` → pasal yang saat itu belum teruji. Sekarang sudah teruji pada 1.577 PDF (70% bersih; bagian 1.4).
 
 ---
 
@@ -153,7 +163,7 @@ Langkah dan jebakan untuk kasus Anda:
 
 **Indikasi risiko akses:**
 
-- Kode `PUT /pdf` di v0.1 menolak isi yang bukan `%PDF-` dengan pesan: "Sesi BPK mungkin kedaluwarsa dan yang terunduh adalah halaman challenge." Artinya penulis v0.1 mengunduh PDF dengan sesi yang melewati challenge dan mengunggahnya dari luar. [V]
+- Kode `PUT /pdf` di v0.1 menolak isi yang bukan `%PDF-` dengan pesan: "Sesi BPK mungkin kedaluwarsa dan yang terunduh adalah halaman challenge." Artinya PDF diunduh dengan sesi yang sudah melewati challenge. Karena `cors.ts` hanya mengizinkan origin BPK, pengunduhan dilakukan oleh skrip yang berjalan **di dalam sesi peramban pada situs BPK**, lalu mengirim manifest dan PDF ke Worker (bagian 1.7). [V][I]
 - README komunitas [indonesia-gov-apis](https://github.com/suryast/indonesia-gov-apis) mencatat `jdih.bpk.go.id` (portal BPK yang berbeda dari `peraturan.bpk.go.id`) memberi 403 dari luar negeri dan 200 dari Indonesia, serta klaim umum bahwa banyak situs .go.id memblokir IP datacenter. Ini klaim komunitas, belum diuji untuk host yang relevan. [P]
 - **Browser Run (Browser Rendering) bukan jalan keluar:** endpoint `/crawl` menaati `robots.txt`, mengidentifikasi diri sebagai bot, dan **tidak menembus** bot-protection atau CAPTCHA. [V] ([dokumentasi](https://developers.cloudflare.com/browser-run/quick-actions/crawl-endpoint/))
 - Placement hint (`placement.region`, mis. `aws:ap-southeast-3` untuk Jakarta) membuat Worker berjalan di data center Cloudflare dengan latensi terendah ke region itu [V], sehingga **mungkin** membantu bila BPK membatasi geografi. Apakah itu cukup, belum teruji. [?]
@@ -163,7 +173,7 @@ Langkah dan jebakan untuk kasus Anda:
 | Opsi | Cara kerja | Kelebihan | Kekurangan | Penilaian |
 |---|---|---|---|---|
 | A. Crawl langsung dari Worker (Cron + Queues + Workflows) | Worker `fetch` HTML/PDF BPK dengan kecepatan sopan | 100% di Cloudflare, otomatis | Belum terbukti; ada indikasi challenge/IP block | Uji di Fase 0 |
-| B. Harvester terkendali di luar Workers, mendorong ke API impor Lexa | Skrip dengan IP Indonesia mengambil data, lalu `POST /manifest` dan `PUT /pdf` (sudah ada) | Terbukti dipakai v0.1; penyimpanan, pengolahan, dan penyajian tetap di Cloudflare | Ada komponen non-Cloudflare; sesi/challenge rapuh | Jalan sekarang, skala kecil |
+| B. Harvester di luar Workers, mendorong ke API impor Lexa | Skrip yang berjalan di sesi peramban pada situs BPK (origin BPK diizinkan oleh CORS di Worker) mengambil metadata dan PDF, lalu `POST /api/impor/manifest` dan `PUT /api/impor/pdf` (sudah ada) | Terbukti dipakai v0.1; penyimpanan, pengolahan, dan penyajian tetap di Cloudflare | Bergantung pada sesi manusia yang lolos challenge (rapuh, sulit diotomatisasi); skripnya tidak ada di repo; perlu izin BPK | Jalan sekarang, skala kecil |
 | C. Kerja sama resmi dengan BPK (izin tertulis, dump/API, daftar putih User-Agent) | Surat/MoU ke pengelola JDIH BPK | Menghapus risiko hukum dan teknis, data lebih lengkap | Butuh waktu, hasil tidak pasti | **Jalur terbaik jangka panjang** |
 | D. Agregator/alternatif: [pasal.id](https://pasal.id/en/api), peraturan.go.id, [JDIHN](https://jdihn.go.id/uploads/user_guide/User%20Guide%20Integrasi.pdf) | API atau crawl sumber lain | Cepat; pasal.id sudah terstruktur (pohon pasal, relasi) | Ketergantungan pihak ketiga; batas 60/menit; pasal.id berlisensi AGPL-3.0 (kode), lisensi datanya tidak saya temukan; BPK bukan lagi source-of-record | Pelengkap dan cross-check saja |
 
@@ -448,11 +458,17 @@ Skala usaha: **S** ≤ 1 minggu, **M** 1–3 minggu, **L** > 3 minggu. Nilai: T 
 5. **Penanggung jawab** komunikasi dengan BPK dan entitas yang mengelola Lexa (syarat penggunaan, privasi, takedown).
 6. **Domain** produksi.
 
-**Hal yang dapat saya kerjakan berikutnya (menunggu persetujuan Anda):**
+**Status pengerjaan (diperbarui setelah kode dipulihkan):**
 
-- Memulihkan 17 file TypeScript dari sourcemap ke repo sebagai commit pertama, menyiapkan `wrangler.jsonc` untuk resource yang ada, CI, dan rekonstruksi migrasi. Karena remote masih kosong, push pertama menjadikan branch yang dipush sebagai branch default di GitHub; saya perlu tahu Anda ingin `main` dibuat lebih dulu.
-- Mengaktifkan read replication D1 dan menyesuaikan kode ke Sessions API (mengubah setelan produksi, jadi perlu persetujuan).
+- Selesai: kode v0.1 dipulihkan ke repo dan terbukti identik dengan produksi; scaffolding (npm, TypeScript strict, tipe `Env` dan tipe bersama); `wrangler.jsonc` selaras dengan resource yang ada (bagian yang belum terverifikasi ditandai `TODO(verifikasi)` dan dibuat gagal-aman); 5 migrasi D1 direkonstruksi dan skemanya terbukti sama dengan produksi; 79 tes karakterisasi (+2 bug terdokumentasi); CI GitHub Actions; panduan koneksi di `docs/hubungkan-github-cloudflare.md`.
+- Menunggu Anda (hanya bisa dilakukan di dashboard Cloudflare/GitHub): menghubungkan repo lewat Workers Builds dengan urutan aman pada panduan itu, serta mengisi nilai yang tidak bisa saya baca (nama indeks Vectorize, nama queue dan pengaturan konsumernya, variabel, cron, ada tidaknya aset statis).
+
+**Berikutnya (perlu persetujuan karena mengubah perilaku atau setelan produksi):**
+
+- Memperbaiki bug FTS kata bertanda hubung (kutip token), menambah awalan "be-" pada stemmer, dan mengenali sitasi nama panjang; semuanya sudah punya tes yang akan berubah dari `fails`/`todo` menjadi lulus.
+- Mengaktifkan read replication D1 dan memakai Sessions API (setelan produksi; perlu persetujuan).
 - Menjalankan uji akses BPK (Fase 0): bisa lewat Worker uji, atau, bila Anda mengizinkan host `peraturan.bpk.go.id` di pengaturan jaringan environment sesi ini (Network access → Custom → Allowed domains; panduan: https://code.claude.com/docs/en/cloud-environments#network-access), saya bisa memeriksa `robots.txt`, struktur halaman, dan perilaku anti-bot dari sandbox. Perlu dicatat, hasil dari sandbox tidak sama dengan perilaku terhadap egress Cloudflare Workers.
+- Mendapatkan kembali frontend (SPA) dan skrip panen BPK: keduanya tidak ada di Worker, jadi harus berasal dari Anda atau dari aset yang disajikan Worker.
 
 ---
 
