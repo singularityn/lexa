@@ -341,6 +341,93 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
     });
   });
 
+  describe("ejaan URI PERPPU ('perpu' vs 'perppu')", () => {
+    // Di produksi pasal.id menyimpan peraturannya sebagai .../perpu/2022/2 tetapi relasi ke sana
+    // sebagai .../perppu/2022/2 (117 dari 124 relasi ke PERPPU menggantung karenanya).
+    const PERPPU = "/akn/id/act/perpu/2022/2";
+    const ALIAS = "/akn/id/act/perppu/2022/2";
+    const UU13 = "/akn/id/act/uu/2003/13";
+
+    beforeEach(async () => {
+      await sisipkan(l, [{ uri: PERPPU, jenis: "PERPPU", nomor: "2", tahun: 2022, judul: "Cipta Kerja (Perppu)" }]);
+      await sisipkanRelasi(l, [{ dari: UU13, ke: ALIAS, jenis: "diubah_oleh", keterangan: "PERPU No. 2 Tahun 2022" }]);
+    });
+
+    const detail = (uri: string) => panggil(l, `/api/laws/detail?uri=${encodeURIComponent(uri)}`);
+    const graf = (uri: string, ekstra = "") => panggil(l, `/api/relasi/graf?uri=${encodeURIComponent(uri)}${ekstra}`);
+
+    it("detail: relasi ke ejaan lain diselesaikan ke peraturan di indeks, lengkap dengan metadata", async () => {
+      const b = await json<{ relations: Array<Record<string, unknown>> }>(await detail(UU13));
+      expect(b.relations).toEqual([
+        {
+          to_uri: PERPPU, jenis_relasi: "diubah_oleh", keterangan: "PERPU No. 2 Tahun 2022",
+          judul: "Cipta Kerja (Perppu)", jenis: "PERPPU", nomor: "2", tahun: 2022, status: "berlaku",
+        },
+      ]);
+    });
+
+    it("detail: urutan relasi tetap menurut jenis lalu tahun terbaru, juga setelah diperbaiki", async () => {
+      await sisipkanRelasi(l, [
+        { dari: UU13, ke: "/akn/id/act/uu/2020/11", jenis: "diubah_oleh" },
+        { dari: UU13, ke: "/akn/id/act/pp/2099/1", jenis: "diubah_oleh" }, // belum di indeks: tanpa tahun, terakhir
+        { dari: UU13, ke: "/akn/id/act/uu/2023/6", jenis: "mencabut" },
+      ]);
+      const b = await json<{ relations: Array<{ to_uri: string; jenis_relasi: string }> }>(await detail(UU13));
+      expect(b.relations.map((r) => [r.jenis_relasi, r.to_uri])).toEqual([
+        ["diubah_oleh", PERPPU], // 2022
+        ["diubah_oleh", "/akn/id/act/uu/2020/11"], // 2020
+        ["diubah_oleh", "/akn/id/act/pp/2099/1"], // tanpa tahun
+        ["mencabut", "/akn/id/act/uu/2023/6"],
+      ]);
+    });
+
+    it("detail: peraturan yang diminta dengan ejaan lain tetap ditemukan, dan URI di jawaban adalah yang di indeks", async () => {
+      const res = await detail(ALIAS);
+      expect(res.status).toBe(200);
+      expect((await json<{ law: { frbr_uri: string } }>(res)).law.frbr_uri).toBe(PERPPU);
+    });
+
+    it("kebalikannya: peraturan tersimpan sebagai 'perppu', relasi menunjuk 'perpu'", async () => {
+      await sisipkan(l, [{ uri: "/akn/id/act/perppu/2020/1", jenis: "PERPPU", nomor: "1", tahun: 2020, judul: "Kebijakan Keuangan" }]);
+      await sisipkanRelasi(l, [{ dari: UU13, ke: "/akn/id/act/perpu/2020/1", jenis: "diubah_oleh" }]);
+      const b = await json<{ relations: Array<{ to_uri: string; judul: string | null }> }>(await detail(UU13));
+      expect(b.relations.find((r) => r.to_uri === "/akn/id/act/perppu/2020/1")?.judul).toBe("Kebijakan Keuangan");
+      expect((await detail("/akn/id/act/perpu/2020/1")).status).toBe(200);
+    });
+
+    it("tidak mengarang: bila kedua ejaan tidak ada di indeks, relasi tetap menggantung dan 404 tetap 404", async () => {
+      await sisipkanRelasi(l, [{ dari: UU13, ke: "/akn/id/act/perppu/1999/9", jenis: "diubah_oleh" }]);
+      const b = await json<{ relations: Array<{ to_uri: string; judul: string | null }> }>(await detail(UU13));
+      expect(b.relations.find((r) => r.to_uri === "/akn/id/act/perppu/1999/9")).toMatchObject({ judul: null });
+      expect((await detail("/akn/id/act/perppu/1999/9")).status).toBe(404);
+    });
+
+    it("graf dari UU: simpul PERPPU memakai URI di indeks, berlabel sitasi, dan ada_di_indeks", async () => {
+      const b = await json<{ simpul: Array<{ uri: string; label: string; ada_di_indeks: boolean }>; sisi: Array<{ dari: string; ke: string }> }>(
+        await graf(UU13),
+      );
+      expect(b.simpul.find((x) => x.uri === PERPPU)).toMatchObject({ label: "PERPPU 2/2022", ada_di_indeks: true });
+      expect(b.simpul.some((x) => x.uri === ALIAS)).toBe(false);
+      expect(b.sisi).toEqual([{ dari: UU13, ke: PERPPU, jenis: "diubah_oleh" }]);
+    });
+
+    it("graf dari PERPPU: relasi masuk yang tersimpan dengan ejaan lain ikut ditemukan", async () => {
+      for (const pusat of [PERPPU, ALIAS]) {
+        const b = await json<{ pusat: string; simpul: Array<{ uri: string }>; sisi: Array<{ dari: string; ke: string }> }>(await graf(pusat));
+        expect(b.pusat, pusat).toBe(PERPPU);
+        expect(b.simpul.map((x) => x.uri).sort(), pusat).toEqual([PERPPU, UU13].sort());
+        expect(b.sisi, pusat).toEqual([{ dari: UU13, ke: PERPPU, jenis: "diubah_oleh" }]);
+      }
+    });
+
+    it("graf: relasi dua ejaan ke peraturan yang sama tidak menggandakan simpul maupun sisi", async () => {
+      await sisipkanRelasi(l, [{ dari: UU13, ke: PERPPU, jenis: "diubah_oleh", keterangan: "ejaan yang benar" }]);
+      const b = await json<{ simpul: Array<{ uri: string }>; sisi: unknown[] }>(await graf(UU13));
+      expect(b.simpul.filter((x) => x.uri === PERPPU)).toHaveLength(1);
+      expect(b.sisi).toHaveLength(1);
+    });
+  });
+
   describe("robots.txt dan sitemap.xml", () => {
     it("robots.txt melarang /api/admin/ dan menunjuk sitemap pada origin yang sama", async () => {
       const t = await (await panggil(l, "/robots.txt")).text();

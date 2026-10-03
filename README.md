@@ -176,6 +176,11 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 - 422 dari 547 POJK produksi bernomor slug (`48-pojk-04-2016`), sehingga pencarian sitasi persis `nomor = ?`
   tak pernah menemukannya dan "48/POJK.04/2016" bahkan tidak dikenali. Pencarian sitasi kini mencocokkan slug
   (dan awalan `n-`), dan label POJK ditulis dengan penomoran resminya ("POJK 48/POJK.04/2016").
+- Relasi ke PERPPU menggantung: pasal.id menyimpan peraturannya sebagai `/akn/id/act/perpu/2022/2` tetapi
+  relasi menunjuk `/akn/id/act/perppu/2022/2`. Di produksi 117 dari 124 relasi ke PERPPU (145 dari 1.675
+  relasi seluruhnya menggantung) tidak menemukan tujuannya, sehingga tautannya mati dan relasi masuk di halaman
+  PERPPU tidak ditemukan. Endpoint detail dan graf kini menyelesaikan kedua ejaan saat dibaca
+  (`src/worker/lib/uri.ts`); data tidak diubah dan tidak ada kueri tambahan bila tak ada URI beralias.
 - Klien API menganggap jawaban 2xx yang badannya tak terbaca sebagai `null`, sehingga `sesi.data` bisa menjadi
   `null` dan header meledak (ditemukan CI saat pengguna berpindah halaman di tengah permintaan). Kini menjadi
   galat yang tertangani, dan kerangka pemuatan tidak lagi memakai kelas `.hasil` milik hasil sungguhan.
@@ -196,6 +201,8 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
   Parser saat ini berhenti di judul "PENJELASAN"; dokumen lama perlu diekstrak ulang untuk membersihkannya.
   Antarmuka hanya merapikan tampilan penanda halaman PDF ("### Page 97 PRESIDEN REPUBLIK INDONESIA- 18 -");
   data di database tidak diubah.
+- Sisa 28 relasi menggantung ke PP menunjuk peraturan yang memang belum ter-ingest (kursor sinkronisasi
+  tertinggal; lihat langkah pemulihan di docs/hubungkan-github-cloudflare.md).
 - D1 dan R2 berada di Amerika Timur dengan read replication nonaktif, sehingga latensi dari Indonesia tinggi.
 - Pembatas laju `/api/tanya` berbasis KV (tidak atomik); sitemap dibatasi 5.000 URL dan memakai URL
   berparameter.

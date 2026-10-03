@@ -8,6 +8,8 @@ import { klausaBidang } from "../lib/bidang";
 import { PasalClient, urlBpk } from "../lib/pasal";
 import { jadwalkanSinkronisasi, type KonteksIngest, type PesanIngest } from "../lib/ingest";
 import { labelSitasi } from "../../shared/label";
+import { pilihDalam } from "../lib/d1";
+import { aliasUri, selesaikanUri } from "../lib/uri";
 
 type Bindings = Env;
 
@@ -186,6 +188,38 @@ api.get("/laws", async (c) => {
   return c.json(body, 200, { "Cache-Control": "public, max-age=300" });
 });
 
+/**
+ * Relasi yang tujuannya tampak belum ter-ingest padahal ada di indeks dengan ejaan URI lain
+ * (PERPPU "perppu" vs "perpu", lihat lib/uri.ts) dilengkapi: URI dan metadata tujuan diganti
+ * dengan yang di indeks, lalu urutannya dikembalikan seperti kueri aslinya.
+ */
+async function perbaikiRelasiBeralias(db: D1Database, relasi: Relation[]): Promise<Relation[]> {
+  const menggantung = relasi.filter((r) => r.judul === null && aliasUri(r.to_uri) !== null);
+  if (!menggantung.length) return relasi;
+
+  const peta = await selesaikanUri(db, menggantung.map((r) => r.to_uri));
+  const tujuan = [...new Set(menggantung.map((r) => peta.get(r.to_uri) as string).filter((u, i) => u !== menggantung[i].to_uri))];
+  if (!tujuan.length) return relasi;
+
+  const meta = await pilihDalam<Pick<Relation, "judul" | "jenis" | "nomor" | "tahun" | "status"> & { frbr_uri: string }>(
+    db,
+    tujuan,
+    (t) => `SELECT frbr_uri, judul, jenis, nomor, tahun, status FROM laws WHERE frbr_uri IN (${t})`,
+  );
+  const petaMeta = new Map(meta.map((m) => [m.frbr_uri, m]));
+
+  const hasil = relasi.map((r) => {
+    const m = petaMeta.get(peta.get(r.to_uri) ?? r.to_uri);
+    return r.judul === null && m
+      ? { ...r, to_uri: m.frbr_uri, judul: m.judul, jenis: m.jenis, nomor: m.nomor, tahun: m.tahun, status: m.status }
+      : r;
+  });
+  // Kueri asli: ORDER BY jenis_relasi, tahun DESC (NULL terakhir); sort JS stabil.
+  return hasil.sort((a, b) =>
+    a.jenis_relasi === b.jenis_relasi ? (b.tahun ?? -1) - (a.tahun ?? -1) : a.jenis_relasi < b.jenis_relasi ? -1 : 1,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/laws/detail?uri=... — detail satu peraturan
 //
@@ -193,21 +227,28 @@ api.get("/laws", async (c) => {
 // bertabrakan dengan routing. Karena itu URI dikirim lewat query string.
 // ---------------------------------------------------------------------------
 api.get("/laws/detail", async (c) => {
-  const uri = c.req.query("uri");
-  if (!uri) {
+  const uriMinta = c.req.query("uri");
+  if (!uriMinta) {
     return c.json({ error: "uri_kosong", message: "Parameter `uri` wajib diisi." }, 400);
   }
 
-  const law = await c.env.DB.prepare(
-    `SELECT frbr_uri, jenis, nomor, tahun, judul, tentang, status,
-            tanggal_penetapan, tanggal_berlaku, instansi, bidang,
-            bpk_id, sumber_url, ringkasan, jumlah_pasal
-       FROM laws WHERE frbr_uri = ?`,
-  ).bind(uri).first<Law>();
+  const ambilLaw = (u: string) =>
+    c.env.DB.prepare(
+      `SELECT frbr_uri, jenis, nomor, tahun, judul, tentang, status,
+              tanggal_penetapan, tanggal_berlaku, instansi, bidang,
+              bpk_id, sumber_url, ringkasan, jumlah_pasal
+         FROM laws WHERE frbr_uri = ?`,
+    ).bind(u).first<Law>();
+
+  // PERPPU punya dua ejaan URI (lihat lib/uri.ts); tautan lama bisa memakai yang lain.
+  let law = await ambilLaw(uriMinta);
+  const alias = aliasUri(uriMinta);
+  if (!law && alias) law = await ambilLaw(alias);
 
   if (!law) {
-    return c.json({ error: "tidak_ditemukan", message: `Peraturan ${uri} belum ada di indeks.` }, 404);
+    return c.json({ error: "tidak_ditemukan", message: `Peraturan ${uriMinta} belum ada di indeks.` }, 404);
   }
+  const uri = law.frbr_uri;
 
   const [articles, relations] = await Promise.all([
     c.env.DB.prepare(
@@ -230,7 +271,7 @@ api.get("/laws/detail", async (c) => {
   const body: LawDetailResponse = {
     law,
     articles: articles.results,
-    relations: relations.results,
+    relations: await perbaikiRelasiBeralias(c.env.DB, relations.results),
     bpk_url: urlBpk(c.env.BPK_BASE, law.bpk_id),
   };
 

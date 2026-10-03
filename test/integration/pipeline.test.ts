@@ -64,6 +64,21 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       ]);
     });
 
+    it("relasi ke Perppu dipetakan ke PERPPU, bukan ke UU bernomor dan bertahun sama", async () => {
+      // Kekeliruan lama: "Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022" terbaca UU 2/2022.
+      await manifest([dokumenBpk({
+        relasi: [
+          { label: "Diubah dengan", bpk_id: null, teks: "Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022 tentang Cipta Kerja" },
+          { label: "Mengubah", bpk_id: null, teks: "Peraturan Menteri Nomor 29 Tahun 2025 tentang Pedoman" },
+        ],
+      })]);
+      const baris = (await l.db.prepare(`SELECT to_uri, jenis_relasi FROM relations ORDER BY to_uri`).all()).results;
+      expect(baris).toEqual([
+        { to_uri: "/akn/id/act/permen/2025/29", jenis_relasi: "mengubah" },
+        { to_uri: "/akn/id/act/perppu/2022/2", jenis_relasi: "diubah_oleh" },
+      ]);
+    });
+
     it("dokumen dengan metadata inti tak lengkap ditolak, sisanya tetap diterima", async () => {
       const rusak = dokumenBpk({ bpk_id: "556", meta: { Judul: "Tanpa nomor dan tahun" } });
       const b = await json<{ diterima: number; ditolak: Array<{ bpk_id: string; alasan: string }> }>(await manifest([rusak, dokumenBpk()]));

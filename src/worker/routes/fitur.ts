@@ -6,6 +6,7 @@
 import { Hono } from "hono";
 import { tokenSah } from "../lib/auth";
 import { pilihDalam } from "../lib/d1";
+import { selesaikanUri, varianUri } from "../lib/uri";
 import { gabungkanBidang, type RingkasBidang } from "../lib/bidang";
 import type { JenisRelasi, StatusPeraturan } from "../../shared/types";
 import { labelSitasi } from "../../shared/label";
@@ -59,8 +60,10 @@ interface Sisi {
 }
 
 fitur.get("/relasi/graf", async (c) => {
-  const uri = c.req.query("uri");
-  if (!uri) return c.json({ error: "uri_kosong", message: "Parameter `uri` wajib diisi." }, 400);
+  const uriMinta = c.req.query("uri");
+  if (!uriMinta) return c.json({ error: "uri_kosong", message: "Parameter `uri` wajib diisi." }, 400);
+  // Peraturan yang sama bisa punya dua ejaan URI (lihat lib/uri.ts); pakai yang ada di indeks.
+  const uri = (await selesaikanUri(c.env.DB, [uriMinta])).get(uriMinta) ?? uriMinta;
 
   // Kedalaman dibatasi 2: pada peraturan yang banyak diubah, kedalaman 3 sudah
   // menghasilkan ratusan simpul yang tidak terbaca lagi sebagai gambar.
@@ -95,12 +98,18 @@ fitur.get("/relasi/graf", async (c) => {
     // ia ubah maupun apa yang mengubahnya. Daftar `belum` bisa panjang, jadi
     // dipecah (D1 membatasi 100 parameter per kueri); sisi yang sama bisa muncul
     // dari dua potongan dan dibuang duplikatnya di bawah.
-    const hasil = await pilihDalam<{ from_uri: string; to_uri: string; jenis_relasi: JenisRelasi }>(
+    // Relasi bisa tersimpan dengan ejaan URI lain untuk peraturan yang sama, jadi ejaan
+    // alternatifnya ikut dicari; ujung sisi yang ditemukan lalu diseragamkan ke URI di indeks.
+    const mentah = await pilihDalam<{ from_uri: string; to_uri: string; jenis_relasi: JenisRelasi }>(
       c.env.DB,
-      belum,
+      [...new Set(belum.flatMap(varianUri))],
       (t) => `SELECT from_uri, to_uri, jenis_relasi FROM relations WHERE from_uri IN (${t}) OR to_uri IN (${t})`,
       { ulang: 2 },
     );
+    const kanon = await selesaikanUri(c.env.DB, mentah.flatMap((r) => [r.from_uri, r.to_uri]));
+    const hasil = mentah
+      .map((r) => ({ ...r, from_uri: kanon.get(r.from_uri) ?? r.from_uri, to_uri: kanon.get(r.to_uri) ?? r.to_uri }))
+      .filter((r) => r.from_uri !== r.to_uri);
 
     const berikut: string[] = [];
     for (const r of hasil) {
