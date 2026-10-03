@@ -92,9 +92,21 @@ export async function jadwalkanSinkronisasi(
   opsi: { jenis?: string[]; maksHalaman?: number } = {},
 ): Promise<{ diantrekan: number; diperiksa: number }> {
   const mulai = Date.now();
-  const daftarJenis = opsi.jenis ?? JENIS_PRIORITAS;
   const maksHalaman = opsi.maksHalaman ?? 4; // 4 x 50 = 200 dokumen per jenis per jalan
   const UKURAN = 50;
+
+  // Urutan jenis diputar agar tidak ada yang kelaparan. Dengan urutan tetap, satu jenis di depan
+  // yang selalu kena batas laju (di produksi: PERPRES, setelah ±12 permintaan) menghentikan
+  // seluruh sapuan sebelum jenis di belakangnya sempat disentuh: kursor PERMEN, POJK, dan PBI
+  // tidak bergerak sejak 2 Sep 2026. Kini sapuan berikutnya dimulai dari jenis tempat sapuan
+  // sebelumnya terhenti, dan kembali ke awal hanya setelah satu putaran penuh selesai.
+  // Sapuan manual untuk jenis tertentu (opsi.jenis) tidak memutar apa pun.
+  const putar = !opsi.jenis;
+  let daftarJenis = opsi.jenis ?? JENIS_PRIORITAS;
+  if (putar) {
+    const i = JENIS_PRIORITAS.indexOf((await bacaState(ctx.db, "jenis_awal")) ?? "");
+    if (i > 0) daftarJenis = [...JENIS_PRIORITAS.slice(i), ...JENIS_PRIORITAS.slice(0, i)];
+  }
 
   // Tekanan balik. Kapasitas nyata pipeline dibatasi rate limit pasal.id
   // (360 detail/jam), sedangkan satu kali penjadwalan bisa mengantrekan lebih
@@ -154,6 +166,7 @@ export async function jadwalkanSinkronisasi(
           // membuangnya berarti peraturan di halaman-halaman itu terlewat sampai
           // kursor berputar penuh.
           kursorBaru.set(kunciOffset, String(offset));
+          if (putar) kursorBaru.set("jenis_awal", jenis);
           await kirimAntrean();
           await simpanKursor();
           await catatLog(ctx.db, "jadwal_sinkronisasi", "gagal", `rate limit pada ${jenis}`, diantrekan);
@@ -207,6 +220,8 @@ export async function jadwalkanSinkronisasi(
     }
   }
 
+  // Satu putaran penuh selesai tanpa kena batas laju: mulai dari awal lagi.
+  if (putar) kursorBaru.set("jenis_awal", JENIS_PRIORITAS[0]);
   await kirimAntrean();
   await simpanKursor();
 

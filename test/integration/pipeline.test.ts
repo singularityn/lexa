@@ -457,6 +457,52 @@ describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
       expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM sync_state`).first<{ n: number }>())?.n).toBe(0);
     });
 
+    describe("urutan jenis diputar agar tidak ada yang kelaparan", () => {
+      const jenisDiminta = () => [...new Set(panggilanPasal.map((u) => u.searchParams.get("type")))];
+      const awal = async () => (await l.db.prepare(`SELECT value FROM sync_state WHERE key = 'jenis_awal'`).first<{ value: string }>())?.value;
+
+      it("kena 429 pada PERPRES: sapuan berikutnya dimulai dari PERPRES, lalu jenis di belakangnya", async () => {
+        let batas = true;
+        stubPasal({
+          daftar: { UU: [hukumPasal("UU", 2003, 13, "A")], PP: [hukumPasal("PP", 2021, 35, "B")], PERPRES: [hukumPasal("PERPRES", 2020, 1, "C")], PERMEN: [hukumPasal("PERMEN", 2021, 1, "D")] },
+          batasLaju: (u) => batas && u.searchParams.get("type") === "PERPRES",
+        });
+        await jalankanCron(l);
+        expect(jenisDiminta()).toEqual(["UU", "PERPPU", "PP", "PERPRES"]); // PERMEN, POJK, PBI belum tersentuh
+        expect(await awal()).toBe("PERPRES");
+
+        batas = false;
+        panggilanPasal.length = 0;
+        await jalankanCron(l);
+        expect(jenisDiminta()).toEqual(["PERPRES", "PERMEN", "POJK", "PBI", "UU", "PERPPU", "PP"]);
+        expect(await awal()).toBe("UU"); // satu putaran penuh selesai: kembali ke awal
+      });
+
+      it("kena 429 berturut-turut maju satu jenis demi satu sampai putaran selesai", async () => {
+        stubPasal({
+          daftar: { UU: [hukumPasal("UU", 2003, 13, "A")] },
+          batasLaju: (u) => ["PP", "POJK"].includes(u.searchParams.get("type") ?? ""),
+        });
+        await jalankanCron(l);
+        expect(await awal()).toBe("PP");
+        await jalankanCron(l); // dimulai dari PP: kena 429 lagi pada PP itu sendiri
+        expect(await awal()).toBe("PP");
+      });
+
+      it("sapuan manual untuk jenis tertentu tidak mengubah urutan putaran", async () => {
+        stubPasal({ daftar: { PP: [hukumPasal("PP", 2021, 35, "B")] }, batasLaju: (u) => u.searchParams.get("type") === "PP" });
+        await panggil(l, "/api/admin/sync", kirim("POST", { jenis: ["PP"], maks_halaman: 1 }, adm));
+        expect(await awal()).toBeUndefined();
+      });
+
+      it("nilai awal yang tidak dikenal diabaikan (urutan bawaan)", async () => {
+        await l.db.prepare(`INSERT INTO sync_state (key, value) VALUES ('jenis_awal', 'JENIS_LAMA')`).run();
+        stubPasal({});
+        await jalankanCron(l);
+        expect(jenisDiminta()[0]).toBe("UU");
+      });
+    });
+
     it("error selain 429 pada satu jenis dicatat, jenis lain tetap diproses", async () => {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = new URL(String(input));

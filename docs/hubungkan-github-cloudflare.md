@@ -98,7 +98,25 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Cron berjalan | D1: `SELECT * FROM sync_log ORDER BY id DESC LIMIT 5;` | entri `jadwal_sinkronisasi` baru sekitar 19:00 UTC |
 
 Setelah beberapa hari, lihat `sync_log` dan `/status`: jenis PERMEN, POJK, dan PBI seharusnya mulai bergerak
-(perbaikan pembuangan pesan saat kena batas laju pasal.id).
+(perbaikan pembuangan pesan saat kena batas laju pasal.id, dan urutan jenis kini diputar).
+
+### Pemulihan data sinkronisasi (sekali, SETELAH deploy ini aktif)
+
+Kode v0.1 membuang pesan yang sudah terkumpul setiap kali Cron kena batas laju, padahal kursor offset sudah
+maju. Di produksi (2 Okt 2026) kursor sudah jauh melampaui isi database: `offset:PP` = 4300 sedangkan hanya
+1.383 PP yang tersimpan, `offset:PERMEN` = 2100 sedangkan hanya 204 PERMEN. Kursor tidak mundur sendiri, jadi
+halaman yang terlewat baru terjangkau setelah kursor berputar penuh (berminggu-minggu). Untuk memindai ulang
+dari awal, jalankan di D1 (dashboard > D1 > `lexa-db` > Console, atau `npx wrangler d1 execute lexa-db --remote`):
+
+```sql
+UPDATE sync_state SET value = '0' WHERE key LIKE 'offset:%';
+DELETE FROM sync_state WHERE key = 'jenis_awal';
+```
+
+Aman diulang: sapuan hanya mengantrekan peraturan yang belum ada, berubah status, atau masih kosong. Antrean
+diproses ≤60 permintaan/menit dan Cron berhenti mengantrekan bila lebih dari 400 peraturan menunggu isinya,
+jadi pemulihan berjalan bertahap selama beberapa hari. Pantau lewat `/status` (jumlah peraturan naik) dan
+`SELECT COUNT(*) FROM laws;`.
 
 ### Rollback
 
