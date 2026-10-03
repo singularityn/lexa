@@ -20,5 +20,10 @@
     "src",
     "test",
     "scripts"
+  ],
+  // Tes modul peramban butuh pustaka DOM; diperiksa oleh tsconfig.web.json.
+  "exclude": [
+    "node_modules",
+    "test/browser"
   ]
 }

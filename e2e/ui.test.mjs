@@ -415,6 +415,27 @@ describe("halaman peraturan", () => {
 });
 
 describe("koleksi dan akun", () => {
+  it("jawaban status sesi yang rusak (badan kosong, HTML, atau null) diperlakukan sebagai tamu, tanpa galat halaman", async () => {
+    // Regresi CI: respons 2xx yang badannya tak terbaca dulu dikembalikan sebagai null,
+    // `sesi.data` menjadi null, dan penggambar header meledak ("Cannot destructure ... 'sesi.data'").
+    let jawab = { status: 200, contentType: "application/json", body: "" };
+    await page.route((url) => url.pathname === "/api/auth/status", (route) => route.fulfill(jawab));
+    for (const rusak of [
+      { status: 200, contentType: "application/json", body: "" },
+      { status: 200, contentType: "text/html", body: "<html><body>Bad gateway</body></html>" },
+      { status: 200, contentType: "application/json", body: "null" },
+    ]) {
+      jawab = rusak;
+      await page.goto(BASE + "/", { waitUntil: "networkidle" });
+      await page.waitForSelector("h1");
+      expect(await page.locator(".nav-akun").textContent(), `header untuk badan ${JSON.stringify(rusak.body)}`).toBe("Masuk");
+      await page.goto(BASE + "/akun", { waitUntil: "networkidle" });
+      await page.waitForFunction(() => document.querySelector("main")?.textContent?.includes("sebagai tamu"));
+      await page.goto(BASE + "/koleksi", { waitUntil: "networkidle" });
+      await page.waitForSelector("main h1");
+    }
+  });
+
   it("tamu: simpan -> badge header -> catatan bertahan setelah muat ulang -> lepas", async () => {
     await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
     await page.click(".aksi-bar button:has-text('Simpan')");

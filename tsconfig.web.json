@@ -12,6 +12,10 @@
   },
   "include": [
     "public/js",
-    "src/shared"
+    "src/shared",
+    "test/browser"
+  ],
+  "exclude": [
+    "node_modules"
   ]
 }

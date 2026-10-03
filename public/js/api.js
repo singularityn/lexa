@@ -79,13 +79,18 @@ async function minta(path, opsi = {}) {
   }
 
   if (opsi.teks && res.ok) return res.text();
+  if (res.status === 204) return null;
 
   /** @type {any} */
   let data = null;
+  let terbaca = true;
   try {
     data = await res.json();
-  } catch {
-    // Badan bukan JSON (mis. halaman galat dari perantara).
+  } catch (e) {
+    // Dibatalkan pemanggil: biarkan pemanggil menanganinya seperti pembatalan biasa.
+    if (dibatalkan(e)) throw e;
+    // Badan bukan JSON (mis. halaman galat dari perantara) atau terputus di tengah jalan.
+    terbaca = false;
   }
   if (!res.ok) {
     throw new GalatApi(
@@ -94,6 +99,11 @@ async function minta(path, opsi = {}) {
       data?.message ?? (res.status >= 500 ? "Server sedang bermasalah. Coba lagi sebentar lagi." : `Permintaan gagal (${res.status}).`),
       data,
     );
+  }
+  // Status 2xx tetapi badannya tak terbaca bukan keberhasilan: mengembalikan null di sini
+  // membuat pemanggil menerima "data" yang tidak ada dan meledak jauh dari sumbernya.
+  if (!terbaca) {
+    throw new GalatApi(res.status, "respons_tidak_valid", "Server mengirim jawaban yang tidak dapat dibaca. Coba lagi sebentar lagi.");
   }
   return data;
 }

@@ -87,7 +87,10 @@ export const sesi = {
 
   async muat() {
     try {
-      this.data = await api.statusAuth();
+      const status = await api.statusAuth();
+      // Jawaban yang bentuknya salah (null, bukan objek) diperlakukan seperti tanpa sesi:
+      // seluruh halaman membaca `sesi.data` dan tidak boleh ada yang menemukan null.
+      this.data = status && typeof status === "object" && typeof status.masuk === "boolean" ? status : sesiAwal;
     } catch {
       this.data = sesiAwal; // tanpa sesi pun aplikasi tetap berguna
     }
