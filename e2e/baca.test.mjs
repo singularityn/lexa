@@ -569,6 +569,114 @@ describe("ponsel: halaman baca", () => {
     await p.waitForFunction(() => window.__cetak === 1);
   });
 
+  it("tandai pasal: tersimpan di koleksi perangkat, tampil di Koleksi, membuka pasalnya, dan bisa dilepas", async () => {
+    const p = await halaman({ hp: true });
+    await bukaPeraturan(p);
+    const tombol = p.locator("#pasal-82 .pasal-alat > .tombol[aria-pressed]");
+    expect(await tombol.getAttribute("aria-pressed")).toBe("false");
+    expect(await tombol.locator(".sr-only").textContent()).toBe("Simpan ke koleksi: UU 13/2003 Pasal 82");
+    const kotak = await tombol.boundingBox();
+    expect(Math.min(kotak.width, kotak.height), "target ketuk minimal 36px").toBeGreaterThanOrEqual(36);
+
+    await tombol.tap();
+    await p.locator(".toast", { hasText: "Disimpan di perangkat ini." }).waitFor();
+    expect(await tombol.getAttribute("aria-pressed")).toBe("true");
+    const tersimpan = await p.evaluate(() => JSON.parse(localStorage.getItem("lexa:koleksi:v1") ?? "[]"));
+    expect(tersimpan).toHaveLength(1);
+    expect(tersimpan[0]).toMatchObject({ uri: `${UU13}#pasal-82`, sitasi: "UU 13/2003 Pasal 82", judul: "Ketenagakerjaan" });
+    // Pasal lain dan peraturannya sendiri tidak ikut tertanda.
+    expect(await p.locator("#pasal-77 .pasal-alat > .tombol[aria-pressed]").getAttribute("aria-pressed")).toBe("false");
+    expect((await p.locator(".aksi-bar > .tombol:visible").first().innerText()).trim()).toBe("Simpan");
+
+    await p.locator(".nav-bawah a[href='/koleksi']").tap();
+    const entri = p.locator(".entri-koleksi");
+    await entri.waitFor();
+    expect(await entri.locator("a.sitasi").textContent()).toBe("UU 13/2003 Pasal 82");
+    expect(await entri.locator(".lencana-pasal").textContent()).toBe("Pasal");
+    expect(await entri.locator("a.sitasi").getAttribute("href")).toBe(`/peraturan?uri=${encodeURIComponent(UU13)}#pasal-82`);
+
+    await entri.locator("a.sitasi").tap();
+    await p.waitForSelector("#pasal-82");
+    await p.waitForFunction(() => location.hash === "#pasal-82");
+    await p.waitForFunction(() => {
+      const r = document.getElementById("pasal-82")?.getBoundingClientRect();
+      return r && r.top >= 56 && r.top < innerHeight * 0.6;
+    });
+    expect(await p.locator("#pasal-82 .pasal-alat > .tombol[aria-pressed]").getAttribute("aria-pressed")).toBe("true");
+
+    // Dilepas dari Koleksi: tandanya hilang di pasal.
+    await p.locator(".nav-bawah a[href='/koleksi']").tap();
+    await p.locator(".entri-koleksi button", { hasText: "Lepas" }).tap();
+    await p.waitForSelector(".kosong");
+    await p.goBack();
+    await p.waitForSelector("#pasal-82");
+    expect(await p.locator("#pasal-82 .pasal-alat > .tombol[aria-pressed]").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("simpan untuk luring: lencana di peraturan, daftar dan penghapusan di Akun, penanda di Koleksi", async () => {
+    const p = await halaman({ hp: true });
+    await bukaPeraturan(p);
+    expect(await p.locator(".lencana-luring").first().isVisible()).toBe(false);
+
+    await p.locator(".tombol-lainnya").tap();
+    await p.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Simpan untuk dibaca luring" }).tap();
+    await p.locator(".toast", { hasText: "Tersimpan untuk dibaca luring" }).waitFor();
+    await p.locator(".meta-baris .lencana-luring").waitFor({ state: "visible" });
+    const kunci = await p.evaluate(async () => (await (await caches.open("lexa-simpan-v1")).keys()).map((r) => new URL(r.url).pathname).sort());
+    expect(kunci).toEqual(["/api/dokumen/status", "/api/laws/detail", "/api/relasi/graf"]);
+
+    // Lembar Lainnya kini menawarkan penghapusan.
+    await p.locator(".tombol-lainnya").tap();
+    expect(await p.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Hapus dari simpanan luring" }).count()).toBe(1);
+    await p.keyboard.press("Escape");
+    await p.waitForFunction(() => !document.querySelector("dialog.lembar"));
+
+    // Koleksi: peraturan dan pasalnya diberi penanda "Tersedia luring".
+    await p.locator(".aksi-bar > .tombol").first().tap(); // Simpan peraturan
+    await p.locator("#pasal-82 .pasal-alat > .tombol[aria-pressed]").tap();
+    await p.locator(".nav-bawah a[href='/koleksi']").tap();
+    await p.locator(".entri-koleksi").first().waitFor();
+    expect(await p.locator(".entri-koleksi .lencana-luring").count()).toBe(2);
+
+    // Akun: kartu simpanan dengan judul dan ukuran; dihapus dari sana.
+    await p.locator(".nav-bawah a[href='/akun']").tap();
+    const baris = p.locator(".daftar-luring li");
+    await baris.first().waitFor();
+    expect(await baris.count()).toBe(1);
+    expect(await baris.first().innerText()).toContain("UU 13/2003");
+    expect(await baris.first().innerText()).toMatch(/\d+ (B|KB)/);
+    expect(await p.locator(".daftar-luring").locator("xpath=preceding-sibling::p[1]").textContent()).toMatch(/^1 peraturan tersimpan di perangkat ini \(\d+ (B|KB)\)/);
+    await baris.first().getByRole("button", { name: /Hapus UU 13\/2003/ }).tap();
+    await p.waitForFunction(() => document.querySelectorAll(".daftar-luring li").length === 0);
+    expect(await p.evaluate(async () => (await (await caches.open("lexa-simpan-v1")).keys()).length)).toBe(0);
+    expect(await p.locator(".nav-bawah a[href='/akun']").count()).toBe(1);
+  });
+
+  it("beranda: peraturan yang sudah dibaca cukup jauh dibuka langsung di pasal terakhir yang dibaca", async () => {
+    const p = await halaman({ hp: true });
+    await p.addInitScript((uri) => {
+      if (!localStorage.getItem("lexa:riwayat:v1")) {
+        localStorage.setItem(
+          "lexa:riwayat:v1",
+          JSON.stringify({
+            dilihat: [{ uri, sitasi: "UU 13/2003", judul: "Ketenagakerjaan", waktu: 2 }, { uri: "/akn/id/act/uu/2020/11", sitasi: "UU 11/2020", judul: "Cipta Kerja", waktu: 1 }],
+            posisi: [{ uri, jangkar: "pasal-82", nama: "Pasal 82", waktu: 2 }],
+          }),
+        );
+      }
+    }, UU13);
+    await p.goto(BASE + "/", { waitUntil: "networkidle" });
+    const entri = p.locator("#h-dilihat ~ .daftar-ringkas li");
+    expect(await entri.count()).toBe(2);
+    expect(await entri.nth(0).innerText()).toContain("lanjut di Pasal 82");
+    expect(await entri.nth(0).locator("a").getAttribute("href")).toBe(`/peraturan?uri=${encodeURIComponent(UU13)}#pasal-82`);
+    expect(await entri.nth(1).innerText()).not.toContain("lanjut di");
+    expect(await entri.nth(1).locator("a").getAttribute("href")).toBe(`/peraturan?uri=${encodeURIComponent("/akn/id/act/uu/2020/11")}`);
+    await entri.nth(0).locator("a").tap();
+    await p.waitForSelector("#pasal-82");
+    await p.waitForFunction(() => location.hash === "#pasal-82");
+  });
+
   it("penjelasan umum yang terbawa di teks pasal terakhir dipisah menjadi bagiannya sendiri", async () => {
     const p = await halaman({ hp: true });
     await ubahDetail(p, (json) => {
@@ -809,7 +917,7 @@ describe("layar lebar: halaman baca", () => {
     expect(await p.locator(".tombol-lainnya").isVisible()).toBe(false);
     // Semua aksi peraturan berjajar di layar lebar.
     expect((await p.locator(".aksi-bar .tombol:visible").allInnerTexts()).map((t) => t.trim()).join("|")).toBe(
-      "Simpan|Salin sitasi|Salin tautan|Naskah resmi (BPK)|PDF|Laporkan kesalahan",
+      "Simpan|Salin sitasi|Salin tautan|Simpan luring|Naskah resmi (BPK)|PDF|Laporkan kesalahan",
     );
   });
 

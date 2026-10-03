@@ -133,6 +133,17 @@ export function tanggalIndonesia(iso) {
   return bulan ? `${Number(m[3])} ${bulan} ${m[1]}` : iso;
 }
 
+/**
+ * Ukuran berkas yang ramah dibaca: "480 KB", "1,2 MB".
+ * @param {number} bita
+ */
+export function ukuranBerkas(bita) {
+  if (!Number.isFinite(bita) || bita < 0) return "";
+  if (bita < 1024) return `${bita} B`;
+  if (bita < 1024 * 1024) return `${Math.round(bita / 1024)} KB`;
+  return `${(bita / 1024 / 1024).toFixed(1).replace(".", ",")} MB`;
+}
+
 /** @param {number | null | undefined} n */
 export function angka(n) {
   return new Intl.NumberFormat("id-ID").format(n ?? 0);
@@ -267,6 +278,25 @@ export function queryString(params) {
 export function urlPeraturan(uri, opsi = {}) {
   const jangkar = opsi.jangkar ? `#${opsi.jangkar}` : "";
   return `/peraturan${queryString({ uri, q: opsi.q })}${jangkar}`;
+}
+
+/**
+ * Entri koleksi bisa berupa peraturan (`/akn/id/act/uu/2003/13`) atau satu pasal di dalamnya
+ * (`/akn/id/act/uu/2003/13#pasal-82`). Pisahkan alamat peraturan dari jangkar pasalnya.
+ * @param {string} uri
+ * @returns {{ uri: string, jangkar: string | null }}
+ */
+export function pecahUriKoleksi(uri) {
+  const i = uri.indexOf("#");
+  if (i < 0) return { uri, jangkar: null };
+  const jangkar = uri.slice(i + 1);
+  return { uri: uri.slice(0, i), jangkar: jangkar || null };
+}
+
+/** Tautan ke halaman peraturan (dan pasalnya bila entri koleksi berupa pasal). @param {string} uriKoleksi */
+export function urlEntriKoleksi(uriKoleksi) {
+  const { uri, jangkar } = pecahUriKoleksi(uriKoleksi);
+  return urlPeraturan(uri, { jangkar });
 }
 
 /**

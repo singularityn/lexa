@@ -446,6 +446,45 @@ describe("service worker: API baca (jaringan dulu, salinan sebagai cadangan)", (
     expect(kunci).not.toContain("?uri=2");
   });
 
+  it("daring: salinan yang disimpan pengguna ikut diperbarui jawaban jaringan; peraturan yang tidak disimpan tidak ditambahkan ke simpanan", async () => {
+    const sw = muatSW(() => jawab('{"v":2}'));
+    await (await sw.caches.open("lexa-simpan-v1")).put(DETAIL, jawab('{"v":1}'));
+    const r = await sw.minta(DETAIL);
+    expect(await (await r.respons()).text()).toBe('{"v":2}');
+    await r.selesai();
+    expect(await bacaCache(sw, "lexa-simpan-v1", DETAIL)).toBe('{"v":2}');
+
+    const lain = "/api/laws/detail?uri=lain";
+    await (await sw.minta(lain)).selesai();
+    expect(await bacaCache(sw, "lexa-baca-v1", lain)).toBe('{"v":2}');
+    expect(await bacaCache(sw, "lexa-simpan-v1", lain), "tidak disimpan pengguna, jadi tidak masuk simpanan").toBeUndefined();
+  });
+
+  it("jaringan lambat: simpanan dipakai lebih dulu, lalu disegarkan saat jaringan akhirnya menjawab", async () => {
+    vi.useFakeTimers();
+    let lepas: (r: Response) => void = () => {};
+    const sw = muatSW(() => new Promise<Response>((selesai) => (lepas = selesai)));
+    await (await sw.caches.open("lexa-simpan-v1")).put(DETAIL, jawab('{"v":1}'));
+    const r = await sw.minta(DETAIL);
+    const jawaban = r.respons();
+    await vi.advanceTimersByTimeAsync(5000);
+    const res = await jawaban;
+    expect(await res.text()).toBe('{"v":1}');
+    expect(res.headers.get("x-lexa-salinan")).toBe("1");
+    lepas(jawab('{"v":2}'));
+    await r.selesai();
+    expect(await bacaCache(sw, "lexa-simpan-v1", DETAIL)).toBe('{"v":2}');
+  });
+
+  it("peraturan yang kini 404 tidak menimpa simpanan pengguna", async () => {
+    const sw = muatSW(() => jawab('{"error":"tidak_ditemukan"}', { status: 404 }));
+    await (await sw.caches.open("lexa-simpan-v1")).put(DETAIL, jawab('{"v":1}'));
+    const r = await sw.minta(DETAIL);
+    expect((await r.respons()).status).toBe(404);
+    await r.selesai();
+    expect(await bacaCache(sw, "lexa-simpan-v1", DETAIL)).toBe('{"v":1}');
+  });
+
   it("salinan yang sengaja disimpan pengguna didahulukan dan tidak ikut terbuang oleh batas cache baca", async () => {
     const sw = muatSW(() => {
       throw new TypeError("Failed to fetch");

@@ -154,6 +154,55 @@ describe("service worker dan luring", () => {
     });
   });
 
+  it("simpan untuk luring: peraturan yang disimpan tetap terbaca walau cache baca sudah terkuras; yang hanya pernah dibuka tidak", async () => {
+    await dengan({ serviceWorkers: "allow", luring: true, ...PONSEL }, async (ctx, page) => {
+      await page.goto(BASE + "/", { waitUntil: "networkidle" });
+      await tungguSW(page);
+      await page.reload({ waitUntil: "networkidle" }); // dikendalikan service worker: panggilan API ikut tercatat
+
+      // UU 11/2020 hanya dibuka; UU 13/2003 dibuka lalu disimpan untuk luring.
+      await page.goto(BASE + urlUU("/akn/id/act/uu/2020/11"), { waitUntil: "networkidle" });
+      await page.locator(".pasal").first().waitFor();
+      await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
+      await page.locator(".pasal").first().waitFor();
+      await page.locator(".tombol-lainnya").tap();
+      await page.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Simpan untuk dibaca luring" }).tap();
+      await page.locator(".toast", { hasText: "Tersimpan untuk dibaca luring" }).waitFor();
+
+      // Kuras cache baca (80 entri) dengan alamat baru; simpanan pengguna tidak ikut terbuang.
+      await page.evaluate(async () => {
+        for (let i = 1; i <= 90; i++) await fetch(`/api/laws?page=${i}&per_page=1`);
+      });
+      // Pemangkasan berjalan di latar belakang service worker; tunggu sampai batas 80 entri tercapai.
+      await page.waitForFunction(async () => (await (await caches.open("lexa-baca-v1")).keys()).length <= 80);
+      const uu11Masihdiingat = await page.evaluate(
+        async (u) => Boolean(await (await caches.open("lexa-baca-v1")).match(u)),
+        `${BASE}/api/laws/detail?uri=${encodeURIComponent("/akn/id/act/uu/2020/11")}`,
+      );
+      expect(uu11Masihdiingat, "UU 11/2020 (hanya dibuka) sudah terbuang dari cache baca").toBe(false);
+
+      await setLuring(ctx, true);
+      await page.goto(BASE + urlUU(UU13), { waitUntil: "domcontentloaded" });
+      await page.getByRole("heading", { level: 1 }).filter({ hasText: "Ketenagakerjaan" }).waitFor();
+      expect(await page.locator(".pasal").count()).toBeGreaterThan(0);
+      await page.locator(".toast", { hasText: "salinan" }).waitFor();
+      expect(await page.locator(".meta-baris .lencana-luring").isVisible()).toBe(true);
+
+      await page.goto(BASE + urlUU("/akn/id/act/uu/2020/11"), { waitUntil: "domcontentloaded" });
+      await page.locator(".galat", { hasText: "luring" }).waitFor();
+      expect(await page.locator(".pasal").count()).toBe(0);
+
+      // Kembali daring: simpanan diperbarui oleh jawaban jaringan, lalu dihapus dari lembar Lainnya.
+      await setLuring(ctx, false);
+      await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
+      await page.locator(".pasal").first().waitFor();
+      await page.locator(".tombol-lainnya").tap();
+      await page.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Hapus dari simpanan luring" }).tap();
+      await page.locator(".toast", { hasText: "Dihapus dari simpanan luring" }).waitFor();
+      expect(await page.evaluate(async () => (await (await caches.open("lexa-simpan-v1")).keys()).length)).toBe(0);
+    });
+  });
+
   it("navigasi luring sebelum aplikasi pernah terpasang tidak berakhir pada halaman galat peramban", async () => {
     await dengan({ serviceWorkers: "allow", luring: true }, async (ctx, page) => {
       await page.goto(BASE + "/", { waitUntil: "networkidle" });

@@ -3,7 +3,7 @@ import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
   angka, bacaIsiPasal, bersihkanArtefak, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, labelJenis, labelRelasi,
-  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, urlPeraturan, URUTAN_RELASI,
+  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
 import { bacaPref, HURUF, simpanPref, terapkanPref, UKURAN } from "../bacaan.js";
 import { buatDaftarIsi } from "../komponen/daftarIsi.js";
@@ -13,6 +13,8 @@ import { toast } from "../komponen/toast.js";
 import { tombolTandai } from "../komponen/tombolTandai.js";
 import { bukaDialogLaporan } from "../komponen/dialogLaporan.js";
 import { buatGrafik } from "../komponen/grafik.js";
+import { GalatLuring, luring, luringDidukung } from "../luring.js";
+import { pantau } from "../state.js";
 import { riwayat } from "../riwayat.js";
 import { halamanKosong, keadaanKosong, kerangka, kotakGalat, lencanaStatus, peringatan, tombolIkon } from "../komponen/umum.js";
 
@@ -164,6 +166,43 @@ function tampilkan(ctx, d, q) {
       for (const fn of infoStatus.saatSelesai) fn();
     });
 
+  // --- Simpan untuk luring ----------------------------------------------------
+  // Salinan peraturan ini di perangkat (Cache API), tidak ikut terbuang oleh cache baca; lihat luring.js.
+  const luringBisa = luringDidukung();
+  let luringAda = false;
+  const lencanaLuring = h("span", { class: "lencana-luring", hidden: true }, ikon("centang"), "Tersedia luring");
+  const tombolLuring = luringBisa
+    ? /** @type {HTMLButtonElement} */ (tombolIkon("simpanLuring", "Simpan luring", { "aria-pressed": "false", title: "Simpan agar terbaca tanpa jaringan" }))
+    : null;
+  const segarkanLuring = async () => {
+    luringAda = await luring.tersimpan(l.frbr_uri);
+    lencanaLuring.hidden = !luringAda;
+    if (!tombolLuring) return;
+    tombolLuring.setAttribute("aria-pressed", String(luringAda));
+    tombolLuring.classList.toggle("aktif", luringAda);
+    const teks = tombolLuring.querySelector("span");
+    if (teks) teks.textContent = luringAda ? "Tersimpan luring" : "Simpan luring";
+  };
+  const alihkanLuring = async () => {
+    try {
+      if (luringAda) {
+        await luring.hapus(l.frbr_uri);
+        toast("Dihapus dari simpanan luring.");
+      } else {
+        const ukuran = await luring.simpan(l.frbr_uri, { sitasi: nama, judul: l.judul });
+        toast(`Tersimpan untuk dibaca luring (${ukuranBerkas(ukuran)}).`);
+      }
+    } catch (e) {
+      toast(e instanceof GalatLuring ? e.message : "Simpanan luring gagal diubah.", { galat: true });
+    }
+    await segarkanLuring();
+  };
+  tombolLuring?.addEventListener("click", alihkanLuring);
+  if (luringBisa) {
+    void segarkanLuring();
+    ctx.saatKeluar(pantau("luring", () => void segarkanLuring()));
+  }
+
   // --- Aksi -----------------------------------------------------------------
   // Layar lebar: semua aksi berjajar. Ponsel: Simpan dan Salin sitasi, sisanya di lembar "Lainnya".
   const bpk = tautanAman(d.bpk_url);
@@ -184,6 +223,7 @@ function tampilkan(ctx, d, q) {
       { class: "aksi-lain" },
       tombolIkon("tautan", "Salin tautan", { onclick: salinTautan }),
       bisaBagikan ? tombolIkon("bagikan", "Bagikan", { onclick: bagikanPeraturan }) : null,
+      tombolLuring,
       bpk ? h("a", { class: "tombol", href: bpk, target: "_blank", rel: "noopener noreferrer" }, ikon("luar"), h("span", null, "Naskah resmi (BPK)")) : null,
       tombolPdf,
       tombolIkon("bendera", "Laporkan kesalahan", { onclick: lapor }),
@@ -203,6 +243,13 @@ function tampilkan(ctx, d, q) {
               { ikon: "tautan", label: "Salin tautan", saat: salinTautan },
               { ikon: "luar", label: "Naskah resmi (BPK)", keterangan: "peraturan.bpk.go.id", href: bpk, tampil: Boolean(bpk) },
               { ikon: "unduh", label: "Buka PDF", keterangan: "Salinan yang diarsipkan Lexa", href: pdf, tampil: Boolean(pdf) },
+              {
+                ikon: "simpanLuring",
+                label: luringAda ? "Hapus dari simpanan luring" : "Simpan untuk dibaca luring",
+                keterangan: luringAda ? "Tidak lagi tersedia tanpa jaringan" : "Teksnya tetap terbaca tanpa sinyal",
+                saat: alihkanLuring,
+                tampil: luringBisa,
+              },
               { ikon: "cetak", label: "Cetak atau simpan PDF", keterangan: "Seluruh teks peraturan ini", saat: cetak },
               { ikon: "bendera", label: "Laporkan kesalahan", saat: lapor },
             ],
@@ -307,6 +354,7 @@ function tampilkan(ctx, d, q) {
       { class: "meta-baris" },
       lencanaStatus(l.status),
       jumlahPasal ? h("span", { class: "redup" }, `${angka(jumlahPasal)} pasal${adaPenjelasan ? " dan penjelasannya" : ""}`) : null,
+      lencanaLuring,
       l.tanggal_penetapan ? h("span", { class: "redup" }, `Ditetapkan ${tanggalIndonesia(l.tanggal_penetapan)}`) : null,
     ),
   );
@@ -450,6 +498,8 @@ function panelIsi(ctx, d, q, kelompok) {
       bagikan({ teks: `${sitasiPs}: ${potongTeks(teksPasal(g, { kepala: false }), 160)}`, url: location.origin + urlPeraturan(l.frbr_uri, { jangkar: g.jangkar }) });
     const laporPasal = () => bukaDialogLaporan({ uri: l.frbr_uri, sitasi: nama, konteks: namaPs });
 
+    // Pasal disimpan ke koleksi dengan alamat peraturan + jangkar pasalnya (`/akn/id/act/uu/2003/13#pasal-82`).
+    const tandaiPasal = tombolTandai({ uri: `${l.frbr_uri}#${g.jangkar}`, sitasi: sitasiPs, judul: l.judul });
     // Perangkat dengan penunjuk halus: tiga ikon yang muncul saat disorot. Layar sentuh: satu tombol "⋯" ke lembar aksi.
     const aksiPasal = h(
       "span",
@@ -483,7 +533,8 @@ function panelIsi(ctx, d, q, kelompok) {
     const el = h(
       "article",
       { class: "pasal", id: g.jangkar },
-      h("div", { class: "pasal-kepala" }, h("h3", null, namaPs), aksiPasal, lainnyaPasal),
+      // Penanda pasal selalu terlihat (juga di layar sentuh); aksi lain muncul saat disorot atau lewat tombol "⋯".
+      h("div", { class: "pasal-kepala" }, h("h3", null, namaPs), h("div", { class: "pasal-alat" }, tandaiPasal, aksiPasal, lainnyaPasal)),
       g.judul ? h("p", { class: "pasal-judul" }, g.judul) : null,
       satuTeks
         ? bacaIsiPasal(g.butir[0].isi).map((blok) => renderBlok(blok, peta))

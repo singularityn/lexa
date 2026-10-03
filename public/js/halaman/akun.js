@@ -7,6 +7,8 @@ import { kartuPasang } from "../komponen/ajakanPasang.js";
 import { ikon } from "../komponen/ikon.js";
 import { kerangka, peringatan } from "../komponen/umum.js";
 import { pergi } from "../navigasi.js";
+import { ukuranBerkas, urlPeraturan } from "../format.js";
+import { luring, luringDidukung } from "../luring.js";
 import { riwayat } from "../riwayat.js";
 
 const PESAN_GALAT = /** @type {Record<string, string>} */ ({
@@ -34,6 +36,51 @@ function kartuRiwayat() {
   });
   gambar();
   return h("div", { class: "kartu", style: { marginTop: "16px" } }, h("h2", { class: "kartu-judul" }, "Riwayat"), ringkas, tombol);
+}
+
+/** Peraturan yang disimpan untuk dibaca tanpa jaringan: daftar, ukuran, dan tombol hapus. */
+function kartuLuring() {
+  if (!luringDidukung()) return null;
+  const ringkas = h("p", { class: "redup" }, "Memeriksa…");
+  const daftar = h("ul", { class: "daftar-luring" });
+  const hapusSemua = /** @type {HTMLButtonElement} */ (h("button", { type: "button", class: "tombol", hidden: true }, ikon("sampah"), "Hapus semua simpanan luring"));
+
+  async function gambar() {
+    const isiDaftar = await luring.daftar();
+    const total = isiDaftar.reduce((n, e) => n + e.ukuran, 0);
+    ringkas.textContent = isiDaftar.length
+      ? `${isiDaftar.length} peraturan tersimpan di perangkat ini (${ukuranBerkas(total)}) dan bisa dibaca tanpa jaringan.`
+      : "Belum ada. Pilih “Simpan untuk dibaca luring” di halaman peraturan agar teksnya terbaca tanpa sinyal.";
+    hapusSemua.hidden = isiDaftar.length === 0;
+    isi(
+      daftar,
+      isiDaftar.map((e) =>
+        h(
+          "li",
+          null,
+          h("a", { href: urlPeraturan(e.uri) }, e.sitasi || e.uri, e.judul ? h("span", { class: "redup" }, ` ${e.judul}`) : null),
+          h("span", { class: "bantu" }, ukuranBerkas(e.ukuran)),
+          h("button", {
+            type: "button",
+            class: "tombol tombol-kecil",
+            "aria-label": `Hapus ${e.sitasi || e.uri} dari simpanan luring`,
+            onclick: async () => {
+              await luring.hapus(e.uri);
+              toast("Dihapus dari simpanan luring.");
+              await gambar();
+            },
+          }, ikon("sampah")),
+        ),
+      ),
+    );
+  }
+  hapusSemua.addEventListener("click", async () => {
+    for (const e of await luring.daftar()) await luring.hapus(e.uri);
+    toast("Simpanan luring dikosongkan.");
+    await gambar();
+  });
+  void gambar();
+  return h("div", { class: "kartu", style: { marginTop: "16px" } }, h("h2", { class: "kartu-judul" }, "Simpanan luring"), ringkas, daftar, hapusSemua);
 }
 
 /** Tautan yang di layar lebar ada di header/footer, tetapi tidak di bilah navigasi bawah ponsel. */
@@ -82,6 +129,7 @@ export default async function akun(ctx) {
           koleksi.jumlah ? h("p", { class: "bantu" }, `${koleksi.jumlah} peraturan di koleksi perangkat ini akan dibawa ke akun saat Anda masuk.`) : null,
         ),
         h("div", { style: { marginTop: "16px" } }, kartuPasang()),
+        kartuLuring(),
         kartuRiwayat(),
         kartuInformasi(),
       ),
@@ -139,6 +187,7 @@ export default async function akun(ctx) {
         }, "Keluar"),
       ),
       h("div", { style: { marginTop: "16px" } }, kartuPasang()),
+      kartuLuring(),
       kartuRiwayat(),
       kartuInformasi(),
     ),

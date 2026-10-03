@@ -411,6 +411,36 @@ describe.skipIf(!sqliteAda)("akun", () => {
       expect((await daftar(a.cookie)).koleksi).toHaveLength(1);
     });
 
+    it("satu pasal bisa disimpan sebagai entri tersendiri (alamat peraturan + #jangkar), terpisah dari peraturannya", async () => {
+      const { cookie } = await masukSebagai(l);
+      const pasal = { uri: `${entri.uri}#pasal-82`, sitasi: "UU 13/2003 Pasal 82", judul: "Ketenagakerjaan" };
+      await simpan(entri, cookie);
+      expect((await simpan({ ...pasal, catatan: "cuti melahirkan" }, cookie)).status).toBe(200);
+      expect((await daftar(cookie)).koleksi.map((k) => k.uri).sort()).toEqual([entri.uri, pasal.uri].sort());
+
+      // Catatan pasal diperbarui tanpa menyentuh entri peraturan.
+      await simpan({ ...pasal, catatan: "lihat juga Pasal 83" }, cookie);
+      const semua = (await daftar(cookie)).koleksi;
+      expect(semua.find((k) => k.uri === pasal.uri)?.catatan).toBe("lihat juga Pasal 83");
+      expect(semua.find((k) => k.uri === entri.uri)?.catatan).toBeNull();
+
+      // Menghapus pasal (jangkar ikut di-encode di query) tidak menghapus peraturannya, dan sebaliknya.
+      const hapus = await panggil(l, `/api/koleksi?uri=${encodeURIComponent(pasal.uri)}`, dengan(cookie, { method: "DELETE" }));
+      expect(await hapus.json()).toEqual({ status: "dihapus" });
+      expect((await daftar(cookie)).koleksi.map((k) => k.uri)).toEqual([entri.uri]);
+    });
+
+    it("penggabungan koleksi tamu membawa entri pasal apa adanya", async () => {
+      const { cookie } = await masukSebagai(l);
+      const lokal = [
+        { uri: `${entri.uri}#pasal-156`, sitasi: "UU 13/2003 Pasal 156", judul: "Ketenagakerjaan", catatan: "pesangon" },
+        { uri: `${entri.uri}#pasal-1~2`, sitasi: "UU 13/2003 Penjelasan Pasal 1", judul: "Ketenagakerjaan", catatan: null },
+      ];
+      const res = await panggil(l, "/api/koleksi/gabung", dengan(cookie, kirim("POST", { koleksi: lokal })));
+      expect(await res.json()).toEqual({ status: "digabung", ditambahkan: 2 });
+      expect((await daftar(cookie)).koleksi.map((k) => k.uri).sort()).toEqual(lokal.map((k) => k.uri).sort());
+    });
+
     it("sitasi dan catatan boleh kosong; sitasi tersimpan sebagai teks kosong", async () => {
       const { cookie } = await masukSebagai(l);
       await simpan({ uri: entri.uri, judul: entri.judul }, cookie);

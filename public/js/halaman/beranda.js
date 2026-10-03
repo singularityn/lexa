@@ -68,7 +68,24 @@ export default async function beranda(ctx) {
           "section",
           { class: "bagian", "aria-labelledby": "h-dilihat" },
           h("h2", { id: "h-dilihat" }, "Terakhir dilihat"),
-          h("ul", { class: "daftar-ringkas" }, dilihat.map((d) => h("li", null, h("a", { href: urlPeraturan(d.uri) }, h("span", { class: "sitasi" }, d.sitasi), h("span", { class: "judul" }, judulRingkas(d.judul)))))),
+          h(
+            "ul",
+            { class: "daftar-ringkas" },
+            dilihat.map((d) => {
+              // Peraturan yang sudah dibaca cukup jauh dibuka langsung di pasal terakhir yang dibaca.
+              const posisi = riwayat.posisi(d.uri);
+              return h(
+                "li",
+                null,
+                h(
+                  "a",
+                  { href: urlPeraturan(d.uri, { jangkar: posisi?.jangkar }) },
+                  h("span", { class: "sitasi" }, d.sitasi),
+                  h("span", { class: "judul" }, judulRingkas(d.judul), posisi?.nama ? h("span", { class: "lanjut-di" }, ` · lanjut di ${posisi.nama}`) : null),
+                ),
+              );
+            }),
+          ),
         )
       : null,
     terbaru,

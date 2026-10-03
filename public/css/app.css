@@ -369,6 +369,7 @@ main:focus { outline: none; }
   color: var(--teks-redup); font-size: 0.92rem; line-height: 1.4;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+.daftar-ringkas .lanjut-di { color: var(--aksen); font-weight: 600; white-space: nowrap; }
 .info-indeks { margin-top: 26px; font-size: 0.85rem; text-align: center; }
 @media (max-width: 520px) {
   .opsi-cari > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
@@ -551,6 +552,13 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
 .kicker { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--aksen); margin-bottom: 4px; }
 .meta-baris { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; margin-bottom: 14px; font-size: 0.92rem; }
 .aksi-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.lencana-luring { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8rem; font-weight: 650; color: var(--berlaku-fg); }
+.lencana-luring[hidden] { display: none; }
+.lencana-luring .ikon { width: 14px; height: 14px; }
+.daftar-luring { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; gap: 6px; }
+.daftar-luring li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--garis); }
+.daftar-luring li > a { flex: 1; min-width: 0; font-weight: 650; }
+.daftar-luring li > .bantu { flex: none; }
 .aksi-lain { display: contents; }
 .tombol-lainnya { display: none; }
 .teks-sempit { display: none; }
@@ -650,9 +658,13 @@ dialog.daftar-isi:not([open]) { display: none; }
 .pasal-kepala { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .pasal-kepala h3 { margin: 0; font-size: 1.1em; }
 .pasal-judul { color: var(--teks-redup); font-style: italic; margin: 0 0 4px; }
-.pasal-aksi { margin-inline-start: auto; display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.pasal-alat { margin-inline-start: auto; display: flex; align-items: center; gap: 2px; }
+.pasal-aksi { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
 .pasal:hover .pasal-aksi, .pasal:focus-within .pasal-aksi, .pasal:target .pasal-aksi { opacity: 1; }
-.pasal-lainnya { display: none; margin-inline-start: auto; }
+.pasal-lainnya { display: none; }
+/* Penanda pasal: samar sampai disorot atau ditandai, tetapi selalu ada (juga untuk layar sentuh). */
+.pasal-alat > .tombol[aria-pressed="false"] { color: var(--teks-redup); opacity: 0.7; }
+.pasal-alat > .tombol[aria-pressed="false"]:hover, .pasal-alat > .tombol[aria-pressed="false"]:focus-visible { opacity: 1; }
 @media (hover: none), (pointer: coarse) {
   .pasal-aksi { display: none; }
   .pasal-lainnya { display: inline-flex; }
@@ -751,6 +763,8 @@ body[data-halaman="tanya"] main { padding-bottom: 0; }
 .entri-koleksi { display: grid; gap: 10px; }
 .entri-koleksi header { display: flex; flex-direction: column; gap: 2px; }
 .entri-koleksi .sitasi { font-weight: 700; }
+.entri-id { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.lencana-pasal { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 8px; border-radius: 999px; background: var(--aksen-lembut); color: var(--aksen); }
 .entri-koleksi .judul-entri { font-family: var(--font-judul); font-weight: 700; font-size: 1.04rem; line-height: 1.35; }
 .entri-koleksi textarea { min-height: 64px; margin-top: 6px; }
 .entri-koleksi footer { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }

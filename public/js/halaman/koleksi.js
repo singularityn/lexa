@@ -1,8 +1,9 @@
 // @ts-check
 import { h, isi, salin, tunda, unduh } from "../dom.js";
 import { GalatApi } from "../api.js";
-import { judulRingkas, tanggalIndonesia, urlPeraturan } from "../format.js";
+import { judulRingkas, pecahUriKoleksi, tanggalIndonesia, urlEntriKoleksi } from "../format.js";
 import { koleksi, pantau, sesi, siap } from "../state.js";
+import { luring } from "../luring.js";
 import { ikon } from "../komponen/ikon.js";
 import { toast } from "../komponen/toast.js";
 import { keadaanKosong, kerangka, peringatan } from "../komponen/umum.js";
@@ -21,6 +22,8 @@ export default async function halamanKoleksi(ctx) {
 
   const daftar = h("div", { class: "tumpuk" });
   const aksi = h("div", { class: "baris" });
+  /** Alamat peraturan yang tersimpan untuk dibaca luring; entri koleksinya diberi penanda. @type {Set<string>} */
+  let tersimpanLuring = new Set();
 
   /** @param {import("../state.js").Entri} e */
   function kartuEntri(e) {
@@ -44,7 +47,18 @@ export default async function halamanKoleksi(ctx) {
     return h(
       "article",
       { class: "kartu entri-koleksi" },
-      h("header", null, h("a", { class: "sitasi", href: urlPeraturan(e.uri) }, e.sitasi || e.uri), h("span", { class: "judul-entri" }, judulRingkas(e.judul))),
+      h(
+        "header",
+        null,
+        h(
+          "span",
+          { class: "entri-id" },
+          h("a", { class: "sitasi", href: urlEntriKoleksi(e.uri) }, e.sitasi || e.uri),
+          pecahUriKoleksi(e.uri).jangkar ? h("span", { class: "lencana-pasal" }, "Pasal") : null,
+          tersimpanLuring.has(pecahUriKoleksi(e.uri).uri) ? h("span", { class: "lencana-luring" }, ikon("centang"), "Tersedia luring") : null,
+        ),
+        h("span", { class: "judul-entri" }, judulRingkas(e.judul)),
+      ),
       catatan,
       h(
         "footer",
@@ -84,6 +98,9 @@ export default async function halamanKoleksi(ctx) {
         : keadaanKosong("Koleksi masih kosong", h("p", null, "Simpan peraturan dengan tombol penanda di hasil pencarian atau halaman peraturan. Catatan pribadi bisa ditambahkan di sini."), h("a", { class: "tombol tombol-utama", href: "/telusuri" }, "Telusuri peraturan")),
     );
   }
+
+  tersimpanLuring = new Set((await luring.daftar()).map((e) => e.uri));
+  if (ctx.sinyal.aborted) return;
 
   const tamu = !sesi.data.masuk;
   isi(

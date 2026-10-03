@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, istilahDariKueri, jangkarDariId,
   hitungPasal, judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, namaPasal, nomorTahun, pisahJudul,
-  bacaIsiPasal, pecahRujukan, pisahPenjelasanTertanam, queryString, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, urlPeraturan,
+  bacaIsiPasal, pecahRujukan, pisahPenjelasanTertanam, queryString, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
 } from "../public/js/format.js";
 import { labelSitasi, nomorTahun as nomorTahunServer } from "../src/shared/label";
 
@@ -288,6 +288,32 @@ describe("pecahRujukan (tautan antarpasal)", () => {
   it("nomor yang disambung huruf bukan rujukan (artefak ekstraksi 'Pasal 1Dalam'), dan awal teks dikenali", () => {
     expect(pecahRujukan("Pasal 1Dalam undang-undang")).toEqual(["Pasal 1Dalam undang-undang"]);
     expect(pecahRujukan("Pasal 12 dihapus.")).toEqual([rujuk("Pasal 12", "12"), " dihapus."]);
+  });
+});
+
+describe("entri koleksi: peraturan atau satu pasal", () => {
+  it("memisahkan alamat peraturan dari jangkar pasal", () => {
+    expect(pecahUriKoleksi("/akn/id/act/uu/2003/13")).toEqual({ uri: "/akn/id/act/uu/2003/13", jangkar: null });
+    expect(pecahUriKoleksi("/akn/id/act/uu/2003/13#pasal-82")).toEqual({ uri: "/akn/id/act/uu/2003/13", jangkar: "pasal-82" });
+    expect(pecahUriKoleksi("/akn/id/act/uu/2003/13#pasal-1~2")).toEqual({ uri: "/akn/id/act/uu/2003/13", jangkar: "pasal-1~2" });
+    expect(pecahUriKoleksi("/akn/id/act/uu/2003/13#")).toEqual({ uri: "/akn/id/act/uu/2003/13", jangkar: null });
+  });
+
+  it("tautan entri menuju halaman peraturan, dengan jangkar bila berupa pasal", () => {
+    expect(urlEntriKoleksi("/akn/id/act/uu/2003/13")).toBe("/peraturan?uri=%2Fakn%2Fid%2Fact%2Fuu%2F2003%2F13");
+    expect(urlEntriKoleksi("/akn/id/act/uu/2003/13#pasal-82")).toBe("/peraturan?uri=%2Fakn%2Fid%2Fact%2Fuu%2F2003%2F13#pasal-82");
+  });
+});
+
+describe("ukuranBerkas", () => {
+  it("bita, KB, dan MB dengan koma desimal", () => {
+    expect(ukuranBerkas(0)).toBe("0 B");
+    expect(ukuranBerkas(1023)).toBe("1023 B");
+    expect(ukuranBerkas(1024)).toBe("1 KB");
+    expect(ukuranBerkas(480 * 1024 + 100)).toBe("480 KB");
+    expect(ukuranBerkas(1.2 * 1024 * 1024)).toBe("1,2 MB");
+    expect(ukuranBerkas(-1)).toBe("");
+    expect(ukuranBerkas(Number.NaN)).toBe("");
   });
 });
 

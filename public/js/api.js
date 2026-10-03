@@ -48,13 +48,17 @@ export function dibatalkan(e) {
 
 /**
  * @typedef {Record<string, string | number | boolean | Array<string | number> | null | undefined>} ParamApi
- * @param {string} path
- * @param {{ metode?: string, badan?: unknown, sinyal?: AbortSignal, params?: ParamApi, teks?: boolean }} [opsi]
- * @returns {Promise<any>}
  */
-async function minta(path, opsi = {}) {
+
+/**
+ * Alamat lengkap sebuah panggilan API. Dipakai `minta` dan juga penyimpanan luring (luring.js), yang harus
+ * menyimpan jawaban dengan alamat yang PERSIS sama dengan yang nanti diminta halaman.
+ * @param {string} path
+ * @param {ParamApi} [params]
+ */
+function bangunUrl(path, params = {}) {
   const url = new URL(path, location.origin);
-  for (const [k, v] of Object.entries(opsi.params ?? {})) {
+  for (const [k, v] of Object.entries(params)) {
     if (v === null || v === undefined || v === "" || v === false) continue;
     if (Array.isArray(v)) {
       if (v.length) url.searchParams.set(k, v.join(","));
@@ -62,6 +66,16 @@ async function minta(path, opsi = {}) {
       url.searchParams.set(k, String(v));
     }
   }
+  return url;
+}
+
+/**
+ * @param {string} path
+ * @param {{ metode?: string, badan?: unknown, sinyal?: AbortSignal, params?: ParamApi, teks?: boolean }} [opsi]
+ * @returns {Promise<any>}
+ */
+async function minta(path, opsi = {}) {
+  const url = bangunUrl(path, opsi.params);
 
   /** @type {Response} */
   let res;
@@ -131,6 +145,16 @@ async function ingat(kunci, umurMs, ambil) {
 }
 
 export const api = {
+  /** Alamat panggilan baca untuk satu peraturan, persis seperti yang diminta halaman (kunci cache luring). */
+  alamat: {
+    /** @param {string} uri */
+    detail: (uri) => bangunUrl("/api/laws/detail", { uri }).href,
+    /** @param {string} uri */
+    statusDokumen: (uri) => bangunUrl("/api/dokumen/status", { uri }).href,
+    /** @param {string} uri @param {number} [kedalaman] */
+    graf: (uri, kedalaman = 1) => bangunUrl("/api/relasi/graf", { uri, kedalaman }).href,
+  },
+
   /**
    * @param {{ q: string, mode?: string, jenis?: string[], status?: string[], tahun_min?: number, tahun_max?: number, bidang?: string, limit?: number }} f
    * @param {AbortSignal} [sinyal]

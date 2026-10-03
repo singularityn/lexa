@@ -18,7 +18,7 @@
  */
 
 // <<DAFTAR-CANGKANG (dibuat oleh scripts/perbarui-sw.mjs; jangan disunting tangan)
-const VERSI = "662b6b3a8176";
+const VERSI = "c706242e9d51";
 const CANGKANG = [
   "/css/app.css",
   "/favicon.svg",
@@ -57,6 +57,7 @@ const CANGKANG = [
   "/js/komponen/toast.js",
   "/js/komponen/tombolTandai.js",
   "/js/komponen/umum.js",
+  "/js/luring.js",
   "/js/main.js",
   "/js/navigasi.js",
   "/js/pwa.js",
@@ -163,6 +164,21 @@ async function simpan(nama, req, res, maks) {
   }
 }
 
+/**
+ * Bila jawaban ini sudah disimpan pengguna untuk dibaca luring, perbarui salinan itu: simpanan tidak boleh usang
+ * (peraturan bisa berubah status atau teksnya). Yang belum disimpan pengguna tidak ditambahkan ke sini.
+ */
+async function segarkanSimpanan(req, res) {
+  const cache = await caches.open(CACHE_SIMPAN);
+  if (await cache.match(req)) await cache.put(req, res);
+}
+
+/** Simpan jawaban jaringan yang segar ke cache baca (terbatas) dan, bila ada, ke simpanan pengguna. */
+function simpanBaca(event, req, res) {
+  event.waitUntil(simpan(CACHE_BACA, req, res.clone(), MAKS_BACA));
+  event.waitUntil(segarkanSimpanan(req, res.clone()));
+}
+
 /** Cari salinan: simpanan pengguna dulu, lalu cache baca. */
 async function cocokkanBaca(req) {
   for (const nama of [CACHE_SIMPAN, CACHE_BACA]) {
@@ -226,18 +242,18 @@ async function apiJaringanDulu(event, req) {
   const { asli, dibatasi } = ambilDenganBatas(req, BATAS_API_MS);
   const res = await dibatasi;
   if (res && !galatServer(res)) {
-    if (layakDisimpan(res)) event.waitUntil(simpan(CACHE_BACA, req, res.clone(), MAKS_BACA));
+    if (layakDisimpan(res)) simpanBaca(event, req, res);
     return res;
   }
   const cadangan = await cocokkanBaca(req);
   if (cadangan) {
-    event.waitUntil(asli.then((r) => (layakDisimpan(r) ? simpan(CACHE_BACA, req, r, MAKS_BACA) : null)).catch(() => {}));
+    event.waitUntil(asli.then((r) => (layakDisimpan(r) ? Promise.all([simpan(CACHE_BACA, req, r.clone(), MAKS_BACA), segarkanSimpanan(req, r.clone())]) : null)).catch(() => {}));
     return tandaiSalinan(cadangan);
   }
   if (res) return res; // tidak ada salinan: biarkan halaman menampilkan galat servernya
   try {
     const r = await asli;
-    if (layakDisimpan(r)) event.waitUntil(simpan(CACHE_BACA, req, r.clone(), MAKS_BACA));
+    if (layakDisimpan(r)) simpanBaca(event, req, r);
     return r;
   } catch {
     return jawabLuring();
