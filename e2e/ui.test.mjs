@@ -203,9 +203,21 @@ describe("pencarian", () => {
     await page.waitForSelector(".daftar-hasil .hasil");
     const semua = await page.locator(".daftar-hasil .hasil").count();
 
+    // Tahan jawaban API supaya keadaan "memuat" (daftar sementara kosong) selalu teramati: syarat
+    // tunggu harus menunggu keadaan AKHIR, bukan sekadar "jumlah hasil berkurang". Tanpa ini tes
+    // lolos atau gagal bergantung pada kecepatan server (CI run #17).
+    const tahan = async (route) => {
+      await new Promise((selesai) => setTimeout(selesai, 400));
+      await route.continue();
+    };
+    await page.route((url) => url.pathname === "/api/search", tahan);
     await page.check("input[name=status][value=dicabut]");
     await page.waitForFunction(() => location.search.includes("status=dicabut"));
-    await page.waitForFunction((n) => document.querySelectorAll(".daftar-hasil .hasil").length < n, semua);
+    await page.waitForFunction((n) => {
+      const jumlah = document.querySelectorAll(".daftar-hasil .hasil").length;
+      return !document.querySelector(".daftar-kerangka") && jumlah > 0 && jumlah < n;
+    }, semua);
+    await page.unroute((url) => url.pathname === "/api/search", tahan).catch(() => {});
     const jumlah = await page.locator(".daftar-hasil .hasil").count();
     expect(jumlah).toBeGreaterThan(0);
     const lencana = await page.locator(".daftar-hasil .hasil .lencana-status, .daftar-hasil .hasil .lencana-dicabut").count();
