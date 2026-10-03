@@ -323,8 +323,8 @@ main:focus { outline: none; }
 /* --- Hasil pencarian ------------------------------------------------------ */
 .bilah-hasil { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 16px 0; }
 .ringkas-hasil { color: var(--teks-redup); font-size: 0.92rem; }
-.daftar-hasil { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.hasil { background: var(--permukaan); border: 1px solid var(--garis); border-radius: var(--radius); padding: 14px 18px; }
+.daftar-hasil, .daftar-kerangka { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.hasil, .hasil-kerangka { background: var(--permukaan); border: 1px solid var(--garis); border-radius: var(--radius); padding: 14px 18px; }
 .hasil:hover { border-color: var(--garis-kuat); box-shadow: var(--bayangan); }
 .hasil-kepala { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 4px; }
 .hasil-sitasi { font-weight: 700; }

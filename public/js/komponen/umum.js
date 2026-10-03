@@ -31,12 +31,17 @@ export function kerangka(baris = 3) {
   );
 }
 
-/** Daftar kartu kerangka untuk halaman hasil. @param {number} n */
+/**
+ * Daftar kartu kerangka untuk halaman hasil. Sengaja memakai kelas sendiri (bukan `.daftar-hasil`
+ * dan `.hasil`) agar penghitung hasil, pembaca layar, dan tes tidak keliru menganggap kerangka
+ * sebagai hasil sungguhan.
+ * @param {number} n
+ */
 export function kerangkaHasil(n = 4) {
   return h(
     "div",
-    { class: "daftar-hasil", role: "status", "aria-label": "Memuat hasil" },
-    Array.from({ length: n }, () => h("div", { class: "hasil" }, kerangka(3))),
+    { class: "daftar-kerangka", role: "status", "aria-label": "Memuat hasil" },
+    Array.from({ length: n }, () => h("div", { class: "hasil-kerangka" }, kerangka(3))),
   );
 }
 

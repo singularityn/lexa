@@ -164,8 +164,10 @@ describe("pencarian", () => {
     await page.check("input[name=status][value=dicabut]");
     await page.waitForFunction(() => location.search.includes("status=dicabut"));
     await page.waitForFunction((n) => document.querySelectorAll(".daftar-hasil .hasil").length < n, semua);
+    const jumlah = await page.locator(".daftar-hasil .hasil").count();
+    expect(jumlah).toBeGreaterThan(0);
     const lencana = await page.locator(".daftar-hasil .hasil .lencana-status, .daftar-hasil .hasil .lencana-dicabut").count();
-    expect(lencana).toBe(await page.locator(".daftar-hasil .hasil").count());
+    expect(lencana).toBe(jumlah);
 
     await page.click("label:has-text('Makna')");
     await page.waitForFunction(() => location.search.includes("mode=semantic"));
@@ -173,6 +175,23 @@ describe("pencarian", () => {
     await page.reload({ waitUntil: "networkidle" });
     expect(await page.isChecked("input[name=status][value=dicabut]")).toBe(true);
     expect(await page.isChecked("input[name=mode-cari][value=semantic]")).toBe(true);
+  });
+
+  it("selama memuat hanya kerangka yang tampil, dan kerangka tidak dihitung sebagai hasil", async () => {
+    await page.goto(BASE + "/cari?q=" + encodeURIComponent("cipta kerja") + "&mode=keyword", { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    // Tahan jawaban API supaya keadaan "memuat" bisa diamati (bukan balapan).
+    await page.route((url) => url.pathname === "/api/search", async (route) => {
+      await new Promise((selesai) => setTimeout(selesai, 800));
+      await route.continue();
+    });
+    await page.check("input[name=status][value=dicabut]");
+    await page.waitForSelector("[aria-label='Memuat hasil']");
+    expect(await page.locator(".daftar-hasil .hasil").count()).toBe(0);
+    expect(await page.locator(".daftar-kerangka .hasil-kerangka").count()).toBe(4);
+    await page.waitForSelector(".daftar-hasil .hasil");
+    expect(await page.locator("[aria-label='Memuat hasil']").count()).toBe(0);
+    expect(await page.locator(".daftar-kerangka").count()).toBe(0);
   });
 
   it("kueri tanpa hasil memberi jalan keluar, bukan halaman kosong", async () => {
