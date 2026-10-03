@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MAKS_CARI, MAKS_DILIHAT, riwayat } from "../../public/js/riwayat.js";
+import { MAKS_CARI, MAKS_DILIHAT, MAKS_POSISI, riwayat } from "../../public/js/riwayat.js";
 import { penyimpanan } from "../../public/js/state.js";
 
 // Riwayat dijalankan di Node: localStorage tidak ada, jadi `penyimpanan` memakai cadangan di memori,
@@ -89,5 +89,47 @@ describe("riwayat: data rusak tidak merusak aplikasi", () => {
     );
     expect(riwayat.dilihat()).toEqual([{ uri: "/ok", judul: "OK", sitasi: "UU 1/2000", waktu: 5 }]);
     expect(riwayat.pencarian()).toEqual([{ q: "sah", waktu: 9 }]);
+  });
+});
+
+describe("riwayat: posisi baca", () => {
+  const u = (n: number) => `/akn/id/act/uu/2000/${n}`;
+
+  it("mencatat pasal terakhir yang dibaca per peraturan dan mengembalikannya", () => {
+    expect(riwayat.posisi(u(1))).toBeNull();
+    riwayat.catatPosisi(u(1), { jangkar: "pasal-82", nama: "Pasal 82" });
+    expect(riwayat.posisi(u(1))).toMatchObject({ uri: u(1), jangkar: "pasal-82", nama: "Pasal 82" });
+    riwayat.catatPosisi(u(1), { jangkar: "pasal-156", nama: "Pasal 156" });
+    expect(riwayat.posisi(u(1))?.jangkar).toBe("pasal-156");
+    expect(riwayat.posisi(u(2))).toBeNull();
+  });
+
+  it(`dibatasi ${MAKS_POSISI} peraturan; yang tertua dibuang`, () => {
+    for (let i = 1; i <= MAKS_POSISI + 3; i++) riwayat.catatPosisi(u(i), { jangkar: "pasal-1", nama: "Pasal 1" });
+    expect(riwayat.posisi(u(1))).toBeNull();
+    expect(riwayat.posisi(u(MAKS_POSISI + 3))).not.toBeNull();
+  });
+
+  it("hapusPosisi membuang satu; posisi tidak mengganggu riwayat dilihat/cari dan sebaliknya; hapusSemua membuang semuanya", () => {
+    riwayat.catatPosisi(u(1), { jangkar: "pasal-5", nama: "Pasal 5" });
+    riwayat.catatDilihat(p(1));
+    riwayat.catatPencarian("pesangon");
+    expect(riwayat.posisi(u(1))).not.toBeNull();
+    riwayat.hapusDilihat(p(1).uri);
+    expect(riwayat.posisi(u(1))).not.toBeNull();
+    riwayat.hapusPosisi(u(1));
+    expect(riwayat.posisi(u(1))).toBeNull();
+    expect(riwayat.pencarian()).toHaveLength(1);
+    riwayat.catatPosisi(u(2), { jangkar: "pasal-7", nama: "Pasal 7" });
+    riwayat.hapusSemua();
+    expect(riwayat.posisi(u(2))).toBeNull();
+  });
+
+  it("data rusak di penyimpanan diabaikan, bukan membuat galat", () => {
+    penyimpanan.tulis("lexa:riwayat:v1", JSON.stringify({ posisi: [null, { uri: 5 }, { uri: "x", jangkar: "" }, { uri: "ok", jangkar: "pasal-1", nama: 1 }] }));
+    expect(riwayat.posisi("ok")).toMatchObject({ jangkar: "pasal-1", nama: "1" });
+    expect(riwayat.posisi("x")).toBeNull();
+    penyimpanan.tulis("lexa:riwayat:v1", "bukan json");
+    expect(riwayat.posisi("ok")).toBeNull();
   });
 });

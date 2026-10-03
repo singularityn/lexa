@@ -29,6 +29,7 @@ const BENTUK = {
   akun: [["circle", { cx: "12", cy: "8", r: "4" }], ["path", { d: "M4 21a8 8 0 0 1 16 0" }]],
   pasang: [["rect", { x: "7", y: "2.5", width: "10", height: "19", rx: "2.5" }], ["path", { d: "M12 8v6" }], ["path", { d: "m9.5 11.5 2.5 2.5 2.5-2.5" }]],
   bagikan: [["circle", { cx: "18", cy: "5", r: "2.5" }], ["circle", { cx: "6", cy: "12", r: "2.5" }], ["circle", { cx: "18", cy: "19", r: "2.5" }], ["path", { d: "m8.2 10.9 7.6-4.4M8.2 13.1l7.6 4.4" }]],
+  cetak: [["path", { d: "M7 9V4h10v5" }], ["rect", { x: "3.5", y: "9", width: "17", height: "8", rx: "2" }], ["path", { d: "M7 14h10v6H7z" }]],
   lainnya: [["circle", { cx: "5", cy: "12", r: "1.6" }], ["circle", { cx: "12", cy: "12", r: "1.6" }], ["circle", { cx: "19", cy: "12", r: "1.6" }]],
   kiri: [["path", { d: "m15 5-7 7 7 7" }]],
   naik: [["path", { d: "M12 19V5" }], ["path", { d: "m5 12 7-7 7 7" }]],

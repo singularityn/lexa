@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * Riwayat di perangkat ini: peraturan yang terakhir dibuka dan kata yang terakhir dicari.
+ * Riwayat di perangkat ini: peraturan yang terakhir dibuka, kata yang terakhir dicari, dan posisi baca terakhir.
  *
  * Hanya disimpan di localStorage (lewat `penyimpanan`, yang tahan terhadap penyimpanan yang diblokir);
  * tidak pernah dikirim ke server. Dipakai di beranda ("Terakhir dilihat", "Pencarian terakhir") dan
@@ -12,13 +12,15 @@ import { penyimpanan } from "./state.js";
 const KUNCI = "lexa:riwayat:v1";
 export const MAKS_DILIHAT = 20;
 export const MAKS_CARI = 10;
+export const MAKS_POSISI = 40;
 
 /**
  * @typedef {{ uri: string, sitasi: string, judul: string, waktu: number }} Dilihat
  * @typedef {{ q: string, waktu: number }} Dicari
+ * @typedef {{ uri: string, jangkar: string, nama: string, waktu: number }} Posisi
  */
 
-/** @returns {{ dilihat: Dilihat[], cari: Dicari[] }} */
+/** @returns {{ dilihat: Dilihat[], cari: Dicari[], posisi: Posisi[] }} */
 function baca() {
   try {
     const mentah = JSON.parse(penyimpanan.baca(KUNCI) ?? "{}");
@@ -33,13 +35,18 @@ function baca() {
     const cari = Array.isArray(mentah?.cari)
       ? mentah.cari.filter((/** @type {any} */ e) => e && typeof e.q === "string" && e.q.trim() !== "").map((/** @type {any} */ e) => ({ q: e.q, waktu: Number(e.waktu) || 0 }))
       : [];
-    return { dilihat: dilihat.slice(0, MAKS_DILIHAT), cari: cari.slice(0, MAKS_CARI) };
+    const posisi = Array.isArray(mentah?.posisi)
+      ? mentah.posisi
+          .filter((/** @type {any} */ e) => e && typeof e.uri === "string" && typeof e.jangkar === "string" && e.jangkar !== "")
+          .map((/** @type {any} */ e) => ({ uri: e.uri, jangkar: e.jangkar, nama: String(e.nama ?? ""), waktu: Number(e.waktu) || 0 }))
+      : [];
+    return { dilihat: dilihat.slice(0, MAKS_DILIHAT), cari: cari.slice(0, MAKS_CARI), posisi: posisi.slice(0, MAKS_POSISI) };
   } catch {
-    return { dilihat: [], cari: [] };
+    return { dilihat: [], cari: [], posisi: [] };
   }
 }
 
-/** @param {{ dilihat: Dilihat[], cari: Dicari[] }} data */
+/** @param {{ dilihat: Dilihat[], cari: Dicari[], posisi: Posisi[] }} data */
 function tulis(data) {
   penyimpanan.tulis(KUNCI, JSON.stringify(data));
 }
@@ -81,6 +88,34 @@ export const riwayat = {
   hapusDilihat(uri) {
     const data = baca();
     data.dilihat = data.dilihat.filter((e) => e.uri !== uri);
+    tulis(data);
+  },
+
+  /**
+   * Posisi baca terakhir pada sebuah peraturan: pasal yang berada di atas layar saat pembaca berhenti menggulir.
+   * @param {string} uri
+   * @returns {Posisi | null}
+   */
+  posisi(uri) {
+    return baca().posisi.find((e) => e.uri === uri) ?? null;
+  },
+
+  /**
+   * @param {string} uri
+   * @param {{ jangkar: string, nama: string }} p  `nama`: label untuk pembaca, mis. "Pasal 82"
+   */
+  catatPosisi(uri, p) {
+    const data = baca();
+    if (data.posisi[0]?.uri === uri && data.posisi[0].jangkar === p.jangkar) return; // tidak berubah: hindari menulis ulang tiap gulir
+    data.posisi = [{ uri, jangkar: p.jangkar, nama: p.nama, waktu: Date.now() }, ...data.posisi.filter((e) => e.uri !== uri)].slice(0, MAKS_POSISI);
+    tulis(data);
+  },
+
+  /** @param {string} uri */
+  hapusPosisi(uri) {
+    const data = baca();
+    if (!data.posisi.some((e) => e.uri === uri)) return;
+    data.posisi = data.posisi.filter((e) => e.uri !== uri);
     tulis(data);
   },
 

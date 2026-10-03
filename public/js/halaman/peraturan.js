@@ -3,7 +3,7 @@ import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
   angka, bacaIsiPasal, bersihkanArtefak, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, labelJenis, labelRelasi,
-  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, urlPeraturan, URUTAN_RELASI,
+  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
 import { bacaPref, HURUF, simpanPref, terapkanPref, UKURAN } from "../bacaan.js";
 import { buatDaftarIsi } from "../komponen/daftarIsi.js";
@@ -44,6 +44,28 @@ function tautanAman(url) {
   } catch {
     return null;
   }
+}
+
+/** Lembar bagikan bawaan perangkat (ponsel dan sebagian peramban desktop). Tanpa itu, tombol Bagikan tidak ditampilkan. */
+const bisaBagikan = typeof navigator.share === "function";
+
+/**
+ * Buka lembar bagikan perangkat. Dibatalkan pengguna bukan galat; kegagalan lain diberi tahu dengan jalan keluar.
+ * @param {{ teks: string, url: string }} isi
+ */
+async function bagikan({ teks, url }) {
+  try {
+    await navigator.share({ text: teks, url });
+  } catch (e) {
+    if (!(e instanceof DOMException && e.name === "AbortError")) toast("Berbagi gagal. Coba salin tautannya.", { galat: true });
+  }
+}
+
+/** Potong di batas kata dan beri elipsis. @param {string} teks @param {number} maks */
+function potongTeks(teks, maks) {
+  const rapat = teks.replace(/\s+/g, " ").trim();
+  if (rapat.length <= maks) return rapat;
+  return `${rapat.slice(0, maks).replace(/\s+\S*$/, "")}…`;
 }
 
 /** @param {import("../router.js").Konteks} ctx */
@@ -148,6 +170,8 @@ function tampilkan(ctx, d, q) {
   const salinSitasi = async () => toast((await salin(nama)) ? `Disalin: ${nama}` : "Penyalinan gagal");
   const salinTautan = async () => toast((await salin(location.origin + urlPeraturan(l.frbr_uri))) ? "Tautan disalin." : "Penyalinan gagal");
   const lapor = () => bukaDialogLaporan({ uri: l.frbr_uri, sitasi: nama });
+  const bagikanPeraturan = () => bagikan({ teks: `${nama} tentang ${topik}`, url: location.origin + urlPeraturan(l.frbr_uri) });
+  const cetak = () => window.print();
 
   const aksi = h(
     "div",
@@ -159,6 +183,7 @@ function tampilkan(ctx, d, q) {
       "span",
       { class: "aksi-lain" },
       tombolIkon("tautan", "Salin tautan", { onclick: salinTautan }),
+      bisaBagikan ? tombolIkon("bagikan", "Bagikan", { onclick: bagikanPeraturan }) : null,
       bpk ? h("a", { class: "tombol", href: bpk, target: "_blank", rel: "noopener noreferrer" }, ikon("luar"), h("span", null, "Naskah resmi (BPK)")) : null,
       tombolPdf,
       tombolIkon("bendera", "Laporkan kesalahan", { onclick: lapor }),
@@ -174,9 +199,11 @@ function tampilkan(ctx, d, q) {
           bukaLembarAksi({
             judul: nama,
             aksi: [
+              { ikon: "bagikan", label: "Bagikan…", keterangan: "Kirim lewat WhatsApp, Telegram, dan lainnya", saat: bagikanPeraturan, tampil: bisaBagikan },
               { ikon: "tautan", label: "Salin tautan", saat: salinTautan },
               { ikon: "luar", label: "Naskah resmi (BPK)", keterangan: "peraturan.bpk.go.id", href: bpk, tampil: Boolean(bpk) },
               { ikon: "unduh", label: "Buka PDF", keterangan: "Salinan yang diarsipkan Lexa", href: pdf, tampil: Boolean(pdf) },
+              { ikon: "cetak", label: "Cetak atau simpan PDF", keterangan: "Seluruh teks peraturan ini", saat: cetak },
               { ikon: "bendera", label: "Laporkan kesalahan", saat: lapor },
             ],
           });
@@ -332,12 +359,51 @@ function kartuRingkasan(teks) {
   return h("section", { class: "kartu ringkasan-ai", "aria-label": "Ringkasan" }, h("span", { class: "label" }, "Ringkasan otomatis (dibuat AI, periksa pasal aslinya)"), p, tombol);
 }
 
-/** @param {ReturnType<typeof bacaIsiPasal>[number]} b */
-function renderBlok(b) {
-  if (b.tipe === "butir") {
-    return h("div", { class: ["butir", b.tingkat === 2 ? "butir-2" : ""] }, h("span", { class: "no" }, b.penanda), h("span", { class: "isi" }, b.teks));
+/**
+ * Pasal yang bisa dituju dari rujukan di dalam teks: nomor pasal (huruf kecil) ke jangkar pasalnya, dan jangkar ayat yang ada.
+ * Hanya batang tubuh; nomor kembar akibat salah deteksi memakai kemunculan pertama.
+ * @param {ReturnType<typeof kelompokkanPasal>} kelompok
+ */
+function petaRujukan(kelompok) {
+  /** @type {Map<string, string>} */
+  const pasal = new Map();
+  /** @type {Set<string>} */
+  const ayat = new Set();
+  for (const g of kelompok) {
+    const kunci = g.nomor.toLowerCase();
+    if (g.penjelasan || pasal.has(kunci)) continue;
+    pasal.set(kunci, g.jangkar);
+    for (const b of g.butir) if (b.ayat !== null) ayat.add(jangkarDariId(b.id));
   }
-  return h("p", { class: b.tipe === "label" ? "isi-pasal label-bagian" : "isi-pasal" }, b.teks);
+  return { pasal, ayat };
+}
+
+/**
+ * Teks dengan rujukan "Pasal N [ayat (M)]" ke pasal di peraturan yang sama diubah menjadi tautan jangkar.
+ * @param {string} teks
+ * @param {ReturnType<typeof petaRujukan>} peta
+ * @returns {Array<string | HTMLElement>}
+ */
+function denganRujukan(teks, peta) {
+  return pecahRujukan(teks).map((bagian) => {
+    if (typeof bagian === "string") return bagian;
+    const dasar = peta.pasal.get(bagian.nomor.toLowerCase());
+    if (!dasar) return bagian.teks;
+    const jangkarAyat = bagian.ayat ? `${dasar}-ayat-${bagian.ayat}` : null;
+    const tujuan = jangkarAyat && peta.ayat.has(jangkarAyat) ? jangkarAyat : dasar;
+    return h("a", { class: "rujukan", href: `#${tujuan}` }, bagian.teks);
+  });
+}
+
+/**
+ * @param {ReturnType<typeof bacaIsiPasal>[number]} b
+ * @param {ReturnType<typeof petaRujukan>} peta
+ */
+function renderBlok(b, peta) {
+  if (b.tipe === "butir") {
+    return h("div", { class: ["butir", b.tingkat === 2 ? "butir-2" : ""] }, h("span", { class: "no" }, b.penanda), h("span", { class: "isi" }, ...denganRujukan(b.teks, peta)));
+  }
+  return h("p", { class: b.tipe === "label" ? "isi-pasal label-bagian" : "isi-pasal" }, ...(b.tipe === "label" ? [b.teks] : denganRujukan(b.teks, peta)));
 }
 
 /**
@@ -364,7 +430,8 @@ function panelIsi(ctx, d, q, kelompok) {
 
   const daftar = h("div", { class: "isi-peraturan" });
   terapkanPref(daftar);
-  /** @type {Array<{ el: HTMLElement, teks: string }>} */
+  const peta = petaRujukan(kelompok);
+  /** @type {Array<{ el: HTMLElement, teks: string, jangkar: string, nama: string }>} */
   const indeks = [];
 
   for (const g of kelompok) {
@@ -379,6 +446,8 @@ function panelIsi(ctx, d, q, kelompok) {
     const salinTeks = async () => toast((await salin(`${sitasiPs}\n${teksPasal(g, { kepala: false })}`)) ? `Disalin: ${sitasiPs}` : "Penyalinan gagal");
     const salinSitasiPasal = async () => toast((await salin(sitasiPs)) ? `Disalin: ${sitasiPs}` : "Penyalinan gagal");
     const salinTautanPasal = async () => toast((await salin(location.origin + urlPeraturan(l.frbr_uri, { jangkar: g.jangkar }))) ? "Tautan disalin." : "Penyalinan gagal");
+    const bagikanPasal = () =>
+      bagikan({ teks: `${sitasiPs}: ${potongTeks(teksPasal(g, { kepala: false }), 160)}`, url: location.origin + urlPeraturan(l.frbr_uri, { jangkar: g.jangkar }) });
     const laporPasal = () => bukaDialogLaporan({ uri: l.frbr_uri, sitasi: nama, konteks: namaPs });
 
     // Perangkat dengan penunjuk halus: tiga ikon yang muncul saat disorot. Layar sentuh: satu tombol "⋯" ke lembar aksi.
@@ -400,6 +469,7 @@ function panelIsi(ctx, d, q, kelompok) {
           bukaLembarAksi({
             judul: sitasiPs,
             aksi: [
+              { ikon: "bagikan", label: "Bagikan pasal ini", keterangan: "Kirim lewat WhatsApp, Telegram, dan lainnya", saat: bagikanPasal, tampil: bisaBagikan },
               { ikon: "salin", label: "Salin teks pasal", keterangan: "Dengan sitasinya", saat: salinTeks },
               { ikon: "salin", label: "Salin sitasi", keterangan: sitasiPs, saat: salinSitasiPasal },
               { ikon: "tautan", label: "Salin tautan ke pasal ini", saat: salinTautanPasal },
@@ -416,15 +486,15 @@ function panelIsi(ctx, d, q, kelompok) {
       h("div", { class: "pasal-kepala" }, h("h3", null, namaPs), aksiPasal, lainnyaPasal),
       g.judul ? h("p", { class: "pasal-judul" }, g.judul) : null,
       satuTeks
-        ? bacaIsiPasal(g.butir[0].isi).map(renderBlok)
+        ? bacaIsiPasal(g.butir[0].isi).map((blok) => renderBlok(blok, peta))
         : g.butir.map((b) =>
             b.ayat === null
-              ? bacaIsiPasal(b.isi).map(renderBlok)
-              : h("div", { class: "ayat", id: jangkarDariId(b.id) }, h("span", { class: "no" }, `(${b.ayat})`), h("div", { class: "isi" }, bacaIsiPasal(b.isi).map(renderBlok))),
+              ? bacaIsiPasal(b.isi).map((blok) => renderBlok(blok, peta))
+              : h("div", { class: "ayat", id: jangkarDariId(b.id) }, h("span", { class: "no" }, `(${b.ayat})`), h("div", { class: "isi" }, bacaIsiPasal(b.isi).map((blok) => renderBlok(blok, peta)))),
           ),
     );
     daftar.appendChild(el);
-    indeks.push({ el, teks: `${namaPs} ${g.judul ?? ""} ${g.butir.map((b) => bersihkanArtefak(b.isi)).join(" ")}`.toLowerCase() });
+    indeks.push({ el, teks: `${namaPs} ${g.judul ?? ""} ${g.butir.map((b) => bersihkanArtefak(b.isi)).join(" ")}`.toLowerCase(), jangkar: g.jangkar, nama: namaPs });
   }
 
   // --- Pencarian di dalam peraturan --------------------------------------
@@ -481,15 +551,12 @@ function panelIsi(ctx, d, q, kelompok) {
   }
 
   // --- Daftar isi dan tampilan teks ----------------------------------------
-  const daftarIsi = kelompok.length > 1
-    ? buatDaftarIsi({
-        kelompok,
-        keJangkar: (jangkar) => {
-          if (location.hash === `#${jangkar}`) ctx.keJangkar();
-          else location.hash = jangkar;
-        },
-      })
-    : null;
+  /** @param {string} jangkar */
+  const keJangkarPasal = (jangkar) => {
+    if (location.hash === `#${jangkar}`) ctx.keJangkar();
+    else location.hash = jangkar;
+  };
+  const daftarIsi = kelompok.length > 1 ? buatDaftarIsi({ kelompok, keJangkar: keJangkarPasal }) : null;
 
   const tombolTampilan = h(
     "button",
@@ -506,7 +573,9 @@ function panelIsi(ctx, d, q, kelompok) {
   );
 
   const isiBaca = h("div", { class: "isi-baca" }, daftar);
-  const akar = h("div", { class: ["baca-tata", daftarIsi ? "dengan-daftar-isi" : ""] }, daftarIsi?.el ?? null, h("div", { class: "baca-utama" }, alat, isiBaca), daftarIsi?.tombolMengambang ?? null);
+  const lanjut = buatLanjutBaca(l.frbr_uri, indeks, { tanpa: Boolean(location.hash) || Boolean(q), keJangkar: keJangkarPasal });
+  const akar = h("div", { class: ["baca-tata", daftarIsi ? "dengan-daftar-isi" : ""] }, daftarIsi?.el ?? null, h("div", { class: "baca-utama" }, lanjut, alat, isiBaca), daftarIsi?.tombolMengambang ?? null);
+  pantauPosisiBaca(ctx, l.frbr_uri, daftar, indeks);
 
   // Tombol mengambang "Daftar isi" muncul bila bilah alat sudah tergulir ke atas layar.
   let panelAktif = true;
@@ -528,6 +597,61 @@ function panelIsi(ctx, d, q, kelompok) {
       perbaruiMengambang();
     },
   };
+}
+
+/** Pasal yang dilewati dulu sebelum "Lanjutkan membaca" ditawarkan; di awal peraturan tawaran itu tak berguna. */
+const PASAL_AWAL = 3;
+
+/**
+ * Tawaran "Lanjutkan membaca" bila peraturan ini pernah dibaca sampai jauh di perangkat ini.
+ * Tidak ditawarkan bila pembaca datang dengan tautan ke pasal tertentu atau dari hasil pencarian.
+ * @param {string} uri
+ * @param {Array<{ el: HTMLElement, jangkar: string, nama: string }>} indeks
+ * @param {{ tanpa: boolean, keJangkar: (jangkar: string) => void }} opsi
+ * @returns {HTMLElement | null}
+ */
+function buatLanjutBaca(uri, indeks, { tanpa, keJangkar }) {
+  if (tanpa) return null;
+  const tersimpan = riwayat.posisi(uri);
+  const urutan = tersimpan ? indeks.findIndex((e) => e.jangkar === tersimpan.jangkar) : -1;
+  if (!tersimpan || urutan < PASAL_AWAL) return null;
+  const kartu = h(
+    "div",
+    { class: "lanjut-baca", role: "region", "aria-label": "Lanjutkan membaca" },
+    h("span", { class: "lanjut-teks" }, "Terakhir dibaca: ", h("strong", null, tersimpan.nama || indeks[urutan].nama)),
+    h("button", { type: "button", class: "tombol tombol-kecil tombol-utama", onclick: () => { kartu.remove(); keJangkar(tersimpan.jangkar); } }, "Lanjutkan"),
+    h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", "aria-label": "Tutup tawaran lanjutkan membaca", onclick: () => kartu.remove() }, ikon("tutup")),
+  );
+  return kartu;
+}
+
+/**
+ * Simpan pasal yang sedang berada di atas layar setelah gulir berhenti (di perangkat ini saja).
+ * Pasal ditemukan dengan elementFromPoint di bawah tab lengket, tanpa pengamat per pasal.
+ * @param {import("../router.js").Konteks} ctx
+ * @param {string} uri
+ * @param {HTMLElement} daftar
+ * @param {Array<{ el: HTMLElement, jangkar: string, nama: string }>} indeks
+ */
+function pantauPosisiBaca(ctx, uri, daftar, indeks) {
+  const simpanSekarang = () => {
+    // Tab Relasi/Naskah aktif atau halaman sudah diganti: daftar tidak terlihat.
+    if (!daftar.isConnected || daftar.offsetParent === null || window.scrollY < 300) return;
+    const tab = document.querySelector(".tab-daftar");
+    const kotak = daftar.getBoundingClientRect();
+    const titik = document.elementFromPoint(kotak.left + Math.min(kotak.width / 2, 220), (tab ? tab.getBoundingClientRect().bottom : 100) + 28);
+    const pasal = titik?.closest(".pasal");
+    const entri = pasal ? indeks.find((e) => e.el === pasal) : undefined;
+    if (entri) riwayat.catatPosisi(uri, { jangkar: entri.jangkar, nama: entri.nama });
+  };
+  const tertunda = tunda(simpanSekarang, 500);
+  window.addEventListener("scroll", tertunda, { passive: true });
+  window.addEventListener("pagehide", simpanSekarang);
+  ctx.saatKeluar(() => {
+    simpanSekarang();
+    window.removeEventListener("scroll", tertunda);
+    window.removeEventListener("pagehide", simpanSekarang);
+  });
 }
 
 /**

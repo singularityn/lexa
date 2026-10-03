@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, istilahDariKueri, jangkarDariId,
   hitungPasal, judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, namaPasal, nomorTahun, pisahJudul,
-  bacaIsiPasal, pisahPenjelasanTertanam, queryString, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, urlPeraturan,
+  bacaIsiPasal, pecahRujukan, pisahPenjelasanTertanam, queryString, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, urlPeraturan,
 } from "../public/js/format.js";
 import { labelSitasi, nomorTahun as nomorTahunServer } from "../src/shared/label";
 
@@ -244,6 +244,50 @@ describe("kelompokkanPasal: penjelasan yang terbawa di pasal terakhir", () => {
   it("pasal yang seluruh isinya penjelasan tidak menyisakan kelompok kosong", () => {
     const g = kelompokkanPasal([artikel("1", null, "BAB I"), { ...artikel("2", null, "BAB I"), isi: "PENJELASAN\nATAS\nUNDANG-UNDANG\nI. UMUM\nUraian." }]);
     expect(g.map((x) => [x.nomor, x.penjelasan])).toEqual([["1", false], ["Umum", true]]);
+  });
+});
+
+describe("pecahRujukan (tautan antarpasal)", () => {
+  const rujuk = (teks: string, nomor: string, ayat: string | null = null) => ({ teks, nomor, ayat });
+
+  it("rujukan sederhana dan berayat; keterangan 'huruf b' tidak ikut ditautkan", () => {
+    expect(pecahRujukan("sebagaimana dimaksud dalam Pasal 156 ayat (2) huruf b berlaku")).toEqual([
+      "sebagaimana dimaksud dalam ", rujuk("Pasal 156 ayat (2)", "156", "2"), " huruf b berlaku",
+    ]);
+    expect(pecahRujukan("lihat pasal 5A.")).toEqual(["lihat ", rujuk("pasal 5A", "5A"), "."]);
+    expect(pecahRujukan("tanpa rujukan")).toEqual(["tanpa rujukan"]);
+    expect(pecahRujukan("")).toEqual([""]);
+  });
+
+  it("rangkaian rujukan: koma, 'dan', 'sampai dengan'", () => {
+    expect(pecahRujukan("Pasal 5, Pasal 6, dan Pasal 7 mengatur")).toEqual([
+      rujuk("Pasal 5", "5"), ", ", rujuk("Pasal 6", "6"), ", dan ", rujuk("Pasal 7", "7"), " mengatur",
+    ]);
+    expect(pecahRujukan("Pasal 77 sampai dengan Pasal 85")).toEqual([rujuk("Pasal 77", "77"), " sampai dengan ", rujuk("Pasal 85", "85")]);
+    // Pasal 156 ayat (1) dan ayat (2): rujukan ke pasalnya, "ayat (2)" kedua hanya keterangan.
+    expect(pecahRujukan("Pasal 156 ayat (1) dan ayat (2)")).toEqual([rujuk("Pasal 156 ayat (1)", "156", "1"), " dan ayat (2)"]);
+  });
+
+  it("pasal milik peraturan lain tidak ditautkan, walau dalam rangkaian", () => {
+    expect(pecahRujukan("Pasal 5 Undang-Undang Nomor 1 Tahun 1974 tentang Perkawinan")).toEqual(["Pasal 5 Undang-Undang Nomor 1 Tahun 1974 tentang Perkawinan"]);
+    expect(pecahRujukan("Pasal 5 dan Pasal 6 Undang-Undang Nomor 1 Tahun 1974")).toEqual(["Pasal 5 dan Pasal 6 Undang-Undang Nomor 1 Tahun 1974"]);
+    expect(pecahRujukan("Pasal 2 ayat (1) Kitab Undang-Undang Hukum Pidana")).toEqual(["Pasal 2 ayat (1) Kitab Undang-Undang Hukum Pidana"]);
+    expect(pecahRujukan("Pasal 9 huruf a Peraturan Pemerintah Nomor 35 Tahun 2021")).toEqual(["Pasal 9 huruf a Peraturan Pemerintah Nomor 35 Tahun 2021"]);
+    // Rangkaian lain di kalimat yang sama tetap ditautkan.
+    expect(pecahRujukan("Pasal 3 berlaku; sedangkan Pasal 4 Undang-Undang Nomor 2 Tahun 2000 mengatur lain")).toEqual([
+      rujuk("Pasal 3", "3"), " berlaku; sedangkan Pasal 4 Undang-Undang Nomor 2 Tahun 2000 mengatur lain",
+    ]);
+  });
+
+  it("'Undang-Undang ini' adalah peraturan yang sama; peraturan pelaksana sesudah rujukan tanpa kata penghubung bukan rujukan luar", () => {
+    expect(pecahRujukan("Pasal 1 angka 3 Undang-Undang ini")).toEqual([rujuk("Pasal 1", "1"), " angka 3 Undang-Undang ini"]);
+    // "diatur dengan Peraturan Pemerintah": kata penghubung di antaranya, jadi Pasal 8 tetap rujukan dalam.
+    expect(pecahRujukan("Pasal 8 diatur dengan Peraturan Pemerintah")).toEqual([rujuk("Pasal 8", "8"), " diatur dengan Peraturan Pemerintah"]);
+  });
+
+  it("nomor yang disambung huruf bukan rujukan (artefak ekstraksi 'Pasal 1Dalam'), dan awal teks dikenali", () => {
+    expect(pecahRujukan("Pasal 1Dalam undang-undang")).toEqual(["Pasal 1Dalam undang-undang"]);
+    expect(pecahRujukan("Pasal 12 dihapus.")).toEqual([rujuk("Pasal 12", "12"), " dihapus."]);
   });
 });
 

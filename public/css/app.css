@@ -659,6 +659,13 @@ dialog.daftar-isi:not([open]) { display: none; }
 }
 .isi-pasal { margin: 0 0 0.55em; overflow-wrap: anywhere; }
 .isi-pasal:last-child { margin-bottom: 0; }
+/* "Lanjutkan membaca": tawaran di atas bilah alat bila peraturan ini pernah dibaca sampai jauh. */
+.lanjut-baca { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 8px 8px 14px; border: 1px solid color-mix(in srgb, var(--aksen) 30%, transparent); border-radius: 12px; background: var(--aksen-lembut); }
+.lanjut-teks { flex: 1; min-width: 0; font-size: 0.92rem; }
+.lanjut-baca .tombol-ikon { flex: none; }
+/* Rujukan ke pasal lain di peraturan yang sama: ditandai garis titik-titik, bukan hanya warna. */
+.rujukan { color: var(--aksen); text-decoration: underline dotted; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+.rujukan:hover { text-decoration-style: solid; }
 /* "Ayat (2)", "Huruf b" di dalam penjelasan: penunjuk bagian, bukan kalimat. */
 .label-bagian { margin: 0.9em 0 0.1em; font-family: var(--font-badan); font-size: 0.8em; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--teks-redup); }
 .ayat { display: flex; gap: 10px; padding: 3px 0; scroll-margin-top: calc(var(--tinggi-header, 60px) + 70px); }
@@ -861,11 +868,24 @@ dialog h2 { margin: 0; font-size: 1.25rem; }
 }
 
 /* --- Cetak ---------------------------------------------------------------- */
+/* --- Cetak ---------------------------------------------------------------------
+   Peraturan dicetak atau disimpan sebagai PDF dari peramban: hanya judul, status, dan teksnya
+   (tanpa navigasi, tombol, atau daftar isi), seluruh pasal sekaligus, hitam di atas putih. */
+@page { margin: 16mm 14mm; }
 @media print {
-  .header, .footer, .nav-bawah, .aksi-bar, .tab-daftar, .cari-dalam, .pasal-aksi, details.toc, .toast-area, .pita-dev, .lewati { display: none !important; }
+  :root { color-scheme: light; }
   body { background: #fff; color: #000; }
-  .kartu, .pasal { box-shadow: none; border-color: #999; }
-  a { color: #000; text-decoration: none; }
-  .pasal { break-inside: avoid; content-visibility: visible; }
-  [role="tabpanel"][hidden] { display: block !important; }
+  .header, .lewati, .nav-bawah, .footer, .toast-area, .pita-luring, .pita-dev, .remah, .aksi-bar, .tab-daftar, .alat-baca,
+  .rel-daftar-isi, .fab-daftar-isi, .lanjut-baca, .ajakan-pasang, .ringkasan-ai .tombol-teks, .info-peraturan, .pasal-aksi, .pasal-lainnya,
+  .cari-dalam, dialog, [role="tabpanel"][hidden] { display: none !important; }
+  .bungkus, main { max-width: none; padding: 0; margin: 0; }
+  .baca-tata, .baca-tata.dengan-daftar-isi { display: block; }
+  .isi-peraturan { max-width: none; font-size: 11pt; line-height: 1.5; color: #000; }
+  .isi-peraturan[data-huruf="sans"] { font-family: var(--font-judul); }
+  .kartu { box-shadow: none; border-color: #999; }
+  .pasal { content-visibility: visible; contain-intrinsic-size: none; padding: 5pt 0; margin: 0; border: 0; background: none; }
+  .pasal-kepala h3, h2.bab { break-after: avoid; }
+  .ringkasan-ai p.terpotong { display: block; -webkit-line-clamp: unset; }
+  a.rujukan { color: inherit; text-decoration: none; }
+  a { color: inherit; }
 }

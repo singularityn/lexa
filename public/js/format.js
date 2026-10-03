@@ -654,6 +654,63 @@ export function teksPasal(g, { kepala = true } = {}) {
   return baris.join("\n");
 }
 
+// --- Rujukan antarpasal ---------------------------------------------------------
+
+/** Inti rujukan: "Pasal 156", "pasal 5A", dengan "ayat (2)" bila ada. Nomor tidak boleh disambung huruf lain ("Pasal 1Dalam"). */
+const RE_RUJUKAN_PASAL = /\b[Pp]asal\s+(\d{1,4}[A-Z]?)(?![\p{L}\d])(?:\s+ayat\s+\((\d{1,3}[a-z]?)\))?/gu;
+/** Keterangan yang menempel pada rujukan: "ayat (3)", "huruf b", "angka 2", juga daftarnya ("huruf a dan huruf b"). */
+const RE_KETERANGAN_RUJUKAN = /^(?:\s*(?:,|dan|atau|serta)?\s*(?:ayat\s+\(\d{1,3}[a-z]?\)|huruf\s+[a-z]\b|angka\s+\d{1,3}|butir\s+\d{1,3}))+/;
+/** Sela antara dua rujukan dalam satu rangkaian: "Pasal 5, Pasal 6, dan Pasal 7", "Pasal 77 sampai dengan Pasal 85". */
+const RE_SELA_RANGKAIAN = /^\s*(?:,|dan|atau|serta|sampai\s+dengan|s\.d\.)?\s*$/;
+/** Yang mengikuti rangkaian rujukan dan menandakan pasalnya milik peraturan lain ("Pasal 5 Undang-Undang Nomor 1 Tahun 1974"). */
+const RE_PERATURAN_LAIN =
+  /^\s+(?:Undang[- ]Undang(?!\s+ini\b)|Peraturan\s+(?:Pemerintah|Presiden|Daerah|Menteri|Gubernur|Bupati|Wali|Perundang|Mahkamah|Bank|Otoritas)|Peraturan\s+\S+\s+Nomor|Keputusan\s+(?:Presiden|Menteri)|Instruksi\s+Presiden|Kitab\s+Undang|Perpu\b|Perppu\b|Ordonansi|Staatsblad|Wetboek|Reglement)/i;
+
+/**
+ * Pecah teks pasal menjadi potongan biasa dan rujukan ke pasal lain DI PERATURAN YANG SAMA.
+ * Rangkaian rujukan yang diikuti nama peraturan lain ("Pasal 5 dan Pasal 6 Undang-Undang Nomor 1 Tahun 1974",
+ * "Pasal 2 Kitab Undang-Undang Hukum Pidana") tidak ditautkan; "Undang-Undang ini" tetap dianggap peraturan yang sama.
+ * Hanya inti rujukan ("Pasal 5 ayat (2)") yang ditautkan, bukan keterangan sesudahnya ("huruf b").
+ *
+ * @param {string} teks
+ * @returns {Array<string | { teks: string, nomor: string, ayat: string | null }>}
+ */
+export function pecahRujukan(teks) {
+  /** @type {Array<{ awal: number, akhirInti: number, akhir: number, nomor: string, ayat: string | null }>} */
+  const rujukan = [];
+  for (const m of teks.matchAll(RE_RUJUKAN_PASAL)) {
+    const akhirInti = m.index + m[0].length;
+    const tambahan = RE_KETERANGAN_RUJUKAN.exec(teks.slice(akhirInti));
+    rujukan.push({ awal: m.index, akhirInti, akhir: akhirInti + (tambahan ? tambahan[0].length : 0), nomor: m[1], ayat: m[2] ?? null });
+  }
+  if (!rujukan.length) return [teks];
+
+  // Peraturan lain di ujung sebuah rangkaian berlaku bagi semua rujukan di rangkaian itu.
+  const luar = rujukan.map(() => false);
+  for (let i = 0; i < rujukan.length; ) {
+    let j = i;
+    while (j + 1 < rujukan.length) {
+      const sela = teks.slice(rujukan[j].akhir, rujukan[j + 1].awal);
+      if (sela.length > 24 || !RE_SELA_RANGKAIAN.test(sela)) break;
+      j++;
+    }
+    if (RE_PERATURAN_LAIN.test(teks.slice(rujukan[j].akhir, rujukan[j].akhir + 80))) luar.fill(true, i, j + 1);
+    i = j + 1;
+  }
+
+  /** @type {Array<string | { teks: string, nomor: string, ayat: string | null }>} */
+  const hasil = [];
+  let kursor = 0;
+  rujukan.forEach((r, i) => {
+    if (luar[i]) return;
+    if (r.awal > kursor) hasil.push(teks.slice(kursor, r.awal));
+    hasil.push({ teks: teks.slice(r.awal, r.akhirInti), nomor: r.nomor, ayat: r.ayat });
+    kursor = r.akhirInti;
+  });
+  if (kursor < teks.length) hasil.push(teks.slice(kursor));
+  return hasil;
+}
+
 // --- Graf relasi --------------------------------------------------------------
 
 /** Prioritas jenis relasi saat dua peraturan punya lebih dari satu sisi (mis. pasangan invers). */

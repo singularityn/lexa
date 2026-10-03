@@ -376,6 +376,199 @@ describe("ponsel: halaman baca", () => {
     expect(await p.evaluate(() => navigator.clipboard.readText())).toBe("UU 13/2003 Penjelasan Pasal 1\nCukup jelas.");
   });
 
+  it("rujukan ke pasal lain di peraturan yang sama menjadi tautan; rujukan ke peraturan lain atau pasal yang tak ada tidak", async () => {
+    const p = await halaman({ hp: true });
+    await ubahDetail(p, (json) => {
+      json.articles.find((a) => a.nomor_pasal === "79").isi =
+        "Cuti sebagaimana dimaksud dalam Pasal 82 ayat (1) dan Pasal 156 mengikuti Pasal 77 Undang-Undang Nomor 1 Tahun 1974, serta Pasal 999 dan Pasal 77 ayat (2) Undang-Undang ini.";
+    });
+    await bukaPeraturan(p);
+    const tautan = p.locator("#pasal-79 a.rujukan");
+    expect(await tautan.allTextContents()).toEqual(["Pasal 82 ayat (1)", "Pasal 156", "Pasal 77 ayat (2)"]);
+    expect(await tautan.evaluateAll((els) => els.map((el) => el.getAttribute("href")))).toEqual(["#pasal-82-ayat-1", "#pasal-156", "#pasal-77-ayat-2"]);
+    // Teks di sekitarnya utuh, dan rujukan luar tetap teks biasa.
+    expect(await p.locator("#pasal-79 .ayat .isi").textContent()).toContain("Pasal 77 Undang-Undang Nomor 1 Tahun 1974, serta Pasal 999 dan ");
+
+    await p.evaluate(() => { window.__tanda = "spa"; });
+    await tautan.nth(0).tap();
+    await p.waitForFunction(() => location.hash === "#pasal-82-ayat-1");
+    await p.waitForFunction(() => {
+      const r = document.getElementById("pasal-82-ayat-1")?.getBoundingClientRect();
+      return r && r.top >= 56 && r.top < innerHeight * 0.6;
+    });
+    expect(await p.evaluate(() => window.__tanda), "tautan jangkar tidak memuat ulang halaman").toBe("spa");
+  });
+
+  for (const tema of ["terang", "gelap"]) {
+    it(`axe: tautan rujukan di dalam teks dapat dibedakan tanpa warna (tema ${tema})`, async () => {
+      const p = await halaman({ hp: true, tema: tema === "gelap" ? "dark" : "light", bypassCSP: true });
+      await ubahDetail(p, (json) => {
+        json.articles.find((a) => a.nomor_pasal === "79").isi = "Cuti sebagaimana dimaksud dalam Pasal 82 ayat (1) dan Pasal 156 tetap berlaku.";
+      });
+      await bukaPeraturan(p);
+      expect(await p.locator("#pasal-79 a.rujukan").count()).toBe(2);
+      expect(await pelanggaranAxe(p)).toEqual([]);
+    });
+  }
+
+  it("lanjutkan membaca: pasal terakhir dibaca disimpan di perangkat dan ditawarkan pada kunjungan berikutnya", async () => {
+    const p = await halaman({ hp: true });
+    await reset();
+    expect((await fetch(`${BASE}/__dev/peraturan-besar?pasal=400`, { method: "POST" })).status).toBe(201);
+    await bukaPeraturan(p, URI_BESAR);
+    const posisi = () => p.evaluate(() => JSON.parse(localStorage.getItem("lexa:riwayat:v1") ?? "{}").posisi ?? []);
+    expect(await p.locator(".lanjut-baca").count(), "belum pernah dibaca").toBe(0);
+
+    // Gulir di dekat puncak tidak dicatat; gulir jauh dicatat setelah berhenti.
+    await p.evaluate(() => window.scrollTo(0, 120));
+    await p.waitForTimeout(800);
+    expect(await posisi()).toEqual([]);
+    await p.evaluate(() => window.scrollTo(0, 6000));
+    await p.waitForFunction(() => (JSON.parse(localStorage.getItem("lexa:riwayat:v1") ?? "{}").posisi ?? []).length === 1);
+    const [simpanan] = await posisi();
+    expect(simpanan.uri).toBe(URI_BESAR);
+    expect(simpanan.nama).toMatch(/^Pasal \d+$/);
+    expect(Number(simpanan.nama.replace("Pasal ", ""))).toBeGreaterThan(10);
+
+    // Kunjungan berikutnya menawarkan; "Lanjutkan" menggulir ke pasal itu dan menutup tawaran.
+    await p.goto(BASE + urlUU(URI_BESAR), { waitUntil: "networkidle" });
+    await p.waitForSelector(".pasal");
+    const kartu = p.locator(".lanjut-baca");
+    expect(await kartu.innerText()).toContain(simpanan.nama);
+    await kartu.getByRole("button", { name: "Lanjutkan", exact: true }).tap();
+    await p.waitForFunction((j) => location.hash === `#${j}`, simpanan.jangkar);
+    await p.waitForFunction((j) => {
+      const r = document.getElementById(j)?.getBoundingClientRect();
+      return r && r.top >= 56 && r.top < innerHeight * 0.6;
+    }, simpanan.jangkar);
+    expect(await p.locator(".lanjut-baca").count()).toBe(0);
+
+    // Tidak ditawarkan bila pembaca datang membawa tujuan sendiri: tautan ke pasal atau hasil pencarian.
+    await p.goto(BASE + urlUU(URI_BESAR, "#pasal-5"), { waitUntil: "networkidle" });
+    await p.waitForSelector(".pasal");
+    expect(await p.locator(".lanjut-baca").count()).toBe(0);
+    await p.goto(BASE + urlUU(URI_BESAR, "&q=ketentuan"), { waitUntil: "networkidle" });
+    await p.waitForSelector(".pasal");
+    expect(await p.locator(".lanjut-baca").count()).toBe(0);
+    await reset();
+  });
+
+  it("tawaran lanjutkan membaca dapat ditutup dan tidak muncul untuk peraturan lain", async () => {
+    const p = await halaman({ hp: true });
+    await reset();
+    expect((await fetch(`${BASE}/__dev/peraturan-besar?pasal=400`, { method: "POST" })).status).toBe(201);
+    await p.addInitScript((uri) => {
+      if (!localStorage.getItem("lexa:riwayat:v1")) localStorage.setItem("lexa:riwayat:v1", JSON.stringify({ posisi: [{ uri, jangkar: "pasal-60", nama: "Pasal 60", waktu: 1 }] }));
+    }, URI_BESAR);
+    await bukaPeraturan(p, URI_BESAR);
+    const kartu = p.locator(".lanjut-baca");
+    expect(await kartu.innerText()).toContain("Pasal 60");
+    await kartu.getByRole("button", { name: "Tutup tawaran lanjutkan membaca" }).tap();
+    expect(await p.locator(".lanjut-baca").count()).toBe(0);
+    // UU 13/2003 tidak punya posisi tersimpan.
+    await p.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
+    await p.waitForSelector(".pasal");
+    expect(await p.locator(".lanjut-baca").count()).toBe(0);
+    await reset();
+  });
+
+  it("membuka peraturan tanpa menggulir lalu pergi tidak menimpa posisi yang tersimpan", async () => {
+    const p = await halaman({ hp: true });
+    await reset();
+    expect((await fetch(`${BASE}/__dev/peraturan-besar?pasal=400`, { method: "POST" })).status).toBe(201);
+    await p.addInitScript((uri) => {
+      if (!localStorage.getItem("lexa:riwayat:v1")) localStorage.setItem("lexa:riwayat:v1", JSON.stringify({ posisi: [{ uri, jangkar: "pasal-60", nama: "Pasal 60", waktu: 1 }] }));
+    }, URI_BESAR);
+    await bukaPeraturan(p, URI_BESAR);
+    await p.locator(".nav-bawah a[href='/telusuri']").tap();
+    await p.waitForSelector(".daftar-hasil .hasil");
+    const posisi = await p.evaluate(() => JSON.parse(localStorage.getItem("lexa:riwayat:v1") ?? "{}").posisi);
+    expect(posisi).toEqual([{ uri: URI_BESAR, jangkar: "pasal-60", nama: "Pasal 60", waktu: 1 }]);
+    await reset();
+  });
+
+  it("posisi di awal peraturan (tiga pasal pertama) tidak ditawarkan", async () => {
+    const p = await halaman({ hp: true });
+    await reset();
+    expect((await fetch(`${BASE}/__dev/peraturan-besar?pasal=400`, { method: "POST" })).status).toBe(201);
+    await p.addInitScript((uri) => {
+      if (!localStorage.getItem("lexa:riwayat:v1")) localStorage.setItem("lexa:riwayat:v1", JSON.stringify({ posisi: [{ uri, jangkar: "pasal-2", nama: "Pasal 2", waktu: 1 }] }));
+    }, URI_BESAR);
+    await bukaPeraturan(p, URI_BESAR);
+    expect(await p.locator(".lanjut-baca").count()).toBe(0);
+    await reset();
+  });
+
+  it("Bagikan: lembar bagikan perangkat menerima sitasi dan tautan, untuk peraturan maupun pasal", async () => {
+    const p = await halaman({ hp: true });
+    await p.addInitScript(() => {
+      navigator.share = async (data) => {
+        (window.__bagikan ??= []).push(data);
+      };
+    });
+    await bukaPeraturan(p);
+    await p.locator(".tombol-lainnya").tap();
+    await p.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Bagikan…" }).tap();
+    await p.waitForFunction(() => window.__bagikan?.length === 1);
+    const [peraturan] = await p.evaluate(() => window.__bagikan);
+    expect(peraturan.text).toBe("UU 13/2003 tentang Ketenagakerjaan");
+    expect(peraturan.url).toMatch(/^http:\/\/localhost:\d+\/peraturan\?uri=.*uu%2F2003%2F13$/);
+
+    await p.locator("#pasal-82 .pasal-lainnya").tap();
+    await p.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Bagikan pasal ini" }).tap();
+    await p.waitForFunction(() => window.__bagikan?.length === 2);
+    const pasal = (await p.evaluate(() => window.__bagikan))[1];
+    expect(pasal.text).toMatch(/^UU 13\/2003 Pasal 82: \(1\) Pekerja perempuan berhak memperoleh istirahat/);
+    expect(pasal.text.length, "cuplikan dipotong, bukan seluruh pasal").toBeLessThan(230);
+    expect(pasal.url).toMatch(/#pasal-82$/);
+  });
+
+  it("Bagikan: dibatalkan pengguna bukan galat; gagal sungguhan memberi tahu; tanpa dukungan perangkat tombolnya tidak ada", async () => {
+    const p = await halaman({ hp: true });
+    await p.addInitScript(() => {
+      let panggilan = 0;
+      navigator.share = async () => {
+        panggilan++;
+        throw panggilan === 1 ? new DOMException("dibatalkan", "AbortError") : new DOMException("ditolak", "NotAllowedError");
+      };
+    });
+    await bukaPeraturan(p);
+    const bagikan = async () => {
+      await p.locator(".tombol-lainnya").tap();
+      await p.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Bagikan…" }).tap();
+      await p.waitForFunction(() => !document.querySelector("dialog.lembar"));
+    };
+    await bagikan();
+    await p.waitForTimeout(150);
+    expect(await p.locator(".toast").count(), "batal tanpa pesan").toBe(0);
+    await bagikan();
+    await p.locator(".toast", { hasText: "Berbagi gagal" }).waitFor();
+
+    const tanpa = await halaman({ hp: true });
+    await tanpa.addInitScript(() => {
+      delete Navigator.prototype.share;
+      delete navigator.share;
+    });
+    await bukaPeraturan(tanpa);
+    await tanpa.locator(".tombol-lainnya").tap();
+    await tanpa.locator("dialog.lembar-aksi").waitFor();
+    expect(await tanpa.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Bagikan" }).count()).toBe(0);
+    expect(await tanpa.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Salin tautan" }).count()).toBe(1);
+  });
+
+  it("'Cetak atau simpan PDF' membuka dialog cetak peramban", async () => {
+    const p = await halaman({ hp: true });
+    await p.addInitScript(() => {
+      window.print = () => {
+        window.__cetak = (window.__cetak ?? 0) + 1;
+      };
+    });
+    await bukaPeraturan(p);
+    await p.locator(".tombol-lainnya").tap();
+    await p.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Cetak atau simpan PDF" }).tap();
+    await p.waitForFunction(() => window.__cetak === 1);
+  });
+
   it("penjelasan umum yang terbawa di teks pasal terakhir dipisah menjadi bagiannya sendiri", async () => {
     const p = await halaman({ hp: true });
     await ubahDetail(p, (json) => {
@@ -618,6 +811,35 @@ describe("layar lebar: halaman baca", () => {
     expect((await p.locator(".aksi-bar .tombol:visible").allInnerTexts()).map((t) => t.trim()).join("|")).toBe(
       "Simpan|Salin sitasi|Salin tautan|Naskah resmi (BPK)|PDF|Laporkan kesalahan",
     );
+  });
+
+  it("cetak: hanya judul dan teks seluruh pasal, tanpa navigasi, tombol, atau daftar isi", async () => {
+    const p = await halaman();
+    await reset();
+    expect((await fetch(`${BASE}/__dev/peraturan-besar?pasal=400`, { method: "POST" })).status).toBe(201);
+    await bukaPeraturan(p, URI_BESAR);
+    await p.emulateMedia({ media: "print" });
+    const gaya = await p.evaluate(() => {
+      const d = (s) => getComputedStyle(document.querySelector(s)).display;
+      return {
+        header: d("#app > header"), aksi: d(".aksi-bar"), tab: d(".tab-daftar"), rel: d(".rel-daftar-isi"), alat: d(".alat-baca"), nav: d(".nav-bawah"),
+        judul: d("h1.judul-peraturan"), pasal: d(".pasal"), cv: getComputedStyle(document.querySelector(".pasal")).contentVisibility,
+        latar: getComputedStyle(document.body).backgroundColor, lebarTeks: document.querySelector(".isi-peraturan").getBoundingClientRect().width,
+        lebarHalaman: innerWidth,
+      };
+    });
+    for (const k of ["header", "aksi", "tab", "rel", "alat", "nav"]) expect(gaya[k], k).toBe("none");
+    expect(gaya.judul).not.toBe("none");
+    expect(gaya.pasal).not.toBe("none");
+    expect(gaya.cv, "pasal di luar layar tetap tercetak").toBe("visible");
+    expect(gaya.latar).toBe("rgb(255, 255, 255)");
+    expect(gaya.lebarTeks, "teks memakai lebar halaman, bukan kolom 72ch").toBeGreaterThan(gaya.lebarHalaman * 0.9);
+
+    // Seluruh 200 pasal masuk PDF: jumlah halaman jauh di atas satu layar.
+    const pdf = await p.pdf({ format: "A4" });
+    const jumlahHalaman = (pdf.toString("latin1").match(/\/Type\s*\/Page\b(?!s)/g) ?? []).length;
+    expect(jumlahHalaman, `halaman PDF: ${jumlahHalaman}`).toBeGreaterThanOrEqual(8);
+    await reset();
   });
 
   it("pencarian di dalam peraturan tetap bekerja dan hasilnya tidak menyentuh daftar isi", async () => {
