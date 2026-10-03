@@ -39,12 +39,15 @@ khusus), catat dulu: itu yang perlu dicocokkan sebelum deploy produksi.
 ### 1. Branch
 
 Repo awalnya kosong, sehingga branch yang pertama kali di-push (`claude/zealous-brown-63ek65`) menjadi
-branch default di GitHub. `main` sudah dibuat dari commit yang sama dan terus diperbarui.
+branch default di GitHub. Semua pekerjaan kini ada di `main`, dan branch lama hanyalah leluhur `main`
+(semua commitnya sudah ada di `main`).
 
-1. GitHub > **Settings > Branches > Default branch**: ubah ke `main`.
+1. GitHub > **Settings > Branches > Default branch**: `main`. (Selesai.)
 2. Cloudflare > Workers & Pages > `lexa` > **Settings > Builds > Branch control**: **Production branch** = `main`.
-3. Setelah keduanya beres, hapus branch lama: `git push origin --delete claude/zealous-brown-63ek65`
-   (GitHub menolak menghapus branch default, jadi lakukan setelah langkah 1).
+   (Selesai.)
+3. Branch lama dihapus setelah keduanya beres: `git push origin --delete claude/zealous-brown-63ek65`
+   (GitHub menolak menghapus branch default, jadi ini baru bisa setelah langkah 1). Bila perlu dipulihkan, SHA
+   ujungnya `24efcd5`.
 
 ### 2. Pengaturan build
 
@@ -55,31 +58,35 @@ Cloudflare > `lexa` > **Settings > Builds**:
 | Root directory | `/` |
 | Build command | `npm run check` (typecheck + tes; dependensi dipasang otomatis dari `package-lock.json`; Node mengikuti `.nvmrc` = 22) |
 | Deploy command | `npx wrangler deploy` |
-| Non-production branch deploy command | `npx wrangler versions upload` (bawaan) |
-| Build non-production branches | aktif |
+| Preview command (cabang selain produksi) | lihat catatan di bawah |
 
 Nama Worker di dashboard (`lexa`) harus sama persis dengan `name` di `wrangler.jsonc`; kalau tidak, build gagal.
 `npm run check` sengaja tidak menjalankan tes e2e (butuh peramban); itu dikerjakan CI GitHub.
 
+> **Pratinjau cabang.** Worker yang baru disambungkan memakai *Worker Previews*: cabang selain produksi
+> menjalankan **Preview command** (`npx wrangler preview`), bukan deploy. Pratinjau **tidak mewarisi** binding
+> produksi dan membutuhkan blok `previews` di `wrangler.jsonc` dengan sumber daya uji. Lexa belum punya D1/KV/R2
+> uji, jadi blok itu sengaja tidak ada: build pratinjau sebuah cabang dapat gagal atau menghasilkan URL tanpa
+> binding (antarmuka tampil, API tidak). Jangan menunjuk binding `previews` ke sumber daya produksi, karena
+> pratinjau lalu bisa menulis ke data produksi. Cara termudah: matikan **Enable Preview Builds** di Branch
+> control, atau abaikan galat build cabang. (Worker yang disambungkan sebelum fitur ini memakai model lama:
+> "Non-production branch deploy command" `npx wrangler versions upload`, yang memakai resource produksi.)
+> Untuk melihat perubahan sebelum produksi, pakai `npm run dev:node` (lihat README) atau `npx wrangler dev`.
+
+### 3. Deploy produksi
+
+Setiap push ke production branch (`main`) otomatis menjalankan build command lalu deploy command.
+
+> **Jangan memakai "Retry build" untuk men-deploy `main` terbaru.** Retry mengulang *commit yang sama* dari
+> build lama itu (dengan pengaturan build saat ini), bukan ujung `main` sekarang; build lama bisa saja berasal
+> dari cabang lain atau commit awal. Yang benar: dorong commit baru ke `main` (atau pakai API Builds
+> "Trigger a manual build" dengan `{"branch": "main"}`). "Retry build" hanya berguna untuk mengulang build yang
+> gagal karena galat sesaat (mis. jaringan) pada commit yang memang ingin Anda bangun.
+
+Siapkan Rollback (di bawah) sebelum mulai.
+
 > Ingin lebih hati-hati? Pakai `npx wrangler deploy --dry-run` sebagai Deploy command untuk satu putaran:
 > build memverifikasi konfigurasi dan bundel tanpa mengubah Worker produksi. Lalu ganti ke `npx wrangler deploy`.
-
-### 3. Lihat dulu di URL pratinjau (tanpa memengaruhi produksi)
-
-Push ke branch selain `main` (atau buka pull request): Workers Builds mengunggah versi baru tanpa
-mengaktifkannya dan memasang URL pratinjau serta check run **Workers Builds: lexa** di GitHub.
-
-- Buka URL pratinjau: beranda, `/cari?q=pesangon`, `/telusuri`, satu halaman peraturan, `/tanya`.
-- API: `/api/stats`, `/api/search?q=pesangon`, `/api/laws?per_page=5`, `/robots.txt`, `/sitemap.xml`.
-
-> Pratinjau memakai **resource produksi yang sama** (D1, KV, R2, Queue) kecuali Anda mengatur isolasi di
-> pengaturan Previews. Cron dan konsumer antrean tidak berjalan di pratinjau. Hindari memicu endpoint penulisan
-> (`/api/admin/*`, `/api/impor/*`) dari pratinjau. Pencarian dan koleksi tamu bersifat baca/lokal sehingga aman.
-
-### 4. Deploy produksi
-
-Push ke `main` (atau **Retry build** pada build terakhir) setelah Deploy command diset ke `npx wrangler deploy`.
-Siapkan Rollback (di bawah) sebelum mulai.
 
 ### Daftar periksa pasca-deploy pertama
 

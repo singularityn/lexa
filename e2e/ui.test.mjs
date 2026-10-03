@@ -110,9 +110,15 @@ describe("halaman dasar", () => {
     expect(await page.title()).toBe("Tentang Lexa · Lexa");
   });
 
-  it("berkas statis yang tidak ada dijawab 404, bukan HTML SPA", async () => {
-    const res = await fetch(`${BASE}/js/tidak-ada.js`);
-    expect(res.status).toBe(404);
+  it("jalur yang tidak cocok dengan aset menyajikan cangkang SPA (200), kecuali /api yang dijawab 404 JSON", async () => {
+    // Sama dengan Cloudflare saat run_worker_first berupa daftar rute: tidak ada pembedaan
+    // navigasi vs subresource, jadi berkas yang salah ketik pun dijawab index.html.
+    const asing = await fetch(`${BASE}/js/tidak-ada.js`);
+    expect(asing.status).toBe(200);
+    expect(asing.headers.get("content-type")).toContain("text/html");
+    const api = await fetch(`${BASE}/api/tidak-ada`);
+    expect(api.status).toBe(404);
+    expect(api.headers.get("content-type")).toContain("application/json");
   });
 
   it("header keamanan dan CSP terpasang pada halaman statis", async () => {

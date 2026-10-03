@@ -65,7 +65,9 @@
   // Antarmuka (SPA) ada di ./public dan tidak memerlukan langkah build. Rute yang
   // diselesaikan Worker lebih dulu: seluruh API serta robots.txt dan sitemap.xml;
   // sisanya dilayani sebagai aset statis, dengan fallback ke index.html agar rute
-  // sisi klien (/cari, /peraturan?uri=..., dst.) bisa dibuka langsung.
+  // sisi klien (/cari, /peraturan?uri=..., dst.) bisa dibuka langsung. Akibat dari
+  // run_worker_first berupa daftar: jalur yang tak cocok dengan aset apa pun, termasuk
+  // berkas yang salah ketik, dijawab index.html (200), bukan 404 (diverifikasi di workerd).
   "assets": {
     "directory": "./public",
     "not_found_handling": "single-page-application",

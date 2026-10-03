@@ -190,12 +190,9 @@ async function main() {
       }
       let ada = await stat(berkas).then((s) => s.isFile()).catch(() => false);
       if (!ada) {
-        // Permintaan berkas yang tak ada (mis. /js/nggak.js) dijawab 404, bukan HTML SPA.
-        if (extname(url.pathname) && extname(url.pathname) !== ".html") {
-          res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-          res.end("Tidak ditemukan");
-          return;
-        }
+        // Persis seperti Cloudflare bila run_worker_first berupa daftar rute: jalur yang tidak
+        // cocok dengan aset apa pun (termasuk berkas yang salah ketik, mis. /js/nggak.js)
+        // menyajikan index.html dengan status 200. Perilaku ini diverifikasi di workerd.
         berkas = join(AKAR_PUBLIK, "index.html");
         ada = true;
       }
