@@ -12,6 +12,7 @@ import type { SearchHit, SearchFilters, SearchMode, SearchResponse, StatusPeratu
 import { uraiKueri, kueriUntukEmbedding } from "./query";
 import { klausaBidang } from "./bidang";
 import { pilihDalam } from "./d1";
+import type { Sitasi } from "./sitasi";
 
 /** Konstanta peredam RRF. 60 adalah nilai standar dari makalah Cormack dkk. */
 const RRF_K = 60;
@@ -146,11 +147,7 @@ async function cariFtsPasal(
  * dengan ribuan dokumen lain. Pencarian ini memakai indeks unik
  * `idx_laws_citation` sehingga biayanya satu baris, bukan pemindaian.
  */
-async function cariSitasi(
-  db: D1Database,
-  sitasi: { jenis: string; nomor: string; tahun: number },
-  filters: SearchFilters,
-): Promise<KandidatMentah[]> {
+async function cariSitasi(db: D1Database, sitasi: Sitasi, filters: SearchFilters): Promise<KandidatMentah[]> {
   const f = bangunFilter(filters);
 
   // Jenis dicocokkan longgar. Pengurai memetakan "perda" menjadi "PERDA_PROV",
@@ -158,14 +155,23 @@ async function cariSitasi(
   // ketat, sitasi yang sah justru tidak menemukan apa pun.
   const varianJenis = [...new Set([sitasi.jenis, sitasi.jenis.split("_")[0]])];
 
+  // Nomor POJK lama tersimpan sebagai slug ("48-pojk-04-2016"; 422 dari 547 POJK produksi),
+  // yang baru polos ("23"). "POJK 48/2016" harus menemukan semua yang berawalan "48-"; bila
+  // sektornya disebut ("48/POJK.04/2016") cukup yang persis itu. Rentang [n-, n.) = semua
+  // string berawalan "n-" ("." tepat setelah "-"), jadi tetap bisa memakai indeks nomor.
+  const slug = sitasi.sub ? `${sitasi.nomor}-pojk-${sitasi.sub}-${sitasi.tahun}` : null;
+  const syaratNomor = slug ? "l.nomor IN (?, ?)" : "(l.nomor = ? OR (l.nomor >= ? AND l.nomor < ?))";
+  const nomorTerikat = slug ? [slug, sitasi.nomor] : [sitasi.nomor, `${sitasi.nomor}-`, `${sitasi.nomor}.`];
+
   const { results } = await db
     .prepare(
       `SELECT l.frbr_uri FROM laws l
         WHERE l.jenis IN (${varianJenis.map(() => "?").join(",")})
-          AND l.nomor = ? AND l.tahun = ?${f.sql}
+          AND ${syaratNomor} AND l.tahun = ?${f.sql}
+        ORDER BY (l.nomor = ?) DESC, l.nomor
         LIMIT 5`,
     )
-    .bind(...varianJenis, sitasi.nomor, sitasi.tahun, ...f.params)
+    .bind(...varianJenis, ...nomorTerikat, sitasi.tahun, ...f.params, slug ?? sitasi.nomor)
     .all<{ frbr_uri: string }>();
 
   return results.map((r, i) => ({

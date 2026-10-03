@@ -12,6 +12,8 @@
  * konsonan yang paling umum.
  */
 
+import { type Sitasi, uraiSitasi } from "./sitasi";
+
 /** Kata yang tidak menambah makna pencarian dan hanya memperbesar recall palsu. */
 const STOPWORDS = new Set([
   "yang", "dan", "atau", "di", "ke", "dari", "untuk", "pada", "dengan", "dalam",
@@ -155,29 +157,8 @@ export interface KueriTerurai {
   /** Semua term yang akhirnya dicari — ditampilkan ke pengguna. */
   terms: string[];
   /** Sitasi yang terdeteksi, mis. {jenis:"UU", nomor:"13", tahun:2003}. */
-  sitasi: { jenis: string; nomor: string; tahun: number } | null;
+  sitasi: Sitasi | null;
 }
-
-const POLA_SITASI =
-  /\b(uu|undang-undang|perppu|pp|perpres|keppres|inpres|permen|kepmen|perda|pergub|perbup|perwali|pojk|pbi)\s*(?:no\.?|nomor)?\s*(\d+[a-z]?)\s*(?:\/|\s+tahun\s+|\s+th\.?\s+|\s+)(\d{4})\b/i;
-
-const ALIAS_JENIS: Record<string, string> = {
-  "undang-undang": "UU",
-  uu: "UU",
-  perppu: "PERPPU",
-  pp: "PP",
-  perpres: "PERPRES",
-  keppres: "KEPPRES",
-  inpres: "INPRES",
-  permen: "PERMEN",
-  kepmen: "KEPMEN",
-  perda: "PERDA_PROV",
-  pergub: "PERGUB",
-  perbup: "PERBUP",
-  perwali: "PERWALI",
-  pojk: "POJK",
-  pbi: "PBI",
-};
 
 /**
  * Ubah kueri bebas dari pengguna menjadi ekspresi FTS5.
@@ -189,14 +170,7 @@ const ALIAS_JENIS: Record<string, string> = {
  * - Antar-kelompok token digabung `AND` supaya presisi tetap terjaga.
  */
 export function uraiKueri(raw: string): KueriTerurai {
-  const sitasiMatch = raw.match(POLA_SITASI);
-  const sitasi = sitasiMatch
-    ? {
-        jenis: ALIAS_JENIS[sitasiMatch[1].toLowerCase()] ?? sitasiMatch[1].toUpperCase(),
-        nomor: sitasiMatch[2],
-        tahun: Number(sitasiMatch[3]),
-      }
-    : null;
+  const sitasi = uraiSitasi(raw);
 
   // Tarik keluar frasa berkutip lebih dulu supaya tidak ikut dipecah.
   const frasa: string[] = [];

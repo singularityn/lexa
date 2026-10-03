@@ -8,6 +8,7 @@
  */
 
 import type { Law, JenisRelasi, StatusPeraturan } from "../../shared/types";
+import { uraiSitasi } from "./sitasi";
 
 /** Satu dokumen di dalam manifest hasil panen. */
 export interface DokumenBpk {
@@ -219,10 +220,20 @@ const ALIAS_TEKS: Record<string, string> = {
   "tap mpr": "TAP_MPR",
 };
 
-/** Tarik sitasi terstruktur dari kalimat bebas seperti "UU No. 13 Tahun 2003". */
+/**
+ * Tarik sitasi terstruktur dari kalimat bebas seperti "UU No. 13 Tahun 2003".
+ *
+ * Tata bahasa ketat bersama pencarian (sitasi.ts) dicoba lebih dulu; ia membedakan
+ * "Peraturan Pemerintah Pengganti Undang-Undang" (PERPPU) dari "Undang-Undang" dan
+ * mengenali Peraturan Menteri/OJK/BI. Pola longgar lama menjadi cadangan untuk bentuk
+ * yang tak dicakupnya (UUD, TAP MPR, atau kata sisipan sampai 30 karakter).
+ */
 export function sitasiDariTeks(
   teks: string,
 ): { jenis: string; nomor: string; tahun: number } | null {
+  const tepat = uraiSitasi(teks);
+  if (tepat) return { jenis: tepat.jenis, nomor: tepat.nomor, tahun: tepat.tahun };
+
   const m = teks.match(POLA_SITASI_TEKS);
   if (!m) return null;
 

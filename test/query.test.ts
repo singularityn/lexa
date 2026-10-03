@@ -71,7 +71,9 @@ describe("uraiKueri", () => {
     expect(uraiKueri("AND OR NOT").fts).toBe('("and") AND ("or") AND ("not")');
   });
 
-  it.todo("mengenali 'Peraturan Pemerintah Nomor 35 Tahun 2021' (nama panjang) sebagai sitasi PP");
+  it("mengenali 'Peraturan Pemerintah Nomor 35 Tahun 2021' (nama panjang) sebagai sitasi PP", () => {
+    expect(uraiKueri("Peraturan Pemerintah Nomor 35 Tahun 2021").sitasi).toEqual({ jenis: "PP", nomor: "35", tahun: 2021 });
+  });
 });
 
 describe("kueriUntukEmbedding", () => {

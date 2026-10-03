@@ -102,6 +102,91 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
     });
   });
 
+  describe("sitasi bentuk alami dan nomor POJK bersufiks", () => {
+    const pojk = (nomor: string, tahun: number, judul = "Peraturan Badan") => ({
+      uri: `/akn/id/act/peraturan-ojk/${tahun}/${nomor}`, jenis: "POJK", nomor, tahun, judul: `${judul} Nomor ${nomor} Tahun ${tahun}`,
+    });
+
+    beforeEach(async () => {
+      await sisipkan(l, [
+        // Data produksi: 422 dari 547 POJK bernomor slug seperti ini.
+        pojk("1-pojk-03-2019", 2019),
+        pojk("1-pojk-04-2019", 2019),
+        pojk("1-pojk-05-2019", 2019),
+        pojk("10-pojk-03-2019", 2019), // awalan "1" tetapi bukan "1-": tidak boleh ikut
+        pojk("11-pojk-03-2019", 2019),
+        pojk("1-pojk-03-2020", 2020), // tahun lain
+        pojk("23", 2023),
+        {
+          uri: "/akn/id/act/perppu/2022/2", jenis: "PERPPU", nomor: "2", tahun: 2022,
+          judul: "Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022 tentang Cipta Kerja",
+        },
+        // Umpan: UU bernomor dan bertahun sama dengan PERPPU di atas.
+        { uri: "/akn/id/act/uu/2022/2", jenis: "UU", nomor: "2", tahun: 2022, judul: "Umpan Undang-Undang Nomor 2 Tahun 2022" },
+        { uri: "/akn/id/act/permen/2025/29", jenis: "PERMEN", nomor: "29", tahun: 2025, judul: "Peraturan Menteri Nomor 29 Tahun 2025 tentang Pedoman Umum" },
+      ]);
+    });
+
+    const sitasiSaja = (hits: SearchHit[]) => hits.filter((h) => h.sources.includes("sitasi")).map((h) => h.frbr_uri);
+
+    it("nama panjang dan bentuk resmi menemukan peraturannya di peringkat pertama", async () => {
+      for (const [kueri, uri] of [
+        ["Peraturan Pemerintah Nomor 35 Tahun 2021", "/akn/id/act/pp/2021/35"],
+        ["Peraturan Pemerintah Republik Indonesia Nomor 35 Tahun 2021 tentang PKWT", "/akn/id/act/pp/2021/35"],
+        ["Undang-Undang Republik Indonesia Nomor 13 Tahun 2003", "/akn/id/act/uu/2003/13"],
+        ["Undang Undang No 13 tahun 2003", "/akn/id/act/uu/2003/13"],
+        ["UU RI No. 13 Tahun 2003", "/akn/id/act/uu/2003/13"],
+        ["Peraturan Menteri Kesehatan Nomor 29 Tahun 2025", "/akn/id/act/permen/2025/29"],
+        ["Peraturan Otoritas Jasa Keuangan Nomor 23 Tahun 2023", "/akn/id/act/peraturan-ojk/2023/23"],
+      ] as const) {
+        const b = await cari(q(kueri, "mode=keyword"));
+        expect(b.hits[0], kueri).toMatchObject({ frbr_uri: uri, article_id: null });
+        expect(b.hits[0].sources, kueri).toContain("sitasi");
+      }
+    });
+
+    it("Peraturan Pemerintah Pengganti Undang-Undang menemukan PERPPU, bukan UU bernomor dan bertahun sama", async () => {
+      for (const kueri of ["Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022", "Perpu 2/2022", "Perppu No. 2 Tahun 2022"]) {
+        const b = await cari(q(kueri, "mode=keyword"));
+        expect(sitasiSaja(b.hits), kueri).toEqual(["/akn/id/act/perppu/2022/2"]);
+        expect(b.hits[0].frbr_uri, kueri).toBe("/akn/id/act/perppu/2022/2");
+      }
+    });
+
+    it("POJK bernomor slug ditemukan lewat nomor-tahun, dan tidak menyeret nomor berawalan angka yang sama", async () => {
+      const b = await cari(q("POJK Nomor 1 Tahun 2019", "mode=keyword"));
+      // Semua sektor nomor 1 tahun 2019, terurut menurut nomor; bukan 10-/11-, bukan tahun lain.
+      expect(sitasiSaja(b.hits)).toEqual([
+        "/akn/id/act/peraturan-ojk/2019/1-pojk-03-2019",
+        "/akn/id/act/peraturan-ojk/2019/1-pojk-04-2019",
+        "/akn/id/act/peraturan-ojk/2019/1-pojk-05-2019",
+      ]);
+    });
+
+    it("penomoran resmi 'n/POJK.ss/tahun' menemukan tepat satu sektor", async () => {
+      for (const kueri of ["POJK 1/POJK.04/2019", "1/POJK.04/2019", "Peraturan OJK Nomor 1/POJK.04/2019 tentang apa saja"]) {
+        const b = await cari(q(kueri, "mode=keyword"));
+        expect(sitasiSaja(b.hits), kueri).toEqual(["/akn/id/act/peraturan-ojk/2019/1-pojk-04-2019"]);
+        expect(b.hits[0].frbr_uri, kueri).toBe("/akn/id/act/peraturan-ojk/2019/1-pojk-04-2019");
+      }
+    });
+
+    it("POJK dengan nomor polos tetap ditemukan, dan filter status tetap berlaku pada sitasi POJK", async () => {
+      expect(sitasiSaja((await cari(q("POJK 23/2023", "mode=keyword"))).hits)).toEqual(["/akn/id/act/peraturan-ojk/2023/23"]);
+      await l.db.prepare("UPDATE laws SET status = 'dicabut' WHERE frbr_uri LIKE '%1-pojk-04-2019'").run();
+      const b = await cari(q("POJK Nomor 1 Tahun 2019", "mode=keyword&status=berlaku"));
+      expect(sitasiSaja(b.hits)).toEqual([
+        "/akn/id/act/peraturan-ojk/2019/1-pojk-03-2019",
+        "/akn/id/act/peraturan-ojk/2019/1-pojk-05-2019",
+      ]);
+    });
+
+    it("sitasi yang tidak ada di basis data tidak menghasilkan hasil sitasi", async () => {
+      expect(sitasiSaja((await cari(q("POJK 99/POJK.04/2019", "mode=keyword"))).hits)).toEqual([]);
+      expect(sitasiSaja((await cari(q("Peraturan Pemerintah Nomor 999 Tahun 2021", "mode=keyword"))).hits)).toEqual([]);
+    });
+  });
+
   describe("mode hybrid dan semantic", () => {
     it("hybrid menggabungkan fts dan vektor; pasal yang cocok di keduanya mendapat skor lebih tinggi", async () => {
       const b = await cari(q("cuti melahirkan"));
