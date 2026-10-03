@@ -346,6 +346,37 @@ describe("halaman peraturan", () => {
     await reset();
   });
 
+  it("peraturan dengan ribuan baris pasal tetap responsif (UU Cipta Kerja asli: 1.305 baris)", async () => {
+    await reset();
+    expect((await fetch(`${BASE}/__dev/peraturan-besar?pasal=3000`, { method: "POST" })).status).toBe(201);
+    const uri = "/akn/id/act/uu/2099/1";
+
+    const mulai = Date.now();
+    await page.goto(BASE + urlUU(uri), { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => document.querySelectorAll(".pasal").length >= 1500);
+    const muat = Date.now() - mulai;
+    expect(muat, `memuat 3000 baris: ${muat} ms`).toBeLessThan(6000);
+    expect(await page.locator(".pasal").count()).toBe(1500); // dua ayat per pasal
+    expect(await page.locator("h2.bab").count()).toBe(30);
+
+    // Mencari di dalam peraturan tetap cepat dan benar.
+    const awal = Date.now();
+    await page.fill(".cari-dalam input", "nomor 2999");
+    await page.waitForFunction(() => document.querySelectorAll(".pasal:not(.tidak-cocok)").length === 1);
+    const saring = Date.now() - awal;
+    expect(saring, `menyaring: ${saring} ms`).toBeLessThan(3000);
+
+    // Loncat ke pasal di tengah daftar lewat jangkar (muat penuh dari halaman lain, bukan sekadar ganti hash).
+    await page.goto(BASE + "/tentang", { waitUntil: "domcontentloaded" });
+    await page.goto(BASE + urlUU(uri, "#pasal-900-ayat-2"), { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#pasal-900-ayat-2");
+    await page.waitForFunction(() => {
+      const r = document.querySelector("#pasal-900-ayat-2")?.getBoundingClientRect();
+      return r && r.top >= 0 && r.bottom <= innerHeight;
+    });
+    await reset();
+  });
+
   it("peraturan yang tidak ada di indeks: halaman penjelasan dengan jalan keluar", async () => {
     await page.goto(BASE + urlUU("/akn/id/act/uu/1999/99"), { waitUntil: "networkidle" });
     await page.waitForSelector(".kosong");

@@ -115,6 +115,25 @@ async function main() {
         res.end();
         return;
       }
+      // Pratinjau saja: buat peraturan sintetis dengan banyak pasal untuk menguji kinerja halaman detail.
+      if (url.pathname === "/__dev/peraturan-besar" && req.method === "POST") {
+        const jumlah = Math.min(Math.max(Number(url.searchParams.get("pasal")) || 1500, 1), 5000);
+        const uri = "/akn/id/act/uu/2099/1";
+        await sisipkan(l, [
+          {
+            uri, jenis: "UU", nomor: "1", tahun: 2099, judul: "Peraturan Sintetis Sangat Panjang (uji kinerja)", bidang: "UJI",
+            pasal: Array.from({ length: jumlah }, (_, i) => ({
+              nomor: String(Math.floor(i / 2) + 1),
+              ayat: String((i % 2) + 1),
+              bab: `BAB ${Math.floor(i / 100) + 1} KETENTUAN BAGIAN ${Math.floor(i / 100) + 1}`,
+              isi: `Ketentuan nomor ${i + 1}: setiap orang wajib mematuhi ketentuan sebagaimana dimaksud dalam undang-undang ini, kecuali ditentukan lain oleh peraturan perundang-undangan.`,
+            })),
+          },
+        ]);
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(JSON.stringify({ uri, jumlah }));
+        return;
+      }
       if (url.pathname === "/__dev/masuk") {
         const { cookie } = await masukSebagai(l, { id: "pengguna-uji", email: "penguji@lexa.test", nama: "Penguji Lexa", idSesi: "sesi-pratinjau" });
         const kembali = url.searchParams.get("kembali") ?? "/akun";
