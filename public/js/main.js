@@ -189,6 +189,11 @@ async function mulai() {
   const pengumuman = h("div", { class: "sr-only", role: "status", "aria-live": "polite" });
   isi(app, header, konten, bangunFooter(), navBawah.nav, buatAreaToast(), pengumuman);
 
+  // Tinggi header (berubah saat pita luring muncul) dipakai CSS untuk elemen lengket di bawahnya (tab, daftar isi).
+  const catatTinggi = () => document.documentElement.style.setProperty("--tinggi-header", `${header.offsetHeight}px`);
+  new ResizeObserver(catatTinggi).observe(header);
+  catatTinggi();
+
   const router = buatRouter({
     rute,
     akar: konten,

@@ -209,10 +209,25 @@ export function judulRingkas(judul) {
   return rapikanHuruf(pisahJudul(judul).topik);
 }
 
+/**
+ * Bidang dari nilai kolom `bidang` ("APBN - BUMN"): nama aslinya (untuk filter/URL) dan labelnya yang dirapikan.
+ * @param {string | null | undefined} bidang
+ * @returns {Array<{ nama: string, label: string }>}
+ */
+export function pecahBidang(bidang) {
+  if (!bidang) return [];
+  /** @type {Map<string, { nama: string, label: string }>} */
+  const peta = new Map();
+  for (const nama of bidang.split(/\s+-\s+/).map((b) => b.trim()).filter(Boolean)) {
+    const label = rapikanHuruf(nama);
+    if (!peta.has(label)) peta.set(label, { nama, label });
+  }
+  return [...peta.values()];
+}
+
 /** Daftar bidang dari nilai kolom `bidang` ("APBN - BUMN"), dirapikan hurufnya. @param {string | null | undefined} bidang */
 export function daftarBidang(bidang) {
-  if (!bidang) return [];
-  return [...new Set(bidang.split(/\s+-\s+/).map((b) => rapikanHuruf(b)).filter(Boolean))];
+  return pecahBidang(bidang).map((b) => b.label);
 }
 
 /**
@@ -287,10 +302,106 @@ export function bacaFilter(p) {
  */
 const RE_PENANDA_HALAMAN = /\s*#{1,6}\s*Page\s+\d+(?:\s+[A-Z][A-Z .,/&()-]*?\s*-\s*\d+\s*-)?\s*/g;
 
+/**
+ * Kepala/kaki halaman cetak yang ikut terekstrak tanpa penanda "### Page": "PRESIDEN⏎REPUBLIK INDONESIA- 3 -",
+ * "MENTERI KEUANGAN REPUBLIK INDONESIA - 12 -". Dikenali dari "REPUBLIK INDONESIA" huruf besar yang disusul
+ * nomor halaman "- N -", sehingga kalimat biasa yang menyebut republik tidak tersentuh. Spasi dan baris baru di
+ * sekitarnya dibiarkan agar bagian teks di kiri dan kanannya tetap tersambung lewat penyusunan ulang baris.
+ */
+const RE_KEPALA_HALAMAN = /[ \t]*\b(?:(?:PRESIDEN|MENTERI(?:[ \t]+[A-Z]{3,}){0,4}|GUBERNUR(?:[ \t]+[A-Z]{3,}){0,3}|BUPATI(?:[ \t]+[A-Z]{3,}){0,3}|WALI[ \t]+KOTA(?:[ \t]+[A-Z]{3,}){0,3})\s+)?REPUBLIK\s+INDONESIA\s*-\s*\d{1,4}\s*-[ \t]*/g;
+/** Nomor halaman yang berdiri sendiri pada satu baris: "- 12 -". */
+const RE_NOMOR_HALAMAN = /^[ \t]*-\s*\d{1,4}\s*-[ \t]*$/gm;
+
 /** @param {string | null | undefined} teks */
 export function bersihkanArtefak(teks) {
   if (!teks) return "";
-  return teks.replace(RE_PENANDA_HALAMAN, " ").replace(/[ \t]+\n/g, "\n").trim();
+  return teks
+    .replace(RE_PENANDA_HALAMAN, " ")
+    .replace(RE_KEPALA_HALAMAN, " ")
+    .replace(RE_NOMOR_HALAMAN, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+/**
+ * @typedef {{ tipe: "p" } | { tipe: "label" } | { tipe: "butir", penanda: string, tingkat: 1 | 2 }} JenisBlokPasal
+ * @typedef {JenisBlokPasal & { teks: string }} BlokPasal
+ */
+
+/** Awal butir daftar: "1.", "2)", "(3)", "a.", "b)", "(c)", atau tanda hubung/titik. */
+const RE_BUTIR = /^(\(\d{1,3}\)|\d{1,3}[.)]|\([a-z]{1,2}\)|[a-z][.)]|[-•–])\s+(\S.*)$/;
+/** Baris yang jelas belum selesai walau baris berikutnya berawal huruf besar: berakhir koma atau kata penghubung ("…berada di⏎Indonesia"). */
+const RE_BELUM_SELESAI = /(?:,|\b(?:di|ke|dari|yang|dan|atau|untuk|pada|dengan|dalam|oleh|atas|adalah|sebagai|serta|bagi|kepada|terhadap|antara|tentang|yaitu|yakni))$/i;
+/** Kalimat yang sudah selesai: berakhir titik, titik dua, titik koma, atau tanda seru/tanya (boleh diikuti tanda kutip/kurung penutup). */
+const RE_SELESAI = /[.:;!?]["”')\]]?\s*$/;
+/** Kata majemuk yang kehilangan tanda hubung saat PDF dikonversi menjadi teks. */
+const RE_HURUF_HILANG = /\b(perundang|undang) (undang|undangan)\b/gi;
+/** Butir yang terlipat dalam satu baris: kalimat selesai lalu "(2) Huruf besar…", atau ";" lalu "b. huruf kecil…". */
+/** Baris sepanjang ini (atau lebih) yang tak berakhir tanda baca adalah baris yang dipatahkan lebar kolom, bukan akhir paragraf. */
+const PANJANG_BARIS_LIPAT = 50;
+/** Label struktur yang berdiri sendiri di satu baris: "BAB XII", "Bagian Kedua", "Paragraf 2", "Pasal 156". */
+const RE_LABEL_STRUKTUR = /^(?:BAB|Bagian|Paragraf|Pasal)\s+[\p{L}\d.]+$/u;
+/** Penunjuk bagian dalam penjelasan pasal demi pasal: "Ayat (2)", "Huruf b", "Angka 3". */
+const RE_LABEL_PENJELASAN = /^(?:Ayat \(\d{1,3}[a-z]?\)|Huruf [a-z]{1,2}|Angka \d{1,3}|Butir \d{1,3})$/;
+/** Judul berhuruf kapital semua ("KETENAGAKERJAAN", "II. PASAL DEMI PASAL"). */
+const RE_SEMUA_KAPITAL = /^[^\p{Ll}]*\p{Lu}[^\p{Ll}]*\p{Lu}[^\p{Ll}]*$/u;
+const RE_BUTIR_SATU_BARIS = /(?<=[.:;])\s+(?=\(\d{1,3}\)\s+\p{Lu})|(?<=;)\s+(?=[a-z][.)]\s+\p{Ll})/gu;
+
+/**
+ * Teks sebuah pasal/ayat menjadi blok untuk ditampilkan.
+ *
+ * Teks hasil ekstraksi PDF membawa pemenggalan baris dari lembar cetak ("…dengan tenaga kerja⏎pada waktu
+ * sebelum…"), sehingga satu kalimat patah di tengah dan `white-space: pre-line` menampilkannya apa
+ * adanya. Di sini baris yang jelas merupakan lanjutan (kalimat sebelumnya belum selesai dan baris
+ * ini berawal huruf kecil) disambung kembali, sedangkan butir daftar ("1.", "a.", "(2)", "-") menjadi
+ * blok sendiri dengan penandanya, supaya bisa ditampilkan menjorok. Penanda halaman PDF dibuang
+ * (lihat `bersihkanArtefak`). Hanya tampilan: isi di database tidak diubah.
+ *
+ * @param {string | null | undefined} teks
+ * @returns {BlokPasal[]}
+ */
+export function bacaIsiPasal(teks) {
+  const bersih = bersihkanArtefak(teks)
+    .replace(RE_HURUF_HILANG, (_, a, b) => `${a}-${b}`)
+    .replace(RE_BUTIR_SATU_BARIS, "\n");
+  if (!bersih) return [];
+  /** @type {BlokPasal[]} */
+  const blok = [];
+  /** @type {BlokPasal | null} */
+  let saatIni = null;
+  let barisKosong = false;
+  let panjangSebelumnya = 0;
+
+  for (const mentah of bersih.split(/\r?\n/)) {
+    const baris = mentah.replace(/\s+/g, " ").trim();
+    if (!baris) {
+      barisKosong = true;
+      continue;
+    }
+    const m = RE_BUTIR.exec(baris);
+    if (RE_LABEL_PENJELASAN.test(baris)) {
+      saatIni = { tipe: "label", teks: baris };
+      blok.push(saatIni);
+    } else if (m) {
+      const penanda = m[1];
+      saatIni = { tipe: "butir", penanda, tingkat: /^\(?[a-z]{1,2}[.)]?$|^\([a-z]{1,2}\)$/i.test(penanda) && !/\d/.test(penanda) ? 2 : 1, teks: m[2] };
+      blok.push(saatIni);
+    } else if (
+      saatIni && saatIni.tipe !== "label" && !barisKosong && !RE_SELESAI.test(saatIni.teks) &&
+      (/^[\p{Ll}\d(]/u.test(baris) ||
+        RE_BELUM_SELESAI.test(saatIni.teks) ||
+        // Baris panjang tanpa tanda akhir dipatahkan lebar kolom: "...diatur dengan Peraturan" / "Pemerintah.".
+        (panjangSebelumnya >= PANJANG_BARIS_LIPAT && !RE_LABEL_STRUKTUR.test(baris) && !RE_SEMUA_KAPITAL.test(baris)))
+    ) {
+      saatIni.teks += ` ${baris}`;
+    } else {
+      saatIni = { tipe: "p", teks: baris };
+      blok.push(saatIni);
+    }
+    barisKosong = false;
+    panjangSebelumnya = baris.length;
+  }
+  return blok;
 }
 
 const KATA_HENTI = new Set([
@@ -310,11 +421,75 @@ export function istilahDariKueri(q) {
   return [...unik].slice(0, 8);
 }
 
+/** Akhiran id pasal untuk nomor yang muncul lagi di dokumen yang sama (lihat idPasalUnik di server). */
+const RE_NOMOR_KEMBAR = /~\d+$/;
+/** Rangkaian nomor berulang sependek ini tidak dianggap Penjelasan. */
+const MIN_PENJELASAN = 3;
+/** Judul naskah penjelasan yang terbawa di dalam teks pasal terakhir ("PENJELASAN ATAS UNDANG-UNDANG ..."). */
+const RE_PENJELASAN_TERTANAM = /PENJELASAN\s*ATAS\s*(?:UNDANG|PERATURAN)/;
+const RE_JUDUL_UMUM = /(?:^|\n)[ \t]*[-–]?[ \t]*I\.[ \t]*UMUM[ \t]*(?:\n|$)/;
+const RE_PASAL_DEMI_PASAL = /\n?[ \t]*[-–]?[ \t]*II\.[ \t]*PASAL[ \t]+DEMI[ \t]+PASAL[ \t]*$/i;
+
+/**
+ * Pisahkan "Penjelasan Umum" yang ikut tersimpan di ujung teks pasal terakhir (hasil ekstraksi PDF lama:
+ * tanda tangan pengesahan, lalu "PENJELASAN ATAS UNDANG-UNDANG ...", "I. UMUM", dan seterusnya).
+ * @param {string} teks
+ * @returns {{ batang: string, umum: string } | null} null bila teks tidak memuat naskah penjelasan
+ */
+export function pisahPenjelasanTertanam(teks) {
+  const i = teks.search(RE_PENJELASAN_TERTANAM);
+  if (i < 0) return null;
+  const batang = teks
+    .slice(0, i)
+    .replace(/\s*(?:#{1,6}[ \t]*Page[ \t]+\d+\s*)?(?:PRESIDEN\s*REPUBLIK[ \t]+INDONESIA)?\s*$/, "")
+    .trim();
+  const sisa = teks.slice(i);
+  const judul = RE_JUDUL_UMUM.exec(sisa);
+  const umum = (judul && judul.index < 700 ? sisa.slice(judul.index + judul[0].length) : sisa).replace(RE_PASAL_DEMI_PASAL, "").trim();
+  return { batang, umum };
+}
+
+/** Nilai angka di awal nomor pasal ("5A" menjadi 5); NaN bila tidak berangka (mis. "I", "Umum"). @param {string} nomor */
+const nilaiNomor = (nomor) => {
+  const m = /^\d+/.exec(nomor.trim());
+  return m ? Number(m[0]) : Number.NaN;
+};
+
+/**
+ * Indeks tempat penomoran pasal kembali ke awal setelah mencapai nomor tinggi, lalu menaik lagi: awal "pasal demi pasal".
+ * Penurunan tunggal (salah deteksi di tengah teks) tidak cukup; harus kembali ke nomor kecil dan diikuti deretan menaik.
+ * @param {Array<{ nomor: string }>} kelompok
+ */
+function cariPenomoranUlang(kelompok) {
+  let tertinggi = 0;
+  for (let i = 0; i < kelompok.length; i++) {
+    const v = nilaiNomor(kelompok[i].nomor);
+    if (Number.isNaN(v)) continue;
+    if (tertinggi >= 15 && v <= 10 && v <= tertinggi / 4) {
+      const berikut = kelompok.slice(i + 1, i + 7).map((g) => nilaiNomor(g.nomor));
+      let naik = 0;
+      let sebelumnya = v;
+      for (const n of berikut) {
+        if (!Number.isNaN(n) && n > sebelumnya) naik++;
+        if (!Number.isNaN(n)) sebelumnya = n;
+      }
+      if (berikut.length >= 2 && naik >= Math.ceil(berikut.length * 0.6)) return i;
+    }
+    tertinggi = Math.max(tertinggi, v);
+  }
+  return -1;
+}
+
 /**
  * Kelompok pasal untuk ditampilkan: baris berurutan dengan nomor pasal sama
  * (satu per ayat) digabung, dan bab/bagian dibawa agar judulnya bisa dimunculkan.
+ *
+ * Bagian "Penjelasan" (pasal demi pasal) memakai ulang nomor batang tubuh; saat ingest ia mendapat
+ * akhiran `~n` pada id (`pasal-1~2`). Rangkaian bernomor berulang yang berlangsung sampai akhir dokumen
+ * dan cukup panjang ditandai `penjelasan`; satu-dua nomor kembar di tengah peraturan (salah deteksi atau
+ * kutipan pada peraturan pengubah) tidak.
  * @param {Article[]} artikel
- * @returns {Array<{ jangkar: string, nomor: string, judul: string | null, bab: string | null, bagian: string | null, babBaru: boolean, bagianBaru: boolean, butir: Article[] }>}
+ * @returns {Array<{ jangkar: string, nomor: string, judul: string | null, bab: string | null, bagian: string | null, babBaru: boolean, bagianBaru: boolean, penjelasan: boolean, penjelasanBaru: boolean, butir: Article[] }>}
  */
 export function kelompokkanPasal(artikel) {
   /** @type {ReturnType<typeof kelompokkanPasal>} */
@@ -332,17 +507,151 @@ export function kelompokkanPasal(artikel) {
     babSebelumnya = a.bab ?? babSebelumnya;
     bagianSebelumnya = a.bagian ?? bagianSebelumnya;
     hasil.push({
-      jangkar: jangkarDariId(a.id).replace(/-ayat-.*$/, "") || `pasal-${a.nomor_pasal}`,
+      // "pasal-5-ayat-1~2" menjadi "pasal-5~2": akhiran pembeda ikut, supaya penjelasan tidak berbagi id dengan batang tubuh.
+      jangkar: jangkarDariId(a.id).replace(/-ayat-[^~]*/, "") || `pasal-${a.nomor_pasal}`,
       nomor: a.nomor_pasal,
       judul: a.judul,
       bab: a.bab,
       bagian: a.bagian,
       babBaru,
       bagianBaru,
+      penjelasan: false,
+      penjelasanBaru: false,
       butir: [a],
     });
   }
+
+  return tandaiPenjelasan(hasil);
+}
+
+/**
+ * Tandai bagian Penjelasan pada kelompok pasal (mengubah `kelompok` di tempat), dengan tiga petunjuk berurutan:
+ *  1. naskah penjelasan yang terbawa di teks sebuah pasal (dipisah menjadi kelompok "Umum");
+ *  2. penomoran yang kembali ke awal setelah mencapai nomor tinggi;
+ *  3. rangkaian id berakhiran ~n yang berlangsung sampai akhir dokumen.
+ * @param {ReturnType<typeof kelompokkanPasal>} kelompok
+ */
+function tandaiPenjelasan(kelompok) {
+  /** @param {number} dari */
+  const tandaiDari = (dari) => {
+    for (let k = dari; k < kelompok.length; k++) {
+      kelompok[k].penjelasan = true;
+      kelompok[k].penjelasanBaru = k === dari;
+    }
+  };
+
+  for (let i = 0; i < kelompok.length; i++) {
+    const g = kelompok[i];
+    const j = g.butir.findIndex((b) => RE_PENJELASAN_TERTANAM.test(b.isi));
+    const pisah = j < 0 ? null : pisahPenjelasanTertanam(g.butir[j].isi);
+    if (!pisah) continue;
+
+    const asal = g.butir[j];
+    const sesudah = g.butir.slice(j + 1);
+    const butirBatang = [...g.butir.slice(0, j), ...(pisah.batang ? [{ ...asal, isi: pisah.batang }] : [])];
+    const butirUmum = [...(pisah.umum ? [{ ...asal, id: `${asal.frbr_uri}#penjelasan-umum`, nomor_pasal: "Umum", ayat: null, bab: null, bagian: null, judul: null, isi: pisah.umum }] : []), ...sesudah];
+
+    // Pasal yang isinya habis terpotong (penjelasan mulai di awal teksnya) tidak dipertahankan sebagai kelompok kosong.
+    let awal = i + 1;
+    if (butirBatang.length) {
+      g.butir = butirBatang;
+    } else {
+      kelompok.splice(i, 1);
+      awal = i;
+    }
+    if (butirUmum.length) {
+      kelompok.splice(awal, 0, {
+        jangkar: "penjelasan-umum", nomor: "Umum", judul: null, bab: null, bagian: null, babBaru: false, bagianBaru: false,
+        penjelasan: true, penjelasanBaru: true, butir: butirUmum,
+      });
+    }
+    tandaiDari(awal);
+    return kelompok;
+  }
+
+  const ulang = cariPenomoranUlang(kelompok);
+  if (ulang >= 0) {
+    tandaiDari(ulang);
+    return kelompok;
+  }
+
+  let awal = kelompok.length;
+  let kembar = 0;
+  for (let i = kelompok.length - 1; i >= 0; i--) {
+    const berulang = RE_NOMOR_KEMBAR.test(kelompok[i].jangkar);
+    if (berulang) kembar++;
+    const panjang = kelompok.length - i;
+    if (berulang && panjang >= MIN_PENJELASAN && kembar / panjang >= 0.9) awal = i;
+  }
+  tandaiDari(awal);
+  return kelompok;
+}
+
+/**
+ * Daftar isi: pasal dikelompokkan menurut BAB menurut urutan kemunculannya. Pasal yang tidak punya BAB
+ * (peraturan tanpa struktur BAB, atau sebelum BAB pertama) masuk ke kelompok tanpa judul.
+ * @param {ReturnType<typeof kelompokkanPasal>} kelompok
+ * @returns {Array<{ bab: string | null, penjelasan: boolean, pasal: Array<{ nomor: string, jangkar: string }> }>}
+ */
+export function strukturDaftarIsi(kelompok) {
+  /** @type {Array<{ bab: string | null, penjelasan: boolean, pasal: Array<{ nomor: string, jangkar: string }> }>} */
+  const hasil = [];
+  /** @type {(typeof hasil)[number] | null} */
+  let saatIni = null;
+  for (const g of kelompok) {
+    if (g.penjelasan) {
+      // Penjelasan menjadi kelompok tersendiri, apa pun BAB yang terbawa dari batang tubuh.
+      if (!saatIni?.penjelasan) {
+        saatIni = { bab: null, penjelasan: true, pasal: [] };
+        hasil.push(saatIni);
+      }
+    } else if (g.bab !== null && (g.babBaru || saatIni === null)) {
+      saatIni = { bab: g.bab, penjelasan: false, pasal: [] };
+      hasil.push(saatIni);
+    } else if (saatIni === null) {
+      saatIni = { bab: null, penjelasan: false, pasal: [] };
+      hasil.push(saatIni);
+    }
+    saatIni.pasal.push({ nomor: g.nomor, jangkar: g.jangkar });
+  }
   return hasil;
+}
+
+/**
+ * Nama kelompok untuk judul dan label: "Pasal 82", "Penjelasan Pasal 82", atau "Penjelasan Umum".
+ * @param {{ nomor: string, penjelasan: boolean }} g
+ */
+export function namaPasal(g) {
+  if (!g.penjelasan) return `Pasal ${g.nomor}`;
+  return g.nomor === "Umum" ? "Penjelasan Umum" : `Penjelasan Pasal ${g.nomor}`;
+}
+
+/**
+ * Jumlah pasal batang tubuh (nomor berbeda; penjelasan tidak dihitung, dan nomor kembar akibat salah
+ * deteksi saat ekstraksi tidak dihitung dua kali).
+ * @param {Array<{ nomor: string, penjelasan: boolean }>} kelompok
+ */
+export function hitungPasal(kelompok) {
+  return new Set(kelompok.filter((g) => !g.penjelasan).map((g) => g.nomor.toLowerCase())).size;
+}
+
+/**
+ * Teks polos sebuah pasal (untuk disalin): "Pasal 82", lalu tiap ayat/butir pada barisnya sendiri.
+ * `kepala: false` membuang baris "Pasal 82" (bila sitasi lengkapnya sudah ditulis di atasnya).
+ * @param {ReturnType<typeof kelompokkanPasal>[number]} g
+ * @param {{ kepala?: boolean }} [opsi]
+ */
+export function teksPasal(g, { kepala = true } = {}) {
+  /** @type {string[]} */
+  const baris = kepala ? [namaPasal(g)] : [];
+  if (g.judul) baris.push(g.judul);
+  for (const b of g.butir) {
+    const blok = bacaIsiPasal(b.isi);
+    const isiBlok = blok.map((x) => (x.tipe === "butir" ? `${x.penanda} ${x.teks}` : x.teks));
+    if (b.ayat !== null && isiBlok.length) isiBlok[0] = `(${b.ayat}) ${isiBlok[0]}`;
+    baris.push(...isiBlok);
+  }
+  return baris.join("\n");
 }
 
 // --- Graf relasi --------------------------------------------------------------

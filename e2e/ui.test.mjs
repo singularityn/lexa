@@ -439,11 +439,12 @@ describe("halaman peraturan", () => {
     await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
     await page.waitForSelector(".pasal");
     await page.click(".aksi-bar button:has-text('Laporkan kesalahan')");
-    await page.waitForSelector("dialog[open]");
-    await page.selectOption("dialog select", "teks_salah");
-    await page.fill("dialog textarea", "Pasal 82 ayat (1) salah ketik");
-    await page.click("dialog button[type=submit]");
-    await page.waitForFunction(() => !document.querySelector("dialog[open]"));
+    // Di layar lebar daftar isi adalah <dialog open> permanen di samping teks; yang dituju dialog laporan.
+    await page.waitForSelector("dialog.dialog-laporan[open]");
+    await page.selectOption("dialog.dialog-laporan select", "teks_salah");
+    await page.fill("dialog.dialog-laporan textarea", "Pasal 82 ayat (1) salah ketik");
+    await page.click("dialog.dialog-laporan button[type=submit]");
+    await page.waitForFunction(() => !document.querySelector("dialog.dialog-laporan"));
     expect(await page.locator(".toast").allTextContents()).toEqual(expect.arrayContaining([expect.stringContaining("Terima kasih")]));
     const lapor = await (await fetch(`${BASE}/api/admin/laporan`, { headers: { "x-admin-token": "token-admin-uji" } })).json();
     expect(lapor.laporan[0]).toMatchObject({ frbr_uri: UU13, jenis: "teks_salah", keterangan: "Pasal 82 ayat (1) salah ketik" });

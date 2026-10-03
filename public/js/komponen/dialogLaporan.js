@@ -30,7 +30,7 @@ export function bukaDialogLaporan({ uri, sitasi, konteks }) {
   const dialog = /** @type {HTMLDialogElement} */ (
     h(
       "dialog",
-      { "aria-labelledby": "lapor-judul" },
+      { class: "dialog-laporan", "aria-labelledby": "lapor-judul" },
       h(
         "form",
         {

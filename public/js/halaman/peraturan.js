@@ -2,10 +2,13 @@
 import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
-  angka, bersihkanArtefak, istilahDariKueri, jangkarDariId, kelompokkanPasal, labelJenis, labelRelasi, namaLengkap, nomorTahun,
-  queryString, sitasi, sitasiPasal, tanggalIndonesia, urlPeraturan, URUTAN_RELASI,
+  angka, bacaIsiPasal, bersihkanArtefak, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, labelJenis, labelRelasi,
+  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
+import { bacaPref, HURUF, simpanPref, terapkanPref, UKURAN } from "../bacaan.js";
+import { buatDaftarIsi } from "../komponen/daftarIsi.js";
 import { ikon } from "../komponen/ikon.js";
+import { bukaLembar, bukaLembarAksi } from "../komponen/lembar.js";
 import { toast } from "../komponen/toast.js";
 import { tombolTandai } from "../komponen/tombolTandai.js";
 import { bukaDialogLaporan } from "../komponen/dialogLaporan.js";
@@ -98,9 +101,11 @@ function tidakAda(uri) {
 function tampilkan(ctx, d, q) {
   const l = d.law;
   const nama = sitasi(l);
+  const topik = judulRingkas(l.judul);
+  const kelompok = kelompokkanPasal(d.articles);
   riwayat.catatDilihat({ uri: l.frbr_uri, sitasi: nama, judul: l.judul });
-  const deskripsi = (l.ringkasan || `${namaLengkap(l)} tentang ${l.judul}.`).slice(0, 180);
-  ctx.setJudul(`${nama} ${l.judul}`, deskripsi);
+  const deskripsi = (l.ringkasan || `${namaLengkap(l)} tentang ${topik}.`).slice(0, 180);
+  ctx.setJudul(`${nama} ${topik}`, deskripsi);
 
   const aksiRelasi = (/** @type {string} */ jenis) => d.relations.filter((r) => r.jenis_relasi === jenis);
   const pengganti = [...aksiRelasi("dicabut_oleh"), ...aksiRelasi("diubah_oleh")];
@@ -117,21 +122,76 @@ function tampilkan(ctx, d, q) {
     );
   })();
 
-  const infoDokumen = h("div", { id: "info-dokumen" });
+  // Status dokumen (PDF/teks) dimuat di latar belakang; hasilnya dipakai tombol PDF, menu Lainnya, dan tab Naskah.
+  /** @type {{ nilai: import("../api.js").StatusDokumen | null, galat: unknown, selesai: boolean, saatSelesai: Array<() => void> }} */
+  const infoStatus = { nilai: null, galat: null, selesai: false, saatSelesai: [] };
   const tombolPdf = h("a", { class: "tombol sembunyi", target: "_blank", rel: "noopener" }, ikon("unduh"), h("span", null, "PDF"));
+  api.statusDokumen(l.frbr_uri, ctx.sinyal)
+    .then((st) => {
+      infoStatus.nilai = st;
+      if (st.pdf_url) {
+        tombolPdf.setAttribute("href", st.pdf_url);
+        tombolPdf.classList.remove("sembunyi");
+      }
+    })
+    .catch((e) => {
+      infoStatus.galat = e;
+    })
+    .finally(() => {
+      infoStatus.selesai = true;
+      for (const fn of infoStatus.saatSelesai) fn();
+    });
+
+  // --- Aksi -----------------------------------------------------------------
+  // Layar lebar: semua aksi berjajar. Ponsel: Simpan dan Salin sitasi, sisanya di lembar "Lainnya".
   const bpk = tautanAman(d.bpk_url);
+  const salinSitasi = async () => toast((await salin(nama)) ? `Disalin: ${nama}` : "Penyalinan gagal");
+  const salinTautan = async () => toast((await salin(location.origin + urlPeraturan(l.frbr_uri))) ? "Tautan disalin." : "Penyalinan gagal");
+  const lapor = () => bukaDialogLaporan({ uri: l.frbr_uri, sitasi: nama });
 
   const aksi = h(
     "div",
     { class: "aksi-bar" },
     tombolTandai({ uri: l.frbr_uri, sitasi: nama, judul: l.judul }, { denganTeks: true }),
-    tombolIkon("salin", "Salin sitasi", { onclick: async () => toast((await salin(nama)) ? `Disalin: ${nama}` : "Penyalinan gagal", { galat: false }) }),
-    tombolIkon("tautan", "Salin tautan", { onclick: async () => toast((await salin(location.origin + urlPeraturan(l.frbr_uri))) ? "Tautan disalin." : "Penyalinan gagal") }),
-    bpk ? h("a", { class: "tombol", href: bpk, target: "_blank", rel: "noopener noreferrer" }, ikon("luar"), h("span", null, "Naskah resmi (BPK)")) : null,
-    tombolPdf,
-    tombolIkon("bendera", "Laporkan kesalahan", { onclick: () => bukaDialogLaporan({ uri: l.frbr_uri, sitasi: nama }) }),
+    // Di ponsel labelnya menyusut menjadi "Sitasi" supaya tiga tombol utama muat sebaris; nama aksesibelnya tetap lengkap.
+    h("button", { type: "button", class: "tombol", "aria-label": "Salin sitasi", onclick: salinSitasi }, ikon("salin"), h("span", { class: "teks-lebar" }, "Salin sitasi"), h("span", { class: "teks-sempit", "aria-hidden": "true" }, "Sitasi")),
+    h(
+      "span",
+      { class: "aksi-lain" },
+      tombolIkon("tautan", "Salin tautan", { onclick: salinTautan }),
+      bpk ? h("a", { class: "tombol", href: bpk, target: "_blank", rel: "noopener noreferrer" }, ikon("luar"), h("span", null, "Naskah resmi (BPK)")) : null,
+      tombolPdf,
+      tombolIkon("bendera", "Laporkan kesalahan", { onclick: lapor }),
+    ),
+    h(
+      "button",
+      {
+        type: "button",
+        class: "tombol tombol-lainnya",
+        "aria-haspopup": "dialog",
+        onclick: () => {
+          const pdf = infoStatus.nilai?.pdf_url ?? null;
+          bukaLembarAksi({
+            judul: nama,
+            aksi: [
+              { ikon: "tautan", label: "Salin tautan", saat: salinTautan },
+              { ikon: "luar", label: "Naskah resmi (BPK)", keterangan: "peraturan.bpk.go.id", href: bpk, tampil: Boolean(bpk) },
+              { ikon: "unduh", label: "Buka PDF", keterangan: "Salinan yang diarsipkan Lexa", href: pdf, tampil: Boolean(pdf) },
+              { ikon: "bendera", label: "Laporkan kesalahan", saat: lapor },
+            ],
+          });
+        },
+      },
+      ikon("lainnya"),
+      h("span", null, "Lainnya"),
+    ),
   );
 
+  // --- Keterangan -----------------------------------------------------------
+  const bidang = pecahBidang(l.bidang);
+  const polos = (/** @type {string} */ t) => t.toLowerCase().replace(/\s+/g, " ").trim();
+  // "Tentang" hanya berguna bila memuat sesuatu yang tidak sudah ada di judul atau bidang.
+  const tentang = l.tentang && ![l.judul, topik, l.bidang ?? ""].some((x) => polos(x) === polos(/** @type {string} */ (l.tentang))) ? rapikanHuruf(l.tentang) : null;
   const metadata = h(
     "dl",
     { class: "metadata" },
@@ -141,9 +201,8 @@ function tampilkan(ctx, d, q) {
       l.tanggal_penetapan ? ["Ditetapkan", tanggalIndonesia(l.tanggal_penetapan)] : null,
       l.tanggal_berlaku ? ["Berlaku", tanggalIndonesia(l.tanggal_berlaku)] : null,
       l.instansi ? ["Instansi", l.instansi] : null,
-      l.bidang ? ["Bidang", h("a", { href: `/telusuri${queryString({ bidang: l.bidang.split(/\s+-\s+/)[0] })}` }, l.bidang)] : null,
-      l.tentang && l.tentang !== l.judul ? ["Tentang", l.tentang] : null,
-      ["Jumlah pasal", angka(l.jumlah_pasal)],
+      bidang.length ? ["Bidang", h("span", { class: "tautan-bidang" }, bidang.map((b) => h("a", { href: `/telusuri${queryString({ bidang: b.nama })}` }, b.label)))] : null,
+      tentang ? ["Tentang", tentang] : null,
       tautanAman(l.sumber_url) ? ["Sumber data", h("a", { href: /** @type {string} */ (tautanAman(l.sumber_url)), target: "_blank", rel: "noopener noreferrer" }, new URL(/** @type {string} */ (tautanAman(l.sumber_url))).hostname)] : null,
     ].flatMap((baris) => (baris ? [h("dt", null, baris[0]), h("dd", null, baris[1])] : [])),
   );
@@ -155,9 +214,10 @@ function tampilkan(ctx, d, q) {
     ["naskah", "Naskah"],
   ];
   const tabAwal = tabTersedia.some(([k]) => k === ctx.params.get("tab")) ? /** @type {string} */ (ctx.params.get("tab")) : "isi";
+  const isiPanel = panelIsi(ctx, d, q, kelompok);
   /** @type {Record<string, HTMLElement>} */
   const panel = {
-    isi: h("div", { role: "tabpanel", id: "panel-isi", "aria-labelledby": "tab-isi" }, panelIsi(d, q)),
+    isi: h("div", { role: "tabpanel", id: "panel-isi", "aria-labelledby": "tab-isi" }, isiPanel.el),
     relasi: h("div", { role: "tabpanel", id: "panel-relasi", "aria-labelledby": "tab-relasi", hidden: true }),
     naskah: h("div", { role: "tabpanel", id: "panel-naskah", "aria-labelledby": "tab-naskah", hidden: true }),
   };
@@ -174,6 +234,7 @@ function tampilkan(ctx, d, q) {
       panel[k].hidden = !aktif;
       if (aktif && fokus) tombol.focus();
     }
+    isiPanel.saatTabBerubah(kunci === "isi");
     if (!termuat[kunci]) {
       termuat[kunci] = true;
       if (kunci === "relasi") isi(panel.relasi, ...panelRelasi(d, ctx));
@@ -202,36 +263,25 @@ function tampilkan(ctx, d, q) {
     ),
   );
 
-  // Status dokumen (PDF/teks) dimuat di latar belakang; hasilnya dipakai tombol PDF dan tab Naskah.
-  /** @type {{ nilai: import("../api.js").StatusDokumen | null, galat: unknown, selesai: boolean, saatSelesai: Array<() => void> }} */
-  const infoStatus = { nilai: null, galat: null, selesai: false, saatSelesai: [] };
-  api.statusDokumen(l.frbr_uri, ctx.sinyal)
-    .then((st) => {
-      infoStatus.nilai = st;
-      if (st.pdf_url) {
-        tombolPdf.setAttribute("href", st.pdf_url);
-        tombolPdf.classList.remove("sembunyi");
-      }
-    })
-    .catch((e) => {
-      infoStatus.galat = e;
-    })
-    .finally(() => {
-      infoStatus.selesai = true;
-      for (const fn of infoStatus.saatSelesai) fn();
-    });
-
+  const jumlahPasal = hitungPasal(kelompok);
+  const adaPenjelasan = kelompok.some((g) => g.penjelasan);
   const kepala = h(
     "header",
-    null,
+    { class: "kepala-peraturan" },
     h(
       "nav",
       { class: "remah", "aria-label": "Remah roti" },
       h("ol", null, h("li", null, h("a", { href: "/" }, "Beranda")), h("li", null, h("a", { href: "/telusuri" }, "Telusuri")), h("li", null, h("a", { href: `/telusuri${queryString({ jenis: l.jenis })}` }, labelJenis(l.jenis))), h("li", { "aria-current": "page" }, nama)),
     ),
     h("p", { class: "kicker" }, namaLengkap(l)),
-    h("h1", { class: "judul-peraturan" }, l.judul),
-    h("div", { class: "meta-baris" }, lencanaStatus(l.status), l.jumlah_pasal ? h("span", { class: "redup" }, `${angka(l.jumlah_pasal)} pasal`) : null, l.tanggal_penetapan ? h("span", { class: "redup" }, `Ditetapkan ${tanggalIndonesia(l.tanggal_penetapan)}`) : null),
+    h("h1", { class: "judul-peraturan" }, topik),
+    h(
+      "div",
+      { class: "meta-baris" },
+      lencanaStatus(l.status),
+      jumlahPasal ? h("span", { class: "redup" }, `${angka(jumlahPasal)} pasal${adaPenjelasan ? " dan penjelasannya" : ""}`) : null,
+      l.tanggal_penetapan ? h("span", { class: "redup" }, `Ditetapkan ${tanggalIndonesia(l.tanggal_penetapan)}`) : null,
+    ),
   );
 
   isi(
@@ -239,11 +289,8 @@ function tampilkan(ctx, d, q) {
     kepala,
     spanduk,
     aksi,
-    infoDokumen,
-    l.ringkasan
-      ? h("section", { class: "kartu ringkasan-ai", "aria-label": "Ringkasan" }, h("span", { class: "label" }, "Ringkasan otomatis (dibuat AI, periksa pasal aslinya)"), h("p", null, l.ringkasan))
-      : null,
-    h("section", { class: "kartu kartu-datar", style: { marginTop: "16px" }, "aria-label": "Keterangan peraturan" }, metadata),
+    l.ringkasan ? kartuRingkasan(l.ringkasan) : null,
+    h("details", { class: "info-peraturan" }, h("summary", null, "Informasi peraturan"), metadata),
     daftarTab,
     panel.isi,
     panel.relasi,
@@ -259,60 +306,131 @@ function tampilkan(ctx, d, q) {
 }
 
 /**
- * Panel "Isi": pasal, daftar nomor, dan pencarian di dalam peraturan.
+ * Ringkasan AI: empat baris dulu, selengkapnya atas permintaan (ringkasan bisa sepanjang satu layar ponsel).
+ * @param {string} teks
+ */
+function kartuRingkasan(teks) {
+  const p = h("p", { class: "terpotong" }, teks);
+  const panjang = teks.length > 240;
+  const tombol = panjang
+    ? h(
+        "button",
+        {
+          type: "button",
+          class: "tombol-teks",
+          "aria-expanded": "false",
+          onclick: () => {
+            const terbuka = p.classList.toggle("terpotong") === false;
+            tombol?.setAttribute("aria-expanded", String(terbuka));
+            if (tombol) tombol.textContent = terbuka ? "Lebih sedikit" : "Selengkapnya";
+          },
+        },
+        "Selengkapnya",
+      )
+    : null;
+  if (!panjang) p.classList.remove("terpotong");
+  return h("section", { class: "kartu ringkasan-ai", "aria-label": "Ringkasan" }, h("span", { class: "label" }, "Ringkasan otomatis (dibuat AI, periksa pasal aslinya)"), p, tombol);
+}
+
+/** @param {ReturnType<typeof bacaIsiPasal>[number]} b */
+function renderBlok(b) {
+  if (b.tipe === "butir") {
+    return h("div", { class: ["butir", b.tingkat === 2 ? "butir-2" : ""] }, h("span", { class: "no" }, b.penanda), h("span", { class: "isi" }, b.teks));
+  }
+  return h("p", { class: b.tipe === "label" ? "isi-pasal label-bagian" : "isi-pasal" }, b.teks);
+}
+
+/**
+ * Panel "Isi": pasal, daftar isi, pencarian di dalam peraturan, dan pengaturan tampilan teks.
+ * @param {import("../router.js").Konteks} ctx
  * @param {Detail} d
  * @param {string} q
+ * @param {ReturnType<typeof kelompokkanPasal>} kelompok
+ * @returns {{ el: HTMLElement, saatTabBerubah: (aktif: boolean) => void }}
  */
-function panelIsi(d, q) {
+function panelIsi(ctx, d, q, kelompok) {
   const l = d.law;
   const nama = sitasi(l);
   if (!d.articles.length) {
-    return keadaanKosong(
-      "Teks pasal belum tersedia di Lexa",
-      h("p", null, "Metadata peraturan ini sudah ada, tetapi isinya belum diekstrak. Naskah lengkap tersedia di situs resmi."),
-      d.bpk_url ? h("a", { class: "tombol tombol-utama", href: d.bpk_url, target: "_blank", rel: "noopener noreferrer" }, "Buka naskah resmi (BPK)") : null,
-    );
+    return {
+      el: keadaanKosong(
+        "Teks pasal belum tersedia di Lexa",
+        h("p", null, "Metadata peraturan ini sudah ada, tetapi isinya belum diekstrak. Naskah lengkap tersedia di situs resmi."),
+        d.bpk_url ? h("a", { class: "tombol tombol-utama", href: d.bpk_url, target: "_blank", rel: "noopener noreferrer" }, "Buka naskah resmi (BPK)") : null,
+      ),
+      saatTabBerubah() {},
+    };
   }
 
-  const kelompok = kelompokkanPasal(d.articles);
   const daftar = h("div", { class: "isi-peraturan" });
+  terapkanPref(daftar);
   /** @type {Array<{ el: HTMLElement, teks: string }>} */
   const indeks = [];
 
   for (const g of kelompok) {
-    if (g.babBaru && g.bab) daftar.appendChild(h("h2", { class: "bab", id: `bab-${indeks.length}` }, g.bab));
-    if (g.bagianBaru && g.bagian) daftar.appendChild(h("h3", { class: "bagian-uu" }, g.bagian));
+    // Penjelasan (pasal demi pasal) memakai ulang nomor batang tubuh; ia diberi judul sendiri, tanpa BAB.
+    if (g.penjelasanBaru) daftar.appendChild(h("h2", { class: "bab", id: "penjelasan" }, "Penjelasan"));
+    else if (!g.penjelasan && g.babBaru && g.bab) daftar.appendChild(h("h2", { class: "bab", id: `bab-${indeks.length}` }, g.bab));
+    if (!g.penjelasan && g.bagianBaru && g.bagian) daftar.appendChild(h("h3", { class: "bagian-uu" }, g.bagian));
 
     const satuTeks = g.butir.length === 1 && g.butir[0].ayat === null;
+    const namaPs = namaPasal(g);
+    const sitasiPs = g.penjelasan ? `${nama} ${namaPs}` : sitasiPasal(l, g.nomor);
+    const salinTeks = async () => toast((await salin(`${sitasiPs}\n${teksPasal(g, { kepala: false })}`)) ? `Disalin: ${sitasiPs}` : "Penyalinan gagal");
+    const salinSitasiPasal = async () => toast((await salin(sitasiPs)) ? `Disalin: ${sitasiPs}` : "Penyalinan gagal");
+    const salinTautanPasal = async () => toast((await salin(location.origin + urlPeraturan(l.frbr_uri, { jangkar: g.jangkar }))) ? "Tautan disalin." : "Penyalinan gagal");
+    const laporPasal = () => bukaDialogLaporan({ uri: l.frbr_uri, sitasi: nama, konteks: namaPs });
+
+    // Perangkat dengan penunjuk halus: tiga ikon yang muncul saat disorot. Layar sentuh: satu tombol "⋯" ke lembar aksi.
     const aksiPasal = h(
       "span",
       { class: "pasal-aksi" },
-      h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Salin sitasi", "aria-label": `Salin sitasi Pasal ${g.nomor}`, onclick: async () => toast((await salin(sitasiPasal(l, g.nomor))) ? `Disalin: ${sitasiPasal(l, g.nomor)}` : "Penyalinan gagal") }, ikon("salin")),
-      h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Salin tautan ke pasal ini", "aria-label": `Salin tautan Pasal ${g.nomor}`, onclick: async () => toast((await salin(location.origin + urlPeraturan(l.frbr_uri, { jangkar: g.jangkar }))) ? "Tautan disalin." : "Penyalinan gagal") }, ikon("tautan")),
-      h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Laporkan kesalahan pasal ini", "aria-label": `Laporkan kesalahan Pasal ${g.nomor}`, onclick: () => bukaDialogLaporan({ uri: l.frbr_uri, sitasi: nama, konteks: `Pasal ${g.nomor}` }) }, ikon("bendera")),
+      h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Salin sitasi", "aria-label": `Salin sitasi ${namaPs}`, onclick: salinSitasiPasal }, ikon("salin")),
+      h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Salin tautan ke pasal ini", "aria-label": `Salin tautan ${namaPs}`, onclick: salinTautanPasal }, ikon("tautan")),
+      h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Laporkan kesalahan pasal ini", "aria-label": `Laporkan kesalahan ${namaPs}`, onclick: laporPasal }, ikon("bendera")),
+    );
+    const lainnyaPasal = h(
+      "button",
+      {
+        type: "button",
+        class: "tombol tombol-kecil tombol-hantu tombol-ikon pasal-lainnya",
+        "aria-haspopup": "dialog",
+        "aria-label": `Aksi untuk ${namaPs}`,
+        onclick: () =>
+          bukaLembarAksi({
+            judul: sitasiPs,
+            aksi: [
+              { ikon: "salin", label: "Salin teks pasal", keterangan: "Dengan sitasinya", saat: salinTeks },
+              { ikon: "salin", label: "Salin sitasi", keterangan: sitasiPs, saat: salinSitasiPasal },
+              { ikon: "tautan", label: "Salin tautan ke pasal ini", saat: salinTautanPasal },
+              { ikon: "bendera", label: "Laporkan kesalahan", saat: laporPasal },
+            ],
+          }),
+      },
+      ikon("lainnya"),
     );
 
     const el = h(
       "article",
       { class: "pasal", id: g.jangkar },
-      h("div", { class: "pasal-kepala" }, h("h3", null, `Pasal ${g.nomor}`), aksiPasal),
+      h("div", { class: "pasal-kepala" }, h("h3", null, namaPs), aksiPasal, lainnyaPasal),
       g.judul ? h("p", { class: "pasal-judul" }, g.judul) : null,
       satuTeks
-        ? h("p", { class: "isi-pasal" }, bersihkanArtefak(g.butir[0].isi))
+        ? bacaIsiPasal(g.butir[0].isi).map(renderBlok)
         : g.butir.map((b) =>
             b.ayat === null
-              ? h("p", { class: "isi-pasal" }, bersihkanArtefak(b.isi))
-              : h("div", { class: "ayat", id: jangkarDariId(b.id) }, h("span", { class: "no" }, `(${b.ayat})`), h("span", { class: "isi" }, bersihkanArtefak(b.isi))),
+              ? bacaIsiPasal(b.isi).map(renderBlok)
+              : h("div", { class: "ayat", id: jangkarDariId(b.id) }, h("span", { class: "no" }, `(${b.ayat})`), h("div", { class: "isi" }, bacaIsiPasal(b.isi).map(renderBlok))),
           ),
     );
     daftar.appendChild(el);
-    indeks.push({ el, teks: `pasal ${g.nomor} ${g.judul ?? ""} ${g.butir.map((b) => bersihkanArtefak(b.isi)).join(" ")}`.toLowerCase() });
+    indeks.push({ el, teks: `${namaPs} ${g.judul ?? ""} ${g.butir.map((b) => bersihkanArtefak(b.isi)).join(" ")}`.toLowerCase() });
   }
 
   // --- Pencarian di dalam peraturan --------------------------------------
   const status = h("span", { class: "redup", role: "status", "aria-live": "polite" });
   const cariDalam = /** @type {HTMLInputElement} */ (
-    h("input", { class: "input", type: "search", placeholder: "Cari kata di dalam peraturan ini…", "aria-label": "Cari di dalam peraturan ini", value: q })
+    h("input", { class: "input", type: "search", placeholder: "Cari kata di dalam peraturan ini…", "aria-label": "Cari di dalam peraturan ini", enterkeyhint: "search", value: q })
   );
   const tombolBersih = h("button", { type: "button", class: "tombol tombol-kecil sembunyi" }, "Hapus penanda");
 
@@ -362,19 +480,108 @@ function panelIsi(d, q) {
     });
   }
 
-  const nomorPasal = h(
-    "div",
-    { class: "daftar-pasal-nomor" },
-    kelompok.map((g) => h("a", { href: `#${g.jangkar}`, "aria-label": `Pasal ${g.nomor}` }, g.nomor)),
+  // --- Daftar isi dan tampilan teks ----------------------------------------
+  const daftarIsi = kelompok.length > 1
+    ? buatDaftarIsi({
+        kelompok,
+        keJangkar: (jangkar) => {
+          if (location.hash === `#${jangkar}`) ctx.keJangkar();
+          else location.hash = jangkar;
+        },
+      })
+    : null;
+
+  const tombolTampilan = h(
+    "button",
+    { type: "button", class: "tombol tombol-kecil", "aria-haspopup": "dialog", onclick: () => bukaPengaturanTampilan(daftar) },
+    ikon("teks"),
+    "Tampilan teks",
   );
 
-  return h(
+  const alat = h(
     "div",
-    null,
+    { class: "alat-baca" },
     h("div", { class: "cari-dalam" }, cariDalam, tombolBersih, status),
-    kelompok.length > 1 ? h("details", { class: "toc" }, h("summary", null, `Daftar pasal (${angka(kelompok.length)})`), nomorPasal) : null,
-    daftar,
+    h("div", { class: "alat-baca-tombol" }, daftarIsi?.tombol ?? null, tombolTampilan),
   );
+
+  const isiBaca = h("div", { class: "isi-baca" }, daftar);
+  const akar = h("div", { class: ["baca-tata", daftarIsi ? "dengan-daftar-isi" : ""] }, daftarIsi?.el ?? null, h("div", { class: "baca-utama" }, alat, isiBaca), daftarIsi?.tombolMengambang ?? null);
+
+  // Tombol mengambang "Daftar isi" muncul bila bilah alat sudah tergulir ke atas layar.
+  let panelAktif = true;
+  let alatTerlewati = false;
+  const perbaruiMengambang = () => daftarIsi?.tampilkanMengambang(panelAktif && alatTerlewati);
+  if (daftarIsi) {
+    const pengamat = new IntersectionObserver(([e]) => {
+      alatTerlewati = !e.isIntersecting && e.boundingClientRect.bottom < 0;
+      perbaruiMengambang();
+    });
+    pengamat.observe(alat);
+    ctx.saatKeluar(() => pengamat.disconnect());
+  }
+
+  return {
+    el: akar,
+    saatTabBerubah(aktif) {
+      panelAktif = aktif;
+      perbaruiMengambang();
+    },
+  };
+}
+
+/**
+ * Lembar pengaturan tampilan teks: ukuran dan jenis huruf, berlaku seketika pada teks di belakangnya.
+ * @param {HTMLElement} teksEl
+ */
+function bukaPengaturanTampilan(teksEl) {
+  const pref = bacaPref();
+  const nama = h("span", { class: "nilai-ukuran" }, UKURAN[pref.ukuran]);
+  const geser = /** @type {HTMLInputElement} */ (
+    h("input", {
+      type: "range",
+      min: "0",
+      max: String(UKURAN.length - 1),
+      step: "1",
+      value: String(pref.ukuran),
+      "aria-label": "Ukuran huruf",
+      oninput: () => {
+        const baru = simpanPref({ ukuran: Number(geser.value) });
+        nama.textContent = UKURAN[baru.ukuran];
+        terapkanPref(teksEl, baru);
+        contoh.dataset.ukuran = String(baru.ukuran);
+      },
+    })
+  );
+  const contoh = h("p", { class: "contoh-teks isi-peraturan", dataset: { ukuran: String(pref.ukuran), huruf: pref.huruf } }, "Pekerja perempuan berhak memperoleh istirahat selama 1,5 bulan sebelum saatnya melahirkan anak.");
+  const pilihan = HURUF.map((nilai) =>
+    h(
+      "label",
+      { class: "pilihan-huruf" },
+      h("input", {
+        type: "radio",
+        name: "huruf-baca",
+        value: nilai,
+        checked: pref.huruf === nilai,
+        onchange: () => {
+          const baru = simpanPref({ huruf: nilai });
+          terapkanPref(teksEl, baru);
+          contoh.dataset.huruf = baru.huruf;
+        },
+      }),
+      h("span", { class: nilai === "serif" ? "huruf-serif" : "huruf-sans" }, nilai === "serif" ? "Berkaki (klasik)" : "Tanpa kaki (bersih)"),
+    ),
+  );
+  bukaLembar({
+    judul: "Tampilan teks",
+    isi: [
+      h("div", { class: "baris-ukuran" }, h("span", { class: "huruf-kecil", "aria-hidden": "true" }, "A"), geser, h("span", { class: "huruf-besar", "aria-hidden": "true" }, "A")),
+      h("p", { class: "bantu", role: "status" }, "Ukuran: ", nama),
+      h("div", { class: "pilihan-huruf-grup", role: "radiogroup", "aria-label": "Jenis huruf" }, pilihan),
+      contoh,
+    ],
+    kelas: "lembar-tampilan",
+  });
 }
 
 /**

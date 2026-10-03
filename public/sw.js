@@ -18,7 +18,7 @@
  */
 
 // <<DAFTAR-CANGKANG (dibuat oleh scripts/perbarui-sw.mjs; jangan disunting tangan)
-const VERSI = "6c106c256746";
+const VERSI = "ac5214f3bfef";
 const CANGKANG = [
   "/css/app.css",
   "/favicon.svg",
@@ -29,6 +29,7 @@ const CANGKANG = [
   "/ikon/ikon-maskable-512.png",
   "/",
   "/js/api.js",
+  "/js/bacaan.js",
   "/js/dom.js",
   "/js/format.js",
   "/js/halaman/akun.js",
@@ -42,11 +43,13 @@ const CANGKANG = [
   "/js/halaman/tentang.js",
   "/js/halaman/tidakDitemukan.js",
   "/js/komponen/ajakanPasang.js",
+  "/js/komponen/daftarIsi.js",
   "/js/komponen/dialogLaporan.js",
   "/js/komponen/grafik.js",
   "/js/komponen/ikon.js",
   "/js/komponen/kartuHasil.js",
   "/js/komponen/kotakCari.js",
+  "/js/komponen/lembar.js",
   "/js/komponen/navBawah.js",
   "/js/komponen/panelFilter.js",
   "/js/komponen/pilihMode.js",
