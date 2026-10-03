@@ -65,12 +65,17 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
       expect((await json<{ total_peraturan: number }>(await panggil(l, "/api/stats"))).total_peraturan).toBe(4);
     });
 
-    // Bug v0.1: ekspresi FTS5 tidak dikutip, sehingga "undang-undang" terbaca sebagai
-    // "undang" dikurangi kolom "undang" dan galatnya ditelan. Hasilnya nihil padahal
-    // judul UU 6/2023 memuat kata itu. Kata bertanda hubung sangat lazim di teks hukum.
-    it.fails("kata bertanda hubung ditemukan ('undang-undang')", async () => {
+    // Bug v0.1 yang sudah diperbaiki: ekspresi FTS5 tidak dikutip, sehingga "undang-undang"
+    // terbaca sebagai "undang" dikurangi kolom "undang" dan galatnya ditelan. Hasilnya nihil
+    // padahal judul UU 6/2023 memuat kata itu. Kata bertanda hubung sangat lazim di teks hukum.
+    it("kata bertanda hubung ditemukan ('undang-undang')", async () => {
       const b = await cari(q("Pengganti Undang-Undang", "mode=keyword"));
       expect(b.hits.some((h) => h.frbr_uri === "/akn/id/act/uu/2023/6")).toBe(true);
+    });
+
+    it("kueri dengan tanda hubung tetap menghasilkan hasil FTS pada mode gabungan", async () => {
+      const b = await cari(q("cipta kerja menjadi undang-undang"));
+      expect(b.hits.some((h) => h.sources.includes("fts"))).toBe(true);
     });
   });
 

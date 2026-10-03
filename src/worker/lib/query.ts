@@ -210,6 +210,8 @@ export function uraiKueri(raw: string): KueriTerurai {
     .toLowerCase()
     .split(/[^\p{L}\p{N}-]+/u)
     .map(bersihkanToken)
+    // Tanda hubung di tepi kata ("-pesangon", "pesangon-") bukan bagian kata.
+    .map((t) => t.replace(/^-+|-+$/g, ""))
     .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
 
   const kelompok: string[] = [];
@@ -223,13 +225,17 @@ export function uraiKueri(raw: string): KueriTerurai {
   for (const token of tokens) {
     const varian = new Set<string>();
 
+    // Setiap term DIKUTIP. Tanpa kutip, "perundang-undangan" dibaca FTS5 sebagai
+    // "perundang" dikurangi "undangan" (filter kolom) dan seluruh kueri gagal dengan
+    // "no such column". Tokenizer tabel memakai tokenchars '-', jadi bentuk berkutip
+    // dipecah persis seperti teks yang diindeks. `*` (prefix) ditaruh di luar kutip.
     for (const dasar of kataDasar(token)) {
       // Prefix-match menangkap turunan ke depan ("kerja" -> "kerjakan").
-      varian.add(dasar.length >= 4 ? `${dasar}*` : dasar);
+      varian.add(dasar.length >= 4 ? `"${dasar}"*` : `"${dasar}"`);
       semuaTerm.add(dasar);
     }
     // Token asli selalu ikut, dengan bobot alami lebih tinggi karena persis.
-    varian.add(token);
+    varian.add(`"${token}"`);
 
     for (const sin of SINONIM[token] ?? []) {
       varian.add(`"${sin}"`);

@@ -67,8 +67,8 @@ describe("uraiKueri", () => {
   it("tidak membiarkan operator FTS5 dari pengguna menjadi operator", () => {
     // "OR" huruf besar dari pengguna harus dikutip sebagai frasa biasa.
     expect(uraiKueri('x" OR "y').fts).toContain('"OR"');
-    // Operator huruf kecil hanyalah kata biasa.
-    expect(uraiKueri("AND OR NOT").fts).toBe("(and) AND (or) AND (not)");
+    // Operator huruf kecil hanyalah kata biasa; semuanya dikutip.
+    expect(uraiKueri("AND OR NOT").fts).toBe('("and") AND ("or") AND ("not")');
   });
 
   it.todo("mengenali 'Peraturan Pemerintah Nomor 35 Tahun 2021' (nama panjang) sebagai sitasi PP");
@@ -111,19 +111,35 @@ describe("kompatibilitas ekspresi dengan FTS5 sungguhan", () => {
     expect(indeks!.cocok(uraiKueri("cuti melahirkan").fts)).toBe(1);
   });
 
-  // BUG DIKETAHUI (ada di produksi v0.1): kata bertanda hubung dan token berawalan
-  // "-" ditulis tanpa tanda kutip, sehingga FTS5 membacanya sebagai filter kolom
-  // dan melempar "no such column". Di produksi galat ini ditelan
-  // (`.catch(() => [])`), jadi jalur kata kunci diam-diam kosong untuk kueri
-  // seperti "peraturan perundang-undangan". Tes di bawah sengaja dibuat gagal
-  // (it.fails) agar bug terdokumentasi; saat diperbaiki, hapus `.fails`.
-  it.skipIf(!fts5Ada).fails("kata bertanda hubung ('perundang-undangan') menghasilkan ekspresi valid", () => {
+  // Bug v0.1 yang sudah diperbaiki: kata bertanda hubung dan token berawalan "-"
+  // ditulis tanpa tanda kutip, sehingga FTS5 membacanya sebagai filter kolom dan
+  // melempar "no such column". Di produksi galat ini ditelan (`.catch(() => [])`),
+  // jadi jalur kata kunci diam-diam kosong untuk kueri seperti
+  // "peraturan perundang-undangan".
+  it.skipIf(!fts5Ada)("kata bertanda hubung ('perundang-undangan') menghasilkan ekspresi valid yang menemukan dokumennya", () => {
     const { fts } = uraiKueri("peraturan perundang-undangan");
     expect(() => indeks!.cocok(fts)).not.toThrow();
+    expect(indeks!.cocok(fts)).toBe(1);
+    expect(indeks!.cocok(uraiKueri("perundang-undangan").fts)).toBe(1);
   });
 
-  it.skipIf(!fts5Ada).fails("token berawalan '-' menghasilkan ekspresi valid", () => {
-    const { fts } = uraiKueri("-pesangon");
+  it.skipIf(!fts5Ada)("kata bertanda hubung ikut dicari lewat awalan ('perundang-undang')", () => {
+    expect(indeks!.cocok(uraiKueri("perundang-undang").fts)).toBe(1);
+  });
+
+  it.skipIf(!fts5Ada)("token berawalan atau berakhiran '-' diperlakukan sebagai katanya", () => {
+    expect(uraiKueri("-pesangon").terms).toContain("pesangon");
+    expect(uraiKueri("pesangon-").terms).toContain("pesangon");
+    expect(indeks!.cocok(uraiKueri("-pesangon").fts)).toBe(1);
+    expect(indeks!.cocok(uraiKueri("pesangon-").fts)).toBe(1);
+  });
+
+  it.skipIf(!fts5Ada)("tanda hubung sendirian atau berderet tidak menghasilkan ekspresi", () => {
+    for (const kueri of ["-", "--", "- -", "---"]) expect(uraiKueri(kueri).fts, kueri).toBe("");
+  });
+
+  it.skipIf(!fts5Ada).each(["a-b", "x-y-z foo", "pasal 28-29", "(foo-bar)", "foo-", "-foo-bar-"])("kombinasi tanda hubung %j valid di FTS5", (kueri) => {
+    const { fts } = uraiKueri(kueri);
     expect(() => indeks!.cocok(fts)).not.toThrow();
   });
 });
