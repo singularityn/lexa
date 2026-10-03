@@ -187,6 +187,19 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
       expect(res.headers.get("cache-control")).toBe("public, max-age=3600");
     });
 
+    it("nomor pasal yang angka nolnya terbaca huruf O (OCR) dikirim sebagai angka; id pasal tidak diubah", async () => {
+      await sisipkan(l, [{
+        uri: "/akn/id/act/uu/2023/99", jenis: "UU", nomor: "99", tahun: 2023, judul: "Contoh OCR",
+        pasal: [{ nomor: "9", isi: "Sembilan." }, { nomor: "1O", ayat: "1", isi: "Sepuluh ayat satu." }, { nomor: "1O", ayat: "2", isi: "Sepuluh ayat dua." }, { nomor: "5A", isi: "Lima A." }],
+      }]);
+      const b = await json<{ articles: Array<{ id: string; nomor_pasal: string }> }>(await detail("/akn/id/act/uu/2023/99"));
+      expect(b.articles.map((a) => a.nomor_pasal)).toEqual(["9", "10", "10", "5A"]);
+      // Datanya sendiri tidak diubah: id tetap, sehingga tautan lama dan pengindeksan tidak bergeser.
+      expect(b.articles.map((a) => a.id.split("#")[1])).toEqual(["pasal-9", "pasal-1O-ayat-1", "pasal-1O-ayat-2", "pasal-5A"]);
+      const baris = l.sqlite.prepare("SELECT nomor_pasal FROM articles WHERE id LIKE '%pasal-1O-ayat-1'").get();
+      expect(baris?.nomor_pasal).toBe("1O");
+    });
+
     it("relasi menyertakan metadata peraturan tujuan (LEFT JOIN)", async () => {
       const b = await json<{ relations: Array<Record<string, unknown>> }>(await detail("/akn/id/act/uu/2020/11"));
       expect(b.relations).toEqual([

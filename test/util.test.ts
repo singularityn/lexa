@@ -3,7 +3,7 @@ import { diagnosaToken, tokenSah } from "../src/worker/lib/auth";
 import { klausaBidang, pecahBidang } from "../src/worker/lib/bidang";
 import { headerCors } from "../src/worker/lib/cors";
 import { potongTeks } from "../src/worker/lib/ingest";
-import { rapikanInstansi, rapikanLaw } from "../src/shared/label";
+import { rapikanArtikel, rapikanInstansi, rapikanLaw, rapikanNomorPasal } from "../src/shared/label";
 import { gabungRRF, kunciCache, type KandidatMentah } from "../src/worker/lib/search";
 import {
   bacaSesi,
@@ -258,5 +258,29 @@ describe("rapikanInstansi / rapikanLaw", () => {
     const kotor = { judul: "x", instansi: "[object Object]", tahun: 2003 };
     expect(rapikanLaw(kotor)).toEqual({ judul: "x", instansi: null, tahun: 2003 });
     expect(kotor.instansi).toBe("[object Object]"); // tidak mengubah masukan
+  });
+});
+
+describe("rapikanNomorPasal / rapikanArtikel (angka nol yang terbaca huruf O oleh OCR)", () => {
+  it.each([
+    ["1O", "10"], ["2O", "20"], ["12O", "120"], ["1OO", "100"], ["1O1", "101"],
+    ["1OA", "10A"], ["12OB", "120B"], // huruf sisipan sesudahnya tetap
+  ])("%s menjadi %s", (masuk, keluar) => {
+    expect(rapikanNomorPasal(masuk)).toBe(keluar);
+  });
+
+  it.each(["1", "10", "5A", "12B", "119L", "I", "II", "XIV", "Umum", "O", "O5", "", "1AO", "a1O"])(
+    "%j tidak berubah (bukan angka yang terbaca O)",
+    (nomor) => {
+      expect(rapikanNomorPasal(nomor)).toBe(nomor);
+    },
+  );
+
+  it("rapikanArtikel mengembalikan objek yang sama bila tak ada yang berubah, dan salinan bila berubah", () => {
+    const baik = { id: "u#pasal-5", nomor_pasal: "5", isi: "x" };
+    expect(rapikanArtikel(baik)).toBe(baik);
+    const rusak = { id: "u#pasal-1O", nomor_pasal: "1O", isi: "x" };
+    expect(rapikanArtikel(rusak)).toEqual({ id: "u#pasal-1O", nomor_pasal: "10", isi: "x" });
+    expect(rusak.nomor_pasal).toBe("1O"); // objek asal tidak diubah
   });
 });

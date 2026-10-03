@@ -81,6 +81,17 @@ describe("sitasiDariTeks", () => {
   });
 });
 
+describe("uraikanPasal: angka nol yang terbaca huruf O", () => {
+  it('"Pasal 1O" dan "Pasal 12O" disimpan sebagai pasal 10 dan 120; sisipan A tetap', () => {
+    const pasal = uraikanPasal(["Pasal 9", "Isi sembilan.", "Pasal 1O", "Isi sepuluh.", "Pasal 10A", "Isi sepuluh A.", "Pasal 12O", "Isi seratus dua puluh."].join("\n"));
+    expect(pasal.map((p) => p.nomor_pasal)).toEqual(["9", "10", "10A", "120"]);
+  });
+
+  it("angka romawi tidak tersentuh", () => {
+    expect(uraikanPasal(["Pasal I", "Isi satu.", "Pasal II", "Isi dua."].join("\n")).map((p) => p.nomor_pasal)).toEqual(["I", "II"]);
+  });
+});
+
 describe("uraikanPasal", () => {
   const naskah = [
     "# UNDANG-UNDANG",

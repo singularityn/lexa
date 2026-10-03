@@ -15,7 +15,7 @@ import { Hono } from "hono";
 import { cari, type KonteksPencarian } from "../lib/search";
 import { bacaSesi } from "../lib/sesi";
 import type { SearchHit } from "../../shared/types";
-import { labelSitasi } from "../../shared/label";
+import { labelSitasi, rapikanNomorPasal } from "../../shared/label";
 
 type Bindings = Env;
 
@@ -133,7 +133,7 @@ tanya.post("/", async (c) => {
 
   const konteks = isiPasal
     .map((p) => {
-      const sitasi = `${labelSitasi(p)} Pasal ${p.nomor_pasal}${p.ayat ? ` ayat (${p.ayat})` : ""}`;
+      const sitasi = `${labelSitasi(p)} Pasal ${rapikanNomorPasal(p.nomor_pasal)}${p.ayat ? ` ayat (${p.ayat})` : ""}`;
       const tandaStatus = p.status !== "berlaku" ? ` [PERHATIAN: peraturan ini berstatus ${p.status}]` : "";
       return `### ${sitasi}${tandaStatus}\n${p.isi.slice(0, MAKS_KARAKTER_PASAL)}`;
     })

@@ -7,7 +7,7 @@ import { headerCors } from "../lib/cors";
 import { klausaBidang } from "../lib/bidang";
 import { PasalClient, urlBpk } from "../lib/pasal";
 import { jadwalkanSinkronisasi, type KonteksIngest, type PesanIngest } from "../lib/ingest";
-import { labelSitasi, rapikanLaw } from "../../shared/label";
+import { labelSitasi, rapikanArtikel, rapikanLaw } from "../../shared/label";
 import { pilihDalam } from "../lib/d1";
 import { aliasUri, selesaikanUri } from "../lib/uri";
 
@@ -270,7 +270,7 @@ api.get("/laws/detail", async (c) => {
 
   const body: LawDetailResponse = {
     law: rapikanLaw(law),
-    articles: articles.results,
+    articles: articles.results.map(rapikanArtikel),
     relations: await perbaikiRelasiBeralias(c.env.DB, relations.results),
     bpk_url: urlBpk(c.env.BPK_BASE, law.bpk_id),
   };

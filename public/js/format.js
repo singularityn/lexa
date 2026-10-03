@@ -65,6 +65,20 @@ export function nomorTahun(jenis, nomor, tahun) {
   return m ? `${m[1]}/POJK.${m[2]}/${m[3]}` : `${nomor}/${tahun}`;
 }
 
+const POLA_NOMOR_PASAL_OCR = /^(\d[\dO]*)([A-Z]{0,2})$/;
+
+/**
+ * Nomor pasal dengan salah baca OCR yang lazim dibereskan: angka nol terbaca huruf O ("1O" untuk 10, "12O" untuk 120).
+ * Pasal sisipan memakai huruf A, B, C, ... tetapi tidak pernah O, jadi "O" sesudah angka pasti nol. Nomor lain
+ * ("5A", "II", "Umum") tidak berubah. Salinan dari src/shared/label.ts (dijaga sama oleh test/web.test.ts); API sudah
+ * merapikannya, salinan ini melindungi jawaban lama yang tersimpan di perangkat (cache baca dan simpanan luring).
+ * @param {string} nomor
+ */
+export function rapikanNomorPasal(nomor) {
+  const m = POLA_NOMOR_PASAL_OCR.exec(nomor);
+  return m && m[1].includes("O") ? m[1].replace(/O/g, "0") + m[2] : nomor;
+}
+
 /**
  * "UU 13/2003 Pasal 82 ayat (1)"
  * @param {{ jenis: string, nomor: string, tahun: number }} l
@@ -73,7 +87,7 @@ export function nomorTahun(jenis, nomor, tahun) {
  */
 export function sitasiPasal(l, pasal, ayat) {
   if (!pasal) return sitasi(l);
-  return `${sitasi(l)} Pasal ${pasal}${ayat ? ` ayat (${ayat})` : ""}`;
+  return `${sitasi(l)} Pasal ${rapikanNomorPasal(pasal)}${ayat ? ` ayat (${ayat})` : ""}`;
 }
 
 /** "Undang-Undang Nomor 13 Tahun 2003" @param {{ jenis: string, nomor: string, tahun: number }} l */
@@ -243,13 +257,16 @@ export function daftarBidang(bidang) {
 
 /**
  * Bagian setelah `#` pada id pasal. Akhiran `~n` TIDAK dibuang: id kembar hasil
- * penyaringan ingest (`...-ayat-2~2`) adalah id pasal yang sah.
+ * penyaringan ingest (`...-ayat-2~2`) adalah id pasal yang sah. Nomor pasalnya dirapikan seperti
+ * `rapikanNomorPasal` ("pasal-1O" menjadi "pasal-10"), supaya jangkar di halaman, tautan dari hasil pencarian,
+ * dan tautan dari jawaban Tanya Lexa (yang dibangun dari nomor pasal yang sudah rapi) selalu sama.
  * @param {string | null | undefined} idPasal
  */
 export function jangkarDariId(idPasal) {
   if (!idPasal) return "";
   const i = idPasal.indexOf("#");
-  return i >= 0 ? idPasal.slice(i + 1) : idPasal;
+  const jangkar = i >= 0 ? idPasal.slice(i + 1) : idPasal;
+  return jangkar.replace(/^pasal-([^-~]+)/, (_semua, nomor) => `pasal-${rapikanNomorPasal(nomor)}`);
 }
 
 /**
@@ -527,8 +544,9 @@ export function kelompokkanPasal(artikel) {
   let babSebelumnya = /** @type {string | null} */ (null);
   let bagianSebelumnya = /** @type {string | null} */ (null);
   for (const a of artikel) {
+    const nomor = rapikanNomorPasal(a.nomor_pasal);
     const terakhir = hasil.at(-1);
-    if (terakhir && terakhir.nomor === a.nomor_pasal) {
+    if (terakhir && terakhir.nomor === nomor) {
       terakhir.butir.push(a);
       continue;
     }
@@ -538,8 +556,8 @@ export function kelompokkanPasal(artikel) {
     bagianSebelumnya = a.bagian ?? bagianSebelumnya;
     hasil.push({
       // "pasal-5-ayat-1~2" menjadi "pasal-5~2": akhiran pembeda ikut, supaya penjelasan tidak berbagi id dengan batang tubuh.
-      jangkar: jangkarDariId(a.id).replace(/-ayat-[^~]*/, "") || `pasal-${a.nomor_pasal}`,
-      nomor: a.nomor_pasal,
+      jangkar: jangkarDariId(a.id).replace(/-ayat-[^~]*/, "") || `pasal-${nomor}`,
+      nomor,
       judul: a.judul,
       bab: a.bab,
       bagian: a.bagian,

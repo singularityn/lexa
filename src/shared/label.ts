@@ -35,6 +35,26 @@ export function rapikanInstansi(v: string | null | undefined): string | null {
   return tanpaNegara === "" || /^indonesia$/i.test(tanpaNegara) ? null : tanpaNegara;
 }
 
+const POLA_NOMOR_PASAL_OCR = /^(\d[\dO]*)([A-Z]{0,2})$/;
+
+/**
+ * Nomor pasal dengan salah baca OCR yang lazim dibereskan: angka nol terbaca huruf O ("1O" untuk 10, "12O" untuk 120).
+ * Pasal sisipan memakai huruf A, B, C, ... tetapi tidak pernah O, jadi "O" sesudah angka pasti nol. Nomor lain
+ * ("5A", "II", "Umum") tidak berubah. Di produksi 154 baris pasal pada 42 peraturan terkena (KUHP, Cipta Kerja,
+ * Pelindungan Data Pribadi, ...). Antarmuka (public/js/format.js) punya salinan fungsi yang sama, dijaga
+ * test/web.test.ts; ubah keduanya bersamaan.
+ */
+export function rapikanNomorPasal(nomor: string): string {
+  const m = POLA_NOMOR_PASAL_OCR.exec(nomor);
+  return m && m[1].includes("O") ? m[1].replace(/O/g, "0") + m[2] : nomor;
+}
+
+/** Rapikan nomor pasal pada satu baris `articles` sebelum dikirim ke klien; objek yang sama bila tak ada yang berubah. */
+export function rapikanArtikel<T extends { nomor_pasal: string }>(a: T): T {
+  const nomor = rapikanNomorPasal(a.nomor_pasal);
+  return nomor === a.nomor_pasal ? a : { ...a, nomor_pasal: nomor };
+}
+
 /** Rapikan kolom-kolom `laws` yang bisa berisi sisa data buruk sebelum dikirim ke klien. */
 export function rapikanLaw<T extends { instansi: string | null }>(law: T): T {
   const instansi = rapikanInstansi(law.instansi);

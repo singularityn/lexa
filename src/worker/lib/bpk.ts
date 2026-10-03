@@ -8,6 +8,7 @@
  */
 
 import type { Law, JenisRelasi, StatusPeraturan } from "../../shared/types";
+import { rapikanNomorPasal } from "../../shared/label";
 import { uraiSitasi } from "./sitasi";
 
 /** Satu dokumen di dalam manifest hasil panen. */
@@ -438,7 +439,8 @@ export function uraikanPasal(naskah: string): PasalTerurai[] {
       }
 
       tutupPasal();
-      nomorPasal = mPasal[1].toUpperCase();
+      // Angka nol yang terbaca huruf O oleh OCR ("Pasal 1O" untuk 10) dibereskan sejak ingest.
+      nomorPasal = rapikanNomorPasal(mPasal[1].toUpperCase());
       // Isi yang menempel pada baris judul menjadi awal badan pasal.
       if (sisa) buffer.push(sisa);
       continue;

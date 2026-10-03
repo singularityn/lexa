@@ -23,6 +23,15 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
   const q = (teks: string, ekstra = "") => `q=${encodeURIComponent(teks)}${ekstra ? `&${ekstra}` : ""}`;
   const uris = (hits: SearchHit[]) => hits.map((h) => h.article_id ?? h.frbr_uri);
 
+  describe("nomor pasal hasil OCR", () => {
+    it('hasil pasal "1O" ditampilkan sebagai Pasal 10, sedangkan id (tautan) tetap id aslinya', async () => {
+      await sisipkan(l, [{ uri: "/akn/id/act/uu/2023/99", jenis: "UU", nomor: "99", tahun: 2023, judul: "Contoh OCR", pasal: [{ nomor: "1O", ayat: "1", isi: "Setiap orang wajib menjaga kebersihan lingkungan pasar tradisional." }] }]);
+      const b = await cari(q("kebersihan lingkungan pasar", "mode=keyword"));
+      const h = b.hits.find((x) => x.frbr_uri === "/akn/id/act/uu/2023/99");
+      expect(h).toMatchObject({ article_id: "/akn/id/act/uu/2023/99#pasal-1O-ayat-1", nomor_pasal: "10", ayat: "1" });
+    });
+  });
+
   describe("mode keyword (FTS5)", () => {
     it("menemukan pasal, memberi <mark> pada cuplikan, dan hanya bersumber fts", async () => {
       const b = await cari(q("pesangon", "mode=keyword"));

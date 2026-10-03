@@ -47,6 +47,16 @@ describe.skipIf(!sqliteAda)("POST /api/tanya", () => {
       });
     });
 
+    it('pasal bernomor "1O" (nol terbaca huruf O) disebut Pasal 10 di prompt dan di sitasi', async () => {
+      await sisipkan(l, [{ uri: "/akn/id/act/uu/2023/99", jenis: "UU", nomor: "99", tahun: 2023, judul: "Contoh OCR", pasal: [{ nomor: "1O", ayat: "1", isi: "Pengelola pasar tradisional wajib menyediakan tempat sampah terpilah setiap hari." }] }]);
+      await indeksSemua(l, ["/akn/id/act/uu/2023/99"]);
+      const b = await json<Balasan>(await tanya("Apa kewajiban pengelola pasar tradisional soal tempat sampah terpilah?"));
+      expect(b.sitasi).toContainEqual(expect.objectContaining({ frbr_uri: "/akn/id/act/uu/2023/99", nomor_pasal: "10", ayat: "1" }));
+      const pesan = (l.ai.panggilanObrolan.at(-1)?.masukan as { messages: Array<{ content: string }> }).messages;
+      expect(pesan[1].content).toContain("### UU 99/2023 Pasal 10 ayat (1)");
+      expect(pesan[1].content).not.toContain("Pasal 1O");
+    });
+
     it("prompt memuat aturan mutlak dan teks pasal yang ditemukan, bukan hanya cuplikan", async () => {
       await tanya(PERTANYAAN);
       expect(l.ai.panggilanObrolan).toHaveLength(1);

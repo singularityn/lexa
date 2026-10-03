@@ -9,6 +9,7 @@
  */
 
 import type { SearchHit, SearchFilters, SearchMode, SearchResponse, StatusPeraturan } from "../../shared/types";
+import { rapikanNomorPasal } from "../../shared/label";
 import { uraiKueri, kueriUntukEmbedding } from "./query";
 import { klausaBidang } from "./bidang";
 import { pilihDalam } from "./d1";
@@ -384,7 +385,7 @@ async function hidrasi(
       .bind(...artikelUnik)
       .all<{ id: string; nomor_pasal: string; ayat: string | null; isi: string }>();
     for (const r of artRows.results) {
-      artMap.set(r.id, { nomor_pasal: r.nomor_pasal, ayat: r.ayat, isi: r.isi });
+      artMap.set(r.id, { nomor_pasal: rapikanNomorPasal(r.nomor_pasal), ayat: r.ayat, isi: r.isi });
     }
   }
 

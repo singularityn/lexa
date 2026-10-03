@@ -6,9 +6,9 @@ import { describe, expect, it } from "vitest";
 import {
   angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, istilahDariKueri, jangkarDariId,
   hitungPasal, judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, namaPasal, nomorTahun, pisahJudul,
-  bacaIsiPasal, pecahRujukan, pisahPenjelasanTertanam, queryString, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
+  bacaIsiPasal, pecahRujukan, pisahPenjelasanTertanam, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
 } from "../public/js/format.js";
-import { labelSitasi, nomorTahun as nomorTahunServer } from "../src/shared/label";
+import { labelSitasi, nomorTahun as nomorTahunServer, rapikanNomorPasal as rapikanNomorPasalServer } from "../src/shared/label";
 
 const artikel = (nomor: string, ayat: string | null, bab: string | null, urutan = 0, bagian: string | null = null) => ({
   id: `/akn/id/act/uu/2003/13#pasal-${nomor}${ayat ? `-ayat-${ayat}` : ""}`,
@@ -535,6 +535,42 @@ describe("pisahJudul / judulRingkas", () => {
     expect(judulRingkas("Peraturan Pemerintah Nomor 85 Tahun 2013 tentang TATA CARA HUBUNGAN ANTAR LEMBAGA")).toBe("Tata Cara Hubungan Antar Lembaga");
     expect(judulRingkas("Peraturan Presiden Nomor 22 Tahun 2015 tentang Pemberian Uang Bagi Ketua Dan Anggota")).toBe("Pemberian Uang bagi Ketua dan Anggota");
     expect(judulRingkas("Ketenagakerjaan")).toBe("Ketenagakerjaan");
+  });
+});
+
+describe("nomor pasal yang angka nolnya terbaca huruf O (salah baca OCR)", () => {
+  const nomorUji = ["1O", "2O", "12O", "1OO", "1O1", "1OA", "5A", "10", "II", "Umum", "O5", "", "1AO", "119L"];
+
+  it("salinan klien sama persis dengan fungsi di Worker (src/shared/label.ts)", () => {
+    for (const n of nomorUji) expect(rapikanNomorPasal(n), n).toBe(rapikanNomorPasalServer(n));
+    expect(rapikanNomorPasal("1O")).toBe("10");
+    expect(rapikanNomorPasal("5A")).toBe("5A");
+  });
+
+  it("jangkarDariId memakai nomor yang sudah rapi, termasuk ayat dan akhiran ~n", () => {
+    expect(jangkarDariId("/akn/id/act/uu/2023/1#pasal-1O")).toBe("pasal-10");
+    expect(jangkarDariId("/akn/id/act/uu/2023/1#pasal-12O-ayat-2")).toBe("pasal-120-ayat-2");
+    expect(jangkarDariId("/akn/id/act/uu/2023/1#pasal-2O~2")).toBe("pasal-20~2");
+    expect(jangkarDariId("/akn/id/act/uu/2023/1#pasal-5A-ayat-1")).toBe("pasal-5A-ayat-1");
+    expect(jangkarDariId("/akn/id/act/uu/2023/1#pasal-II")).toBe("pasal-II");
+    expect(jangkarDariId("/akn/id/act/uu/2023/1#penjelasan-umum")).toBe("penjelasan-umum");
+    expect(jangkarDariId("")).toBe("");
+  });
+
+  it("kelompokkanPasal: kelompok, jangkar, dan daftar isi memakai nomor yang rapi; pasal 10 asli ikut satu kelompok", () => {
+    const kel = kelompokkanPasal([
+      artikel("9", null, "BAB I", 0),
+      { ...artikel("1O", "1", "BAB I", 1), id: "/akn/id/act/uu/2023/1#pasal-1O-ayat-1" },
+      { ...artikel("10", "2", "BAB I", 2), id: "/akn/id/act/uu/2023/1#pasal-10-ayat-2" },
+      { ...artikel("1OO", null, "BAB II", 3), id: "/akn/id/act/uu/2023/1#pasal-1OO" },
+    ]);
+    expect(kel.map((g) => [g.nomor, g.jangkar, g.butir.length])).toEqual([["9", "pasal-9", 1], ["10", "pasal-10", 2], ["100", "pasal-100", 1]]);
+    expect(strukturDaftarIsi(kel).flatMap((b) => b.pasal.map((p) => p.nomor))).toEqual(["9", "10", "100"]);
+    expect(hitungPasal(kel)).toBe(3);
+  });
+
+  it("sitasiPasal menulis nomor yang rapi", () => {
+    expect(sitasiPasal({ jenis: "UU", nomor: "1", tahun: 2023 }, "1O", "2")).toBe("UU 1/2023 Pasal 10 ayat (2)");
   });
 });
 
