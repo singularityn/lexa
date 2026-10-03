@@ -230,6 +230,70 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
     });
   });
 
+  describe("id vektor yang tidak sah sebagai id pasal", () => {
+    const UU13 = "/akn/id/act/uu/2003/13";
+    /** Vectorize palsu yang mengembalikan id sesuai urutan yang diberikan, apa pun kuerinya. */
+    function vektorTetap(ids: string[]) {
+      l.vektor.query = async () => {
+        const matches = ids.map((id) => ({ id, score: 0.9, metadata: { frbr_uri: id.split("#")[0] } }));
+        return { matches, count: matches.length };
+      };
+    }
+
+    it("potongan lanjutan pasal panjang (~n) dipetakan ke pasalnya dan digabung dengan potongan pertama", async () => {
+      vektorTetap([`${UU13}#pasal-156-ayat-1~1`, `${UU13}#pasal-156-ayat-1`, `${UU13}#pasal-156-ayat-1~2`]);
+      const b = await cari(q("apa saja", "mode=semantic"));
+      expect(b.hits).toHaveLength(1);
+      expect(b.hits[0]).toMatchObject({ article_id: `${UU13}#pasal-156-ayat-1`, nomor_pasal: "156", ayat: "1" });
+      expect(JSON.stringify(b.hits)).not.toContain("~");
+    });
+
+    it("hanya potongan lanjutan yang muncul (induk tidak): tetap menjadi pasal induknya", async () => {
+      vektorTetap([`${UU13}#pasal-82-ayat-1~3`]);
+      const b = await cari(q("apa saja", "mode=semantic"));
+      expect(b.hits[0]).toMatchObject({ article_id: `${UU13}#pasal-82-ayat-1`, nomor_pasal: "82" });
+    });
+
+    it("id kembar yang sah dari ingest (...~2) ada di tabel articles, jadi dibiarkan", async () => {
+      await l.db
+        .prepare(`INSERT INTO articles (id, frbr_uri, nomor_pasal, ayat, isi, urutan) VALUES (?,?,?,?,?,?)`)
+        .bind(`${UU13}#pasal-82-ayat-1~2`, UU13, "82", "1", "Pasal 82 ayat (1) kembar karena nomor berulang.", 99)
+        .run();
+      vektorTetap([`${UU13}#pasal-82-ayat-1~2`, `${UU13}#pasal-82-ayat-1`]);
+      const b = await cari(q("apa saja", "mode=semantic"));
+      expect(b.hits.map((h) => h.article_id)).toEqual([`${UU13}#pasal-82-ayat-1~2`, `${UU13}#pasal-82-ayat-1`]);
+    });
+
+    it("vektor yatim (pasalnya sudah diganti) turun menjadi hasil tingkat peraturan, tanpa pasal fiktif", async () => {
+      vektorTetap([`${UU13}#pasal-999`, `${UU13}#pasal-998~1`, `${UU13}#pasal-156-ayat-1`]);
+      const b = await cari(q("apa saja", "mode=semantic"));
+      const lawLevel = b.hits.filter((h) => h.article_id === null);
+      expect(lawLevel).toHaveLength(1); // dua yatim digabung menjadi satu hasil peraturan
+      expect(lawLevel[0]).toMatchObject({ frbr_uri: UU13, nomor_pasal: null, ayat: null });
+      expect(b.hits.some((h) => h.article_id === `${UU13}#pasal-156-ayat-1`)).toBe(true);
+      expect(b.hits.some((h) => h.nomor_pasal === null && h.article_id !== null)).toBe(false);
+    });
+
+    it("ratusan potongan sekaligus tidak melampaui batas parameter D1", async () => {
+      vektorTetap(Array.from({ length: 150 }, (_, i) => `${UU13}#pasal-156-ayat-1~${i + 1}`));
+      const res = await panggil(l, `/api/search?${q("apa saja", "mode=semantic")}`);
+      expect(res.status).toBe(200);
+      const b = (await res.json()) as SearchResponse;
+      expect(b.hits).toHaveLength(1);
+      expect(b.hits[0].article_id).toBe(`${UU13}#pasal-156-ayat-1`);
+    });
+
+    it("Tanya Lexa memperoleh teks pasal penuh walau Vectorize hanya menemukan potongan lanjutan", async () => {
+      vektorTetap([`${UU13}#pasal-156-ayat-1~1`]);
+      l.ai.jawaban = "Jawaban uji.";
+      const res = await panggil(l, "/api/tanya", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pertanyaan: "apa saja" }) });
+      const b = (await res.json()) as { sitasi: Array<{ nomor_pasal: string | null }> };
+      expect(b.sitasi.map((x) => x.nomor_pasal)).toEqual(["156"]);
+      const prompt = (l.ai.panggilanObrolan[0].masukan as { messages: Array<{ content: string }> }).messages[1].content;
+      expect(prompt).toContain("### UU 13/2003 Pasal 156 ayat (1)");
+    });
+  });
+
   describe("ketahanan", () => {
     it("Workers AI gagal: hybrid tetap mengembalikan hasil FTS", async () => {
       l.ai.galat = new Error("AI mati");

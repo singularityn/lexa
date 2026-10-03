@@ -11,6 +11,7 @@
 import type { SearchHit, SearchFilters, SearchMode, SearchResponse, StatusPeraturan } from "../../shared/types";
 import { uraiKueri, kueriUntukEmbedding } from "./query";
 import { klausaBidang } from "./bidang";
+import { pilihDalam } from "./d1";
 
 /** Konstanta peredam RRF. 60 adalah nilai standar dari makalah Cormack dkk. */
 const RRF_K = 60;
@@ -219,6 +220,52 @@ async function cariVektor(
 }
 
 /**
+ * Rapikan id pasal pada kandidat vektor sebelum fusi.
+ *
+ * Id di Vectorize tidak selalu id pasal yang sah:
+ *  - pasal panjang dipotong untuk embedding, dan potongan lanjutannya berid
+ *    `<id pasal>~n` (lihat `indeksVektor`). Tanpa dipetakan, hasilnya berupa "pasal"
+ *    fiktif tanpa nomor, ganda dengan potongan pertama, dan menaut ke jangkar yang tidak ada;
+ *  - id berakhiran `~n` juga bisa pasal sah: penyaringan id kembar saat ingest memakai
+ *    akhiran yang sama (`...-ayat-2~2`). Karena itu keberadaannya di tabel `articles` diperiksa
+ *    lebih dulu; yang ada dibiarkan.
+ *
+ * Id yang tidak ada di tabel dan punya induk yang ada dipetakan ke induknya; yang lain
+ * (induk pun tidak ada) turun menjadi hasil tingkat peraturan. Hasil kembar digabung
+ * dengan mempertahankan peringkat terbaik. Peringkat dirapatkan kembali agar skor RRF
+ * tidak terpengaruh oleh lubang yang ditinggalkan duplikat.
+ */
+export async function rapikanKandidatVektor(
+  db: D1Database,
+  kandidat: KandidatMentah[],
+): Promise<KandidatMentah[]> {
+  const berakhiran = /~\d+$/;
+  const curiga = kandidat.filter((k) => k.article_id !== null && berakhiran.test(k.article_id));
+  if (!curiga.length) return kandidat;
+
+  // Periksa id apa adanya dan induknya sekaligus.
+  const periksa = [...new Set(curiga.flatMap((k) => [k.article_id!, k.article_id!.replace(berakhiran, "")]))];
+  const ada = new Set(
+    (await pilihDalam<{ id: string }>(db, periksa, (t) => `SELECT id FROM articles WHERE id IN (${t})`)).map((r) => r.id),
+  );
+
+  const hasil: KandidatMentah[] = [];
+  const terlihat = new Set<string>();
+  for (const k of kandidat) {
+    let artikel = k.article_id;
+    if (artikel !== null && berakhiran.test(artikel) && !ada.has(artikel)) {
+      const induk = artikel.replace(berakhiran, "");
+      artikel = ada.has(induk) ? induk : null;
+    }
+    const kunci = artikel ?? k.frbr_uri;
+    if (terlihat.has(kunci)) continue;
+    terlihat.add(kunci);
+    hasil.push({ ...k, article_id: artikel, peringkat: hasil.length + 1 });
+  }
+  return hasil;
+}
+
+/**
  * Gabungkan beberapa daftar terperingkat menjadi satu.
  * Skor akhir = Σ bobot_sumber / (K + peringkat).
  *
@@ -418,7 +465,7 @@ export async function cari(
     const vektor = await cariVektor(
       ctx.ai, ctx.vectorize, ctx.embeddingModel, opsi.query, filters, kedalaman,
     ).catch(() => []); // Vectorize/AI gagal tidak boleh menjatuhkan pencarian keyword
-    daftar.push(vektor);
+    daftar.push(await rapikanKandidatVektor(ctx.db, vektor).catch(() => vektor));
   }
 
   const gabungan = gabungRRF(daftar);
@@ -429,9 +476,18 @@ export async function cari(
   );
 
   const hits: SearchHit[] = [];
+  const sudahAda = new Set<string>();
   for (const t of terurut) {
-    const m = meta.get(t.article_id ?? t.frbr_uri);
+    let m = meta.get(t.article_id ?? t.frbr_uri);
     if (!m) continue;
+    // Vektor yatim: pasalnya sudah diganti saat peraturan diingest ulang, tetapi vektor lama
+    // tidak pernah dihapus dari Vectorize. Tampilkan peraturannya, bukan "pasal" tanpa nomor.
+    if (m.article_id !== null && m.nomor_pasal === null) {
+      m = { ...m, article_id: null, isi: null };
+    }
+    const kunciHasil = m.article_id ?? m.frbr_uri;
+    if (sudahAda.has(kunciHasil)) continue;
+    sudahAda.add(kunciHasil);
     hits.push({
       frbr_uri: m.frbr_uri,
       jenis: m.jenis,
