@@ -1,7 +1,7 @@
 // @ts-check
 import { h, isi } from "../dom.js";
 import { api, dibatalkan } from "../api.js";
-import { angka, kodeJenis, labelJenis, sitasi, urlPeraturan } from "../format.js";
+import { angka, judulRingkas, kodeJenis, labelJenis, sitasi, urlPeraturan } from "../format.js";
 import { kerangka, kotakGalat } from "../komponen/umum.js";
 
 const NAMA_PEKERJAAN = /** @type {Record<string, string>} */ ({
@@ -57,7 +57,7 @@ export default async function status(ctx) {
           { class: "kartu" },
           h("h2", { class: "kartu-judul" }, "Baru ditambahkan"),
           s.terbaru.length
-            ? h("ul", { class: "daftar-ringkas" }, s.terbaru.map((l) => h("li", null, h("a", { href: urlPeraturan(l.frbr_uri) }, h("span", { class: "sitasi" }, sitasi(l)), h("span", { class: "judul" }, l.judul)))))
+            ? h("ul", { class: "daftar-ringkas" }, s.terbaru.map((l) => h("li", null, h("a", { href: urlPeraturan(l.frbr_uri) }, h("span", { class: "sitasi" }, sitasi(l)), h("span", { class: "judul" }, judulRingkas(l.judul))))))
             : h("p", { class: "redup" }, "Belum ada data."),
         ),
       ),

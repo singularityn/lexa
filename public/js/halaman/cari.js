@@ -3,10 +3,12 @@ import { h, isi } from "../dom.js";
 import { api, dibatalkan } from "../api.js";
 import { angka, bacaFilter, queryString } from "../format.js";
 import { kotakCari } from "../komponen/kotakCari.js";
-import { modeTersimpan, pilihMode } from "../komponen/pilihMode.js";
+import { modeTersimpan } from "../komponen/pilihMode.js";
 import { buatPanelFilter } from "../komponen/panelFilter.js";
 import { kartuHasil } from "../komponen/kartuHasil.js";
+import { ikon } from "../komponen/ikon.js";
 import { keadaanKosong, kerangkaHasil, kotakGalat } from "../komponen/umum.js";
+import { riwayat } from "../riwayat.js";
 
 const BATAS_AWAL = 20;
 const BATAS_MAKS = 50;
@@ -29,7 +31,19 @@ export default async function cari(ctx) {
   let nomor = 0;
   ctx.saatKeluar(() => berjalan?.abort());
 
-  const panel = buatPanelFilter({ filter, saatUbah: () => jalankan() });
+  const panel = buatPanelFilter({
+    filter,
+    saatUbah: () => jalankan(),
+    mode: {
+      ambil: () => keadaan.mode,
+      ubah: (m) => {
+        keadaan.mode = m;
+        jalankan();
+      },
+    },
+  });
+  // Di ponsel tombol filter berdampingan dengan kotak cari, hanya ikon (labelnya tetap terbaca pembaca layar).
+  panel.tombol.classList.add("filter-ikon");
   const kotak = kotakCari({
     nilai: keadaan.q,
     saatKirim: (q) => {
@@ -48,16 +62,8 @@ export default async function cari(ctx) {
       "div",
       { class: "dua-kolom" },
       panel.el,
-      h(
-        "section",
-        { class: "area-atas", "aria-label": "Pencarian" },
-        kotak,
-        h("div", { class: "baris", style: { marginTop: "12px" } }, pilihMode(keadaan.mode, (m) => {
-          keadaan.mode = m;
-          jalankan();
-        }, "mode-cari")),
-      ),
-      h("section", { class: "area-hasil", "aria-label": "Hasil" }, ringkas, hasil),
+      h("section", { class: "area-atas baris-cari", "aria-label": "Pencarian" }, kotak, panel.tombol),
+      h("section", { class: "area-hasil", "aria-label": "Hasil" }, panel.chipAktif, ringkas, hasil),
     ),
   );
 
@@ -101,16 +107,19 @@ export default async function cari(ctx) {
 
       isi(
         ringkas,
-        h("span", { class: "ringkas-hasil", role: "status" }, r.hits.length ? `${angka(r.hits.length)} hasil teratas untuk “${r.query}”${r.cached ? "" : ` · ${r.durasi_ms} ms`}` : `Tidak ada hasil untuk “${r.query}”`),
+        h("span", { class: "ringkas-hasil", role: "status" }, r.hits.length ? `${angka(r.hits.length)} hasil teratas untuk “${r.query}”` : `Tidak ada hasil untuk “${r.query}”`),
       );
+      panel.setTombolSelesai(r.hits.length ? `Tampilkan ${angka(r.hits.length)} hasil` : "Tutup");
 
       if (!r.hits.length) {
         isi(hasil, kosong(r));
         return;
       }
+      riwayat.catatPencarian(r.query);
       const lebih = r.hits.length >= keadaan.limit && keadaan.limit < BATAS_MAKS;
       isi(
         hasil,
+        r.longgar ? catatanLonggar(r.longgar.penuh) : null,
         h("ul", { class: "daftar-hasil" }, r.hits.map((hit) => kartuHasil(hit, { q: r.query }))),
         lebih
           ? h("div", { class: "tengah", style: { marginTop: "18px" } }, h("button", {
@@ -139,6 +148,26 @@ export default async function cari(ctx) {
     }
   }
 
+  /**
+   * Hasil memuat cadangan longgar: pencarian ketat menemukan terlalu sedikit. Dinyatakan terus terang,
+   * supaya pembaca tahu hasil di bawahnya hanya memuat sebagian kata.
+   * @param {number} penuh jumlah hasil yang memuat semua kata
+   */
+  function catatanLonggar(penuh) {
+    return h(
+      "div",
+      { class: "catatan-hasil", role: "note" },
+      ikon("info"),
+      h(
+        "p",
+        null,
+        penuh === 0
+          ? "Tidak ada pasal yang memuat semua kata Anda. Yang tampil memuat sebagian kata; periksa sebelum dipakai."
+          : `Hanya ${angka(penuh)} hasil yang memuat semua kata Anda. Sisanya memuat sebagian kata.`,
+      ),
+    );
+  }
+
   /** @param {import("../../../src/shared/types").SearchResponse} r */
   function kosong(r) {
     const adaFilter = panel.jumlahAktif() > 0;
@@ -149,7 +178,7 @@ export default async function cari(ctx) {
         "div",
         { class: "contoh", style: { marginTop: "12px" } },
         r.mode !== "semantic" ? h("button", { type: "button", class: "chip", onclick: () => ubahMode("semantic") }, "Coba mode Makna") : null,
-        r.mode !== "hybrid" ? h("button", { type: "button", class: "chip", onclick: () => ubahMode("hybrid") }, "Coba mode Gabungan") : null,
+        r.mode !== "hybrid" ? h("button", { type: "button", class: "chip", onclick: () => ubahMode("hybrid") }, "Coba mode Otomatis") : null,
         h("a", { class: "chip", href: "/telusuri" }, "Telusuri semua peraturan"),
         h("a", { class: "chip", href: `/tanya${queryString({ q: keadaan.q })}` }, "Tanyakan ke Lexa"),
       ),

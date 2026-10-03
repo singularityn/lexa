@@ -11,7 +11,9 @@ import { GalatApi } from "../api.js";
 /** @param {string | null | undefined} status */
 export function lencanaStatus(status) {
   const kelas = status === "berlaku" || status === "dicabut" || status === "diubah" ? `lencana-${status}` : "";
-  return h("span", { class: ["lencana", kelas] }, labelStatus(status));
+  // Teksnya dibungkus agar di kartu ponsel status "Berlaku" bisa menyusut menjadi titik hijau (CSS),
+  // sementara pembaca layar tetap membaca teksnya.
+  return h("span", { class: ["lencana", kelas], title: labelStatus(status) }, h("span", { class: "teks-status" }, labelStatus(status)));
 }
 
 /** @param {string} jenis */

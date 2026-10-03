@@ -138,6 +138,83 @@ export function angka(n) {
   return new Intl.NumberFormat("id-ID").format(n ?? 0);
 }
 
+// --- Judul dan nama bidang -----------------------------------------------------
+
+/** Kata sambung yang ditulis huruf kecil di tengah judul. */
+const KATA_KECIL = new Set([
+  "dan", "atau", "di", "ke", "dari", "untuk", "yang", "serta", "bagi", "pada", "dengan", "dalam", "oleh",
+  "atas", "terhadap", "sebagai", "tentang", "antara", "kepada", "sampai", "hingga", "menjadi", "adalah", "itu", "ini",
+]);
+
+/**
+ * Singkatan yang memuat huruf hidup (yang tanpa huruf hidup, mis. BPK, DPR, KPK, PT, dikenali otomatis).
+ * Hanya dipakai saat teks sumber seluruhnya huruf besar, karena BPK menulis banyak judul dan nama bidang begitu.
+ */
+const SINGKATAN = new Set([
+  "APBN", "APBD", "BUMN", "BUMD", "BLU", "BPJS", "OJK", "TNI", "POLRI", "RI", "NKRI", "HAM", "ITE", "UMKM", "PNS", "ASN",
+  "KUHP", "KUHAP", "NPWP", "PPN", "PPH", "PBB", "BPHTB", "IPTEK", "ASEAN", "UU", "PP", "POJK", "PERPPU", "PERPRES", "PERMEN",
+  "KPU", "BAWASLU", "BNPB", "BNN", "BPOM", "BRIN", "IUP", "ZEE", "UNESCO", "ILO", "WHO", "COVID", "AI",
+]);
+
+const ANGKA_ROMAWI = /^(?=[IVXLCDM])M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/;
+
+/**
+ * Rapikan huruf besar/kecil sebuah judul atau topik.
+ *
+ * - Seluruhnya huruf besar (BPK menulis sekitar seperempat judul dan hampir semua nama bidang begitu):
+ *   menjadi huruf judul ("Tata Cara Hubungan Antar Lembaga"), dengan singkatan dan angka Romawi dipertahankan.
+ * - Campuran: hanya kata sambung berkapital di tengah ("Bagi", "Dan", "Atas") yang diturunkan, supaya
+ *   "Pemberian Uang Kompensasi/penghargaan Bagi Ketua dan Anggota" tidak terbaca setengah-setengah.
+ *
+ * Tidak mengubah isi data; hanya tampilan.
+ * @param {string | null | undefined} teks
+ */
+export function rapikanHuruf(teks) {
+  if (!teks) return "";
+  const t = teks.trim().replace(/\s+/g, " ");
+  const semuaBesar = !/\p{Ll}/u.test(t) && /\p{Lu}/u.test(t);
+  let pertama = true;
+  return t.replace(/[\p{L}\p{N}][\p{L}\p{N}'’]*/gu, (kata) => {
+    const awal = pertama;
+    pertama = false;
+    const kecil = kata.toLowerCase();
+    if (KATA_KECIL.has(kecil)) return awal ? kecil[0].toUpperCase() + kecil.slice(1) : kecil;
+    if (!semuaBesar) return kata;
+    const besar = kata.toUpperCase();
+    if (SINGKATAN.has(besar) || ANGKA_ROMAWI.test(besar) || /\d/.test(kata)) return besar;
+    // Singkatan tanpa huruf hidup: BPK, DPR, MPR, KPK, PT, MK.
+    if (kata.length <= 5 && !/[AIUEO]/.test(besar)) return besar;
+    return kata[0].toUpperCase() + kata.slice(1).toLowerCase();
+  });
+}
+
+/**
+ * Pisahkan judul resmi ("Peraturan Pemerintah Nomor 85 Tahun 2013 tentang Tata Cara …") menjadi
+ * kepala dan topik. Sitasi ("PP 85/2013") sudah mengenali peraturannya, jadi daftar cukup menampilkan topik.
+ * Judul yang tidak berbentuk begitu (mis. "Penetapan Peraturan Pemerintah Pengganti …") dibiarkan utuh.
+ * @param {string | null | undefined} judul
+ * @returns {{ kepala: string | null, topik: string }}
+ */
+export function pisahJudul(judul) {
+  const t = (judul ?? "").trim();
+  const m = /^((?:Undang-?\s?undang|Peraturan|Keputusan|Instruksi|Ketetapan|Perpu|Perppu)\b.*?\b(?:nomor|no\.?)\s+\S+(?:\s+tahun\s+\d{4})?)\s+tentang\s+(.+)$/is.exec(t);
+  return m ? { kepala: m[1].trim(), topik: m[2].trim() } : { kepala: null, topik: t };
+}
+
+/**
+ * Judul untuk kartu dan daftar: topiknya saja, dengan huruf yang dirapikan.
+ * @param {string | null | undefined} judul
+ */
+export function judulRingkas(judul) {
+  return rapikanHuruf(pisahJudul(judul).topik);
+}
+
+/** Daftar bidang dari nilai kolom `bidang` ("APBN - BUMN"), dirapikan hurufnya. @param {string | null | undefined} bidang */
+export function daftarBidang(bidang) {
+  if (!bidang) return [];
+  return [...new Set(bidang.split(/\s+-\s+/).map((b) => rapikanHuruf(b)).filter(Boolean))];
+}
+
 /**
  * Bagian setelah `#` pada id pasal. Akhiran `~n` TIDAK dibuang: id kembar hasil
  * penyaringan ingest (`...-ayat-2~2`) adalah id pasal yang sah.

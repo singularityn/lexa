@@ -28,10 +28,11 @@ export function kotakCari(opsi) {
       type: "search",
       name: "q",
       value: opsi.nilai ?? "",
-      placeholder: opsi.placeholder ?? "Cari peraturan, pasal, atau sitasi",
+      placeholder: opsi.placeholder ?? "Cari peraturan atau pasal",
       autocomplete: "off",
       autocapitalize: "off",
       spellcheck: "false",
+      enterkeyhint: "search",
       maxlength: "300",
       role: "combobox",
       "aria-label": opsi.label ?? "Cari peraturan",
@@ -136,6 +137,26 @@ export function kotakCari(opsi) {
     }
   });
 
+  // Tombol hapus (×) muncul hanya bila ada isi; tombol kirim (panah) di dalam kotak, bukan di sampingnya,
+  // agar kolom tulis tidak menyempit di layar ponsel.
+  const tombolHapus = h(
+    "button",
+    {
+      type: "button",
+      class: "kotak-hapus sembunyi",
+      "aria-label": "Hapus kata kunci",
+      onclick: () => {
+        input.value = "";
+        input.dispatchEvent(new Event("input"));
+        input.focus();
+      },
+    },
+    ikon("tutup"),
+  );
+  const perbaruiHapus = () => tombolHapus.classList.toggle("sembunyi", input.value === "");
+  input.addEventListener("input", perbaruiHapus);
+  perbaruiHapus();
+
   const form = h(
     "form",
     {
@@ -148,8 +169,14 @@ export function kotakCari(opsi) {
         opsi.saatKirim(q);
       },
     },
-    h("div", { style: { position: "relative", flex: "1" } }, ikon("cari", { kelas: "ikon-cari" }), input),
-    opsi.tombol === false ? null : h("button", { type: "submit", class: "tombol tombol-utama" }, "Cari"),
+    h(
+      "div",
+      { class: ["kotak-bungkus", opsi.tombol === false ? "tanpa-kirim" : ""] },
+      ikon("cari", { kelas: "ikon-cari" }),
+      input,
+      tombolHapus,
+      opsi.tombol === false ? null : h("button", { type: "submit", class: "kotak-kirim", "aria-label": "Cari" }, ikon("kirim")),
+    ),
   );
 
   const akar = /** @type {HTMLElement & { fokus: () => void, setNilai: (q: string) => void }} */ (
@@ -158,6 +185,7 @@ export function kotakCari(opsi) {
   akar.fokus = () => input.focus();
   akar.setNilai = (q) => {
     input.value = q;
+    perbaruiHapus();
   };
   return akar;
 }

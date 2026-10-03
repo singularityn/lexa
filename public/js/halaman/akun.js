@@ -4,8 +4,10 @@ import { api, GalatApi } from "../api.js";
 import { koleksi, sesi, siap } from "../state.js";
 import { toast } from "../komponen/toast.js";
 import { kartuPasang } from "../komponen/ajakanPasang.js";
+import { ikon } from "../komponen/ikon.js";
 import { kerangka, peringatan } from "../komponen/umum.js";
 import { pergi } from "../navigasi.js";
+import { riwayat } from "../riwayat.js";
 
 const PESAN_GALAT = /** @type {Record<string, string>} */ ({
   parameter: "Google tidak mengirim data yang dibutuhkan. Silakan coba masuk lagi.",
@@ -13,6 +15,26 @@ const PESAN_GALAT = /** @type {Record<string, string>} */ ({
   token: "Google menolak pertukaran kode masuk. Silakan coba lagi.",
   verifikasi: "Identitas dari Google tidak dapat diverifikasi, sehingga Anda tidak dimasukkan.",
 });
+
+/** Riwayat (peraturan yang dibuka, kata yang dicari) hanya ada di perangkat ini; pengguna bisa menghapusnya. */
+function kartuRiwayat() {
+  const ringkas = h("p", { class: "redup" });
+  const tombol = /** @type {HTMLButtonElement} */ (h("button", { type: "button", class: "tombol" }, ikon("sampah"), "Hapus riwayat di perangkat ini"));
+  const gambar = () => {
+    const n = riwayat.dilihat().length + riwayat.pencarian().length;
+    ringkas.textContent = n
+      ? `${riwayat.dilihat().length} peraturan yang terakhir dibuka dan ${riwayat.pencarian().length} kata yang terakhir dicari disimpan di perangkat ini. Tidak dikirim ke server.`
+      : "Belum ada riwayat di perangkat ini. Peraturan yang Anda buka dan kata yang Anda cari akan tampil di beranda, dan tidak dikirim ke server.";
+    tombol.disabled = n === 0;
+  };
+  tombol.addEventListener("click", () => {
+    riwayat.hapusSemua();
+    gambar();
+    toast("Riwayat dihapus.");
+  });
+  gambar();
+  return h("div", { class: "kartu", style: { marginTop: "16px" } }, h("h2", { class: "kartu-judul" }, "Riwayat"), ringkas, tombol);
+}
 
 /** Tautan yang di layar lebar ada di header/footer, tetapi tidak di bilah navigasi bawah ponsel. */
 function kartuInformasi() {
@@ -60,6 +82,7 @@ export default async function akun(ctx) {
           koleksi.jumlah ? h("p", { class: "bantu" }, `${koleksi.jumlah} peraturan di koleksi perangkat ini akan dibawa ke akun saat Anda masuk.`) : null,
         ),
         h("div", { style: { marginTop: "16px" } }, kartuPasang()),
+        kartuRiwayat(),
         kartuInformasi(),
       ),
     );
@@ -116,6 +139,7 @@ export default async function akun(ctx) {
         }, "Keluar"),
       ),
       h("div", { style: { marginTop: "16px" } }, kartuPasang()),
+      kartuRiwayat(),
       kartuInformasi(),
     ),
   );

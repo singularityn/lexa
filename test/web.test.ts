@@ -4,9 +4,9 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, istilahDariKueri, jangkarDariId, kelompokkanPasal,
-  kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, nomorTahun, queryString, sisiUnik, sitasi,
-  sitasiPasal, tanggalIndonesia, tataLetakGraf, urlPeraturan,
+  angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, istilahDariKueri, jangkarDariId,
+  judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, nomorTahun, pisahJudul,
+  queryString, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, tanggalIndonesia, tataLetakGraf, urlPeraturan,
 } from "../public/js/format.js";
 import { labelSitasi, nomorTahun as nomorTahunServer } from "../src/shared/label";
 
@@ -223,5 +223,74 @@ describe("bersihkanArtefak (penanda halaman hasil konversi PDF)", () => {
   it("null dan kosong menghasilkan string kosong", () => {
     expect(bersihkanArtefak(null)).toBe("");
     expect(bersihkanArtefak("")).toBe("");
+  });
+});
+
+describe("rapikanHuruf (judul dan nama bidang dari BPK)", () => {
+  it.each([
+    // Seluruhnya huruf besar: huruf judul, kata sambung kecil, singkatan dan angka Romawi dipertahankan.
+    ["TATA CARA HUBUNGAN ANTAR LEMBAGA BADAN PENYELENGGARA JAMINAN SOSIAL", "Tata Cara Hubungan Antar Lembaga Badan Penyelenggara Jaminan Sosial"],
+    ["KAWASAN EKONOMI KHUSUS LIKUPANG", "Kawasan Ekonomi Khusus Likupang"],
+    ["APBN", "APBN"],
+    ["APBN - BUMN", "APBN - BUMN"],
+    ["PENGESAHAN DAN / ATAU PEMBATALAN PERSETUJUAN / KONVENSI", "Pengesahan dan / atau Pembatalan Persetujuan / Konvensi"],
+    ["BEA CUKAI, EKSPOR-IMPOR, KEPABEANAN", "Bea Cukai, Ekspor-Impor, Kepabeanan"],
+    ["PENGGANTIAN KERUGIAN ANGGOTA-ANGGOTA \"DEWAN PERWAKILAN RAKYAT\"", "Penggantian Kerugian Anggota-Anggota \"Dewan Perwakilan Rakyat\""],
+    ["RENCANA AKSI NASIONAL HAK ASASI MANUSIA TAHUN 2021 - 2025", "Rencana Aksi Nasional Hak Asasi Manusia Tahun 2021 - 2025"],
+    ["PENGELOLAAN BPK DAN DPR DI MPR UNTUK TNI POLRI", "Pengelolaan BPK dan DPR di MPR untuk TNI POLRI"],
+    ["PENANGANAN COVID-19 BAB IV", "Penanganan COVID-19 Bab IV"],
+    ["BAB IV DAN VII", "Bab IV dan VII"],
+    // Campuran: hanya kata sambung berkapital yang diturunkan; sisanya persis.
+    ["Pemberian Uang Kompensasi/penghargaan Bagi Ketua Dan Anggota", "Pemberian Uang Kompensasi/penghargaan bagi Ketua dan Anggota"],
+    ["Perubahan Kedua Atas Undang-Undang Nomor 8 Tahun 2019", "Perubahan Kedua atas Undang-Undang Nomor 8 Tahun 2019"],
+    ["Ketenagakerjaan", "Ketenagakerjaan"],
+    ["Dan seterusnya", "Dan seterusnya"], // kata pertama tidak diturunkan
+    ["  spasi   berlebih  ", "spasi berlebih"],
+  ])("%j -> %j", (masukan, harapan) => {
+    expect(rapikanHuruf(masukan)).toBe(harapan);
+  });
+
+  it("kosong dan null menghasilkan string kosong; idempoten", () => {
+    expect(rapikanHuruf(null)).toBe("");
+    expect(rapikanHuruf("")).toBe("");
+    for (const t of ["TATA CARA", "Tata Cara Dan Pengelolaan", "BEA CUKAI, EKSPOR-IMPOR"]) expect(rapikanHuruf(rapikanHuruf(t))).toBe(rapikanHuruf(t));
+  });
+});
+
+describe("pisahJudul / judulRingkas", () => {
+  it("memisahkan kepala resmi dan topik", () => {
+    expect(pisahJudul("Peraturan Pemerintah Nomor 85 Tahun 2013 tentang TATA CARA HUBUNGAN")).toEqual({
+      kepala: "Peraturan Pemerintah Nomor 85 Tahun 2013", topik: "TATA CARA HUBUNGAN",
+    });
+    expect(pisahJudul("Undang-undang (UU) Nomor 14 Tahun 2025 tentang Perubahan Ketiga atas Undang-Undang Nomor 8 Tahun 2019 tentang Ibadah Haji")).toEqual({
+      kepala: "Undang-undang (UU) Nomor 14 Tahun 2025", topik: "Perubahan Ketiga atas Undang-Undang Nomor 8 Tahun 2019 tentang Ibadah Haji",
+    });
+    expect(pisahJudul("Peraturan Badan Nomor 33-pojk-04-2020 Tahun 2020 tentang Laporan Keuangan").kepala).toBe("Peraturan Badan Nomor 33-pojk-04-2020 Tahun 2020");
+    expect(pisahJudul("Peraturan Menteri Nomor 59 Tahun 2025 tentang\nPembelian Kembali").topik).toBe("Pembelian Kembali");
+  });
+
+  it("judul yang bukan berbentuk 'Jenis Nomor N Tahun Y tentang …' dibiarkan utuh", () => {
+    for (const j of ["Ketenagakerjaan", "Penetapan Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022 tentang Cipta Kerja menjadi Undang-Undang", ""]) {
+      expect(pisahJudul(j)).toEqual({ kepala: null, topik: j });
+    }
+    expect(pisahJudul(null)).toEqual({ kepala: null, topik: "" });
+  });
+
+  it("judulRingkas = topik dengan huruf dirapikan", () => {
+    expect(judulRingkas("Peraturan Pemerintah Nomor 85 Tahun 2013 tentang TATA CARA HUBUNGAN ANTAR LEMBAGA")).toBe("Tata Cara Hubungan Antar Lembaga");
+    expect(judulRingkas("Peraturan Presiden Nomor 22 Tahun 2015 tentang Pemberian Uang Bagi Ketua Dan Anggota")).toBe("Pemberian Uang bagi Ketua dan Anggota");
+    expect(judulRingkas("Ketenagakerjaan")).toBe("Ketenagakerjaan");
+  });
+});
+
+describe("daftarBidang", () => {
+  it("memecah bidang gabungan dengan ' - ' (bukan '-' rapat) dan merapikan huruf", () => {
+    expect(daftarBidang("APBN - BUMN - KESEHATAN - JABATAN / PROFESI / KEAHLIAN")).toEqual(["APBN", "BUMN", "Kesehatan", "Jabatan / Profesi / Keahlian"]);
+    expect(daftarBidang("BEA CUKAI, EKSPOR-IMPOR, KEPABEANAN")).toEqual(["Bea Cukai, Ekspor-Impor, Kepabeanan"]);
+  });
+  it("kosong, null, dan duplikat", () => {
+    expect(daftarBidang(null)).toEqual([]);
+    expect(daftarBidang("")).toEqual([]);
+    expect(daftarBidang("PAJAK - PAJAK")).toEqual(["Pajak"]);
   });
 });

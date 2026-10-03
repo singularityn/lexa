@@ -10,6 +10,7 @@ import { toast } from "../komponen/toast.js";
 import { tombolTandai } from "../komponen/tombolTandai.js";
 import { bukaDialogLaporan } from "../komponen/dialogLaporan.js";
 import { buatGrafik } from "../komponen/grafik.js";
+import { riwayat } from "../riwayat.js";
 import { halamanKosong, keadaanKosong, kerangka, kotakGalat, lencanaStatus, peringatan, tombolIkon } from "../komponen/umum.js";
 
 /**
@@ -97,6 +98,7 @@ function tidakAda(uri) {
 function tampilkan(ctx, d, q) {
   const l = d.law;
   const nama = sitasi(l);
+  riwayat.catatDilihat({ uri: l.frbr_uri, sitasi: nama, judul: l.judul });
   const deskripsi = (l.ringkasan || `${namaLengkap(l)} tentang ${l.judul}.`).slice(0, 180);
   ctx.setJudul(`${nama} ${l.judul}`, deskripsi);
 

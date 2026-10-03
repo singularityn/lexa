@@ -8,8 +8,8 @@ import { keadaanKosong, kerangkaHasil, kotakGalat, paginasi } from "../komponen/
 
 const PER_HALAMAN = 20;
 const URUTAN = [
-  ["", "Terbaru dulu"],
-  ["tahun_asc", "Terlama dulu"],
+  ["", "Terbaru"],
+  ["tahun_asc", "Terlama"],
   ["judul", "Judul A–Z"],
 ];
 
@@ -69,8 +69,8 @@ export default async function telusuri(ctx) {
       "div",
       { class: "dua-kolom" },
       panel.el,
-      h("div", { class: "area-atas bilah-hasil" }, ringkas, h("span", { class: "rentang" }), urut),
-      h("section", { class: "area-hasil", "aria-label": "Daftar peraturan" }, hasil),
+      h("div", { class: "area-atas bilah-alat" }, panel.tombol, h("span", { class: "rentang" }), urut),
+      h("section", { class: "area-hasil", "aria-label": "Daftar peraturan" }, panel.chipAktif, h("div", { class: "bilah-hasil" }, ringkas), hasil),
     ),
   );
   panel.perbaruiFacet({});
@@ -102,6 +102,7 @@ export default async function telusuri(ctx) {
       if (giliran !== nomor) return;
       panel.perbaruiFacet(r.facets);
       ringkas.textContent = `${angka(r.total)} peraturan`;
+      panel.setTombolSelesai(r.total ? `Tampilkan ${angka(r.total)} peraturan` : "Tutup");
       if (!r.laws.length) {
         isi(hasil, keadaanKosong("Tidak ada peraturan yang cocok", h("p", null, "Longgarkan filter di samping untuk melihat lebih banyak.")));
         return;

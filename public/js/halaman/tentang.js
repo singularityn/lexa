@@ -38,9 +38,10 @@ export default function tentang(ctx) {
         "ul",
         null,
         h("li", null, h("strong", null, "Sitasi: "), "ketik “UU 13/2003” atau “PP 35/2021” untuk langsung menuju peraturannya."),
-        h("li", null, h("strong", null, "Kata kunci: "), "pencarian teks penuh pada judul dan isi pasal, dengan pelucutan imbuhan bahasa Indonesia dan sinonim istilah hukum (mis. “cuti” juga mencari “istirahat”)."),
+        h("li", null, h("strong", null, "Kata persis: "), "pencarian teks penuh pada judul dan isi pasal, dengan pelucutan imbuhan bahasa Indonesia dan sinonim istilah hukum (mis. “cuti” juga mencari “istirahat”)."),
         h("li", null, h("strong", null, "Makna: "), "kemiripan makna lewat model embedding, berguna bila Anda tidak tahu istilah resminya."),
-        h("li", null, "Mode ", h("em", null, "Gabungan"), " memadukan ketiganya dengan Reciprocal Rank Fusion; sitasi selalu diutamakan."),
+        h("li", null, "Mode ", h("em", null, "Otomatis"), " memadukan ketiganya dengan Reciprocal Rank Fusion; sitasi selalu diutamakan, dan hasil yang memuat kata yang Anda ketik didahulukan atas yang hanya memuat sinonimnya."),
+        h("li", null, "Untuk kalimat panjang yang tak ada satu pasal pun memuat semua katanya, Lexa menampilkan pasal yang memuat sebagian kata dan menyatakannya terus terang."),
       ),
 
       h("h2", null, "Cara Tanya Lexa bekerja"),

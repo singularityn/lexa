@@ -3,8 +3,8 @@ import { h } from "../dom.js";
 import { penyimpanan } from "../state.js";
 
 const MODE = [
-  ["hybrid", "Gabungan", "Sitasi, kata kunci, dan makna sekaligus (disarankan)"],
-  ["keyword", "Kata kunci", "Hanya kecocokan kata, dengan pelucutan imbuhan dan sinonim"],
+  ["hybrid", "Otomatis", "Sitasi, kata kunci, dan makna sekaligus (disarankan)"],
+  ["keyword", "Kata persis", "Hanya kecocokan kata, dengan pelucutan imbuhan dan sinonim"],
   ["semantic", "Makna", "Kemiripan makna lewat AI; berguna bila Anda tidak tahu istilah resminya"],
 ];
 

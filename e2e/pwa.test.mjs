@@ -357,6 +357,100 @@ describe("tampilan ponsel", () => {
     });
   });
 
+  it("filter di ponsel: lembar modal dari bawah, Esc menutup, mode dan filter aktif tampil sebagai chip yang bisa dilepas", async () => {
+    await dengan(PONSEL, async (_ctx, page) => {
+      await page.goto(BASE + "/cari?q=cipta+kerja&mode=keyword", { waitUntil: "networkidle" });
+      await page.waitForSelector(".daftar-hasil .hasil");
+      const lembar = page.locator("dialog.filter-isi");
+      expect(await lembar.isVisible()).toBe(false);
+      // Mode selain Otomatis tidak tersembunyi di dalam lembar: ia tampil sebagai chip.
+      expect(await page.locator(".chip-filter").allTextContents()).toEqual(["Cara: Kata persis"]);
+
+      await page.click(".filter-toggle");
+      await lembar.waitFor({ state: "visible" });
+      // Ukur setelah animasi naik selesai.
+      await lembar.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+      const kotak = await lembar.boundingBox();
+      expect(Math.round(kotak.y + kotak.height)).toBe(844);
+      expect(await lembar.evaluate((el) => el.matches(":modal"))).toBe(true);
+      expect(await lembar.locator("input[name=mode-cari]").count()).toBe(3);
+      expect(await page.getAttribute(".filter-toggle", "aria-expanded")).toBe("true");
+
+      await page.keyboard.press("Escape");
+      await lembar.waitFor({ state: "hidden" });
+      // Peristiwa "close" dialog tiba satu giliran setelah dialog menghilang.
+      await page.waitForFunction(() => document.querySelector(".filter-toggle")?.getAttribute("aria-expanded") === "false");
+
+      // Klik pada latar di atas lembar juga menutupnya.
+      await page.click(".filter-toggle");
+      await lembar.waitFor({ state: "visible" });
+      await page.mouse.click(195, 40);
+      await lembar.waitFor({ state: "hidden" });
+
+      await page.click(".filter-toggle");
+      await page.check("input[name=status][value=dicabut]");
+      await page.waitForFunction(() => location.search.includes("status=dicabut"));
+      await page.click(".lembar-kaki .tombol");
+      await lembar.waitFor({ state: "hidden" });
+      expect(await page.locator(".chip-filter").allTextContents()).toEqual(["Cara: Kata persis", "Dicabut"]);
+      expect(await page.textContent(".filter-toggle .lencana-jumlah")).toBe("2");
+
+      // Melepas chip memperbarui hasil dan URL.
+      await page.click("button[aria-label='Lepas filter Dicabut']");
+      await page.waitForFunction(() => !location.search.includes("status="));
+      await page.click("button[aria-label='Lepas filter Cara: Kata persis']");
+      await page.waitForFunction(() => !location.search.includes("mode="));
+      expect(await page.locator(".chip-filter").count()).toBe(0);
+      expect(await page.isChecked("input[name=mode-cari][value=hybrid]")).toBe(true);
+    });
+  });
+
+  it("status: 'Berlaku' menyusut menjadi titik hijau di kartu ponsel (tetap terbaca pembaca layar); 'Dicabut' tetap berteks", async () => {
+    await dengan(PONSEL, async (_ctx, page) => {
+      await page.goto(BASE + "/cari?q=pesangon&mode=keyword", { waitUntil: "networkidle" });
+      await page.waitForSelector(".daftar-hasil .hasil");
+      const berlaku = page.locator(".hasil .lencana-berlaku").first();
+      expect(await berlaku.getAttribute("title")).toBe("Berlaku");
+      expect((await berlaku.locator(".teks-status").boundingBox()).width).toBeLessThanOrEqual(1);
+      expect(await berlaku.locator(".teks-status").textContent()).toBe("Berlaku");
+
+      await page.goto(BASE + "/cari?q=cipta+kerja&mode=keyword&status=dicabut", { waitUntil: "networkidle" });
+      await page.waitForSelector(".daftar-hasil .hasil");
+      expect((await page.locator(".hasil .lencana-dicabut .teks-status").first().boundingBox()).width).toBeGreaterThan(30);
+    });
+  });
+
+  it("Tanya: kotak tulis menempel tepat di atas bilah bawah, dan turun ke dasar layar saat papan ketik terbuka", async () => {
+    await dengan(PONSEL, async (_ctx, page) => {
+      await page.goto(BASE + "/tanya", { waitUntil: "networkidle" });
+      const form = page.locator("form.form-tanya");
+      const nav = page.locator(".nav-bawah");
+      const kotakForm = await form.boundingBox();
+      const kotakNav = await nav.boundingBox();
+      expect(kotakForm.y + kotakForm.height).toBeLessThanOrEqual(kotakNav.y + 1);
+      expect(kotakForm.y + kotakForm.height).toBeGreaterThanOrEqual(kotakNav.y - 24);
+      // Tidak ada footer di halaman obrolan.
+      expect(await page.locator(".footer").isVisible()).toBe(false);
+
+      await page.focus("#pertanyaan");
+      await nav.waitFor({ state: "hidden" });
+      const fokus = await form.boundingBox();
+      expect(fokus.y + fokus.height).toBeGreaterThan(844 - 24);
+      expect(fokus.y + fokus.height).toBeLessThanOrEqual(844);
+    });
+  });
+
+  it("Tanya: mengirim pertanyaan dari ponsel menampilkan jawaban dengan dasar hukum, kotak tulis tetap terjangkau", async () => {
+    await dengan(PONSEL, async (_ctx, page) => {
+      await page.goto(BASE + "/tanya", { waitUntil: "networkidle" });
+      await page.fill("#pertanyaan", "Berapa lama cuti melahirkan?");
+      await page.click("button.tombol-kirim");
+      await page.waitForSelector(".gelembung.asisten .dasar-hukum");
+      expect(await page.locator(".gelembung.pengguna").textContent()).toBe("Berapa lama cuti melahirkan?");
+      expect(await page.locator("form.form-tanya").isVisible()).toBe(true);
+    });
+  });
+
   it("layar lebar memakai navigasi atas dan tanpa bilah bawah", async () => {
     await dengan({}, async (_ctx, page) => {
       await page.goto(BASE + "/", { waitUntil: "networkidle" });

@@ -59,7 +59,7 @@ afterEach(async () => {
 
 describe("halaman dasar", () => {
   const halaman = [
-    ["/", "Temukan pasal yang Anda cari"],
+    ["/", "Cari peraturan Indonesia"],
     ["/cari?q=pesangon", "Hasil pencarian"],
     ["/telusuri", "Telusuri peraturan"],
     [urlUU(UU13), "Ketenagakerjaan"],
@@ -132,6 +132,65 @@ describe("pencarian", () => {
     await page.waitForSelector(".daftar-hasil .hasil");
     expect(await page.locator(".hasil").first().locator(".hasil-sitasi").textContent()).toBe("UU 13/2003");
     expect(await page.locator(".hasil").first().locator(".sumber-chip").allTextContents()).toContain("Sitasi");
+  });
+
+  it("kartu hasil: judul hanya topiknya (huruf dirapikan), tanpa lencana jenis, dan seluruh kartu bisa diketuk", async () => {
+    await reset();
+    const res = await fetch(`${BASE}/api/impor/manifest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": "token-admin-uji" },
+      body: JSON.stringify({
+        versi: 1,
+        dokumen: [{ bpk_id: "7001", meta: { Judul: "Peraturan Pemerintah Nomor 85 Tahun 2013 tentang TATA CARA HUBUNGAN ANTAR LEMBAGA BADAN PENYELENGGARA", "Bentuk Singkat": "PP", Nomor: "85", Tahun: "2013", Status: "Berlaku" }, relasi: [] }],
+      }),
+    });
+    expect(res.status).toBe(200);
+    await page.goto(BASE + "/telusuri?jenis=PP", { waitUntil: "networkidle" });
+    const kartu = page.locator(".hasil", { hasText: "PP 85/2013" });
+    await kartu.waitFor();
+    expect(await kartu.locator(".hasil-judul").textContent()).toBe("Tata Cara Hubungan Antar Lembaga Badan Penyelenggara");
+    expect(await kartu.locator(".lencana-jenis").count()).toBe(0);
+    // Tautan judul dibentangkan ke seluruh kartu: mengetuk bagian kosong kartu membuka peraturannya.
+    const kotak = await kartu.boundingBox();
+    await page.mouse.click(kotak.x + kotak.width / 2, kotak.y + kotak.height - 6);
+    await page.waitForURL(/\/peraturan\?uri=/);
+    await reset();
+  });
+
+  it("kalimat yang tak memuat semua katanya di satu pasal tetap menemukan pasalnya, dengan catatan terus terang", async () => {
+    await page.goto(BASE + "/cari?q=" + encodeURIComponent("berapa lama cuti melahirkan bagi pekerja perempuan") + "&mode=keyword", { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    expect(await page.locator(".catatan-hasil").textContent()).toContain("sebagian kata");
+    expect(await page.locator(".hasil-pasal").first().textContent()).toContain("Pasal");
+    // Pencarian biasa tidak menampilkan catatan itu.
+    await page.goto(BASE + "/cari?q=pesangon&mode=keyword", { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    expect(await page.locator(".catatan-hasil").count()).toBe(0);
+  });
+
+  it("riwayat: kata yang dicari dan peraturan yang dibuka muncul di beranda, dan hanya di perangkat ini", async () => {
+    await page.goto(BASE + "/", { waitUntil: "networkidle" });
+    expect(await page.locator(".contoh .redup").textContent()).toBe("Coba:");
+    expect(await page.locator("#h-dilihat").count()).toBe(0);
+
+    await page.goto(BASE + "/cari?q=pesangon", { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    const dibuka = await page.locator(".hasil .hasil-sitasi").first().textContent();
+    await page.locator(".hasil-judul a").first().click();
+    await page.waitForSelector("h1.judul-peraturan");
+
+    await page.goto(BASE + "/", { waitUntil: "networkidle" });
+    expect(await page.locator(".contoh .redup").textContent()).toBe("Terakhir:");
+    expect(await page.locator(".contoh .chip").allTextContents()).toEqual(["pesangon"]);
+    expect(await page.locator("#h-dilihat").textContent()).toBe("Terakhir dilihat");
+    expect(await page.locator(".bagian:has(#h-dilihat) .sitasi").first().textContent()).toBe(dibuka);
+
+    // Riwayat bisa dihapus dari halaman Akun, dan beranda kembali ke keadaan awal.
+    await page.goto(BASE + "/akun", { waitUntil: "networkidle" });
+    await page.click("button:has-text('Hapus riwayat di perangkat ini')");
+    await page.goto(BASE + "/", { waitUntil: "networkidle" });
+    expect(await page.locator(".contoh .redup").textContent()).toBe("Coba:");
+    expect(await page.locator("#h-dilihat").count()).toBe(0);
   });
 
   it("POJK lama (nomor slug) tampil dengan penomoran resmi dan ditemukan lewat penomoran itu", async () => {
@@ -617,6 +676,42 @@ describe("tampilan dan aksesibilitas", () => {
       ["status", "/status"],
     ];
     const axePath = require.resolve("axe-core/axe.min.js");
+
+    // Tampilan ponsel (bilah bawah, kartu ringkas, lembar filter) diperiksa terpisah dari tata letak desktop.
+    for (const tema of ["terang", "gelap"]) {
+      it(`ponsel: beranda, hasil, telusuri, tanya, akun, dan lembar filter (tema ${tema})`, async () => {
+        const konteks = await browser.newContext({
+          serviceWorkers: "block", viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, bypassCSP: true,
+          colorScheme: tema === "gelap" ? "dark" : "light",
+        });
+        const p = await konteks.newPage();
+        const laporan = [];
+        for (const path of ["/", "/cari?q=pesangon", "/telusuri", "/tanya", "/akun", "/koleksi"]) {
+          await p.goto(BASE + path, { waitUntil: "networkidle" });
+          await p.waitForTimeout(250);
+          await p.addScriptTag({ path: axePath });
+          const hasil = await p.evaluate(async () => {
+            // eslint-disable-next-line no-undef
+            const r = await axe.run(document, { resultTypes: ["violations"], rules: { "color-contrast": { enabled: true } } });
+            return r.violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => ({ id: v.id, bantuan: v.help, simpul: v.nodes.slice(0, 3).map((n) => n.target.join(" ")) }));
+          });
+          if (hasil.length) laporan.push({ path, hasil });
+        }
+        // Lembar filter terbuka (dialog modal): isinya sendiri harus lolos.
+        await p.goto(BASE + "/cari?q=pesangon", { waitUntil: "networkidle" });
+        await p.addScriptTag({ path: axePath });
+        await p.click(".filter-toggle");
+        await p.locator("dialog.filter-isi").evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+        const lembar = await p.evaluate(async () => {
+          // eslint-disable-next-line no-undef
+          const r = await axe.run(document, { resultTypes: ["violations"], rules: { "color-contrast": { enabled: true } } });
+          return r.violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => ({ id: v.id, bantuan: v.help, simpul: v.nodes.slice(0, 3).map((n) => n.target.join(" ")) }));
+        });
+        if (lembar.length) laporan.push({ path: "lembar filter", hasil: lembar });
+        await konteks.close();
+        expect(laporan).toEqual([]);
+      });
+    }
 
     for (const tema of ["terang", "gelap"]) {
       it.each(halaman)(`%s (tema ${tema})`, async (_nama, path) => {

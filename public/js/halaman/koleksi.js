@@ -1,7 +1,7 @@
 // @ts-check
 import { h, isi, salin, tunda, unduh } from "../dom.js";
 import { GalatApi } from "../api.js";
-import { tanggalIndonesia, urlPeraturan } from "../format.js";
+import { judulRingkas, tanggalIndonesia, urlPeraturan } from "../format.js";
 import { koleksi, pantau, sesi, siap } from "../state.js";
 import { ikon } from "../komponen/ikon.js";
 import { toast } from "../komponen/toast.js";
@@ -44,7 +44,7 @@ export default async function halamanKoleksi(ctx) {
     return h(
       "article",
       { class: "kartu entri-koleksi" },
-      h("header", null, h("a", { class: "sitasi", href: urlPeraturan(e.uri) }, e.sitasi || e.uri), h("span", null, e.judul)),
+      h("header", null, h("a", { class: "sitasi", href: urlPeraturan(e.uri) }, e.sitasi || e.uri), h("span", { class: "judul-entri" }, judulRingkas(e.judul))),
       catatan,
       h(
         "footer",

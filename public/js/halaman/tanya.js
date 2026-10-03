@@ -4,7 +4,7 @@ import { api, dibatalkan, GalatApi } from "../api.js";
 import { bacaTeksModel, blokKeTeks, sitasiPasal, urlPeraturan } from "../format.js";
 import { ikon } from "../komponen/ikon.js";
 import { toast } from "../komponen/toast.js";
-import { lencanaStatus, peringatan } from "../komponen/umum.js";
+import { lencanaStatus } from "../komponen/umum.js";
 
 const MAKS = 500;
 const CONTOH = [
@@ -60,20 +60,34 @@ export default async function tanya(ctx) {
     h("textarea", {
       class: "input",
       id: "pertanyaan",
-      rows: "2",
+      rows: "1",
       maxlength: String(MAKS),
-      placeholder: "Tulis pertanyaan Anda, mis. “Berapa lama cuti melahirkan?”",
+      placeholder: "Tulis pertanyaan Anda…",
       "aria-label": "Pertanyaan Anda",
     })
   );
   const hitung = h("div", { class: "penghitung", "aria-hidden": "true" }, `0/${MAKS}`);
-  const kirim = /** @type {HTMLButtonElement} */ (h("button", { type: "submit", class: "tombol tombol-utama" }, ikon("kirim"), h("span", null, "Kirim")));
+  const kirim = /** @type {HTMLButtonElement} */ (h(
+      "button",
+      {
+        type: "submit",
+        class: "tombol-kirim",
+        "aria-label": "Kirim pertanyaan",
+        title: "Kirim (Enter)",
+        // Fokus tetap di kotak tulis saat tombol diketuk. Tanpa ini kotak kehilangan fokus, bilah bawah muncul lagi
+        // (lihat app.css), tombol bergeser ke atas, dan ketukan jatuh di tempat lain sehingga pertanyaan tidak terkirim.
+        onmousedown: (/** @type {MouseEvent} */ e) => e.preventDefault(),
+      },
+      ikon("kirim"),
+    ));
   const baru = h("button", { type: "button", class: "tombol tombol-kecil sembunyi", onclick: mulaiBaru }, "Percakapan baru");
 
   input.value = (ctx.params.get("q") ?? "").slice(0, MAKS);
   const sesuaikan = () => {
     hitung.textContent = `${input.value.length}/${MAKS}`;
     hitung.classList.toggle("lewat", input.value.length >= MAKS);
+    // Penghitung baru perlu terlihat saat mendekati batas; isinya tetap diperbarui untuk pembaca layar/tes.
+    hitung.classList.toggle("redam", input.value.length < MAKS * 0.8);
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
   };
@@ -95,8 +109,8 @@ export default async function tanya(ctx) {
           void kirimPertanyaan();
         },
       },
-      h("div", { class: "form-tanya-baris" }, h("div", { class: "rentang" }, input), kirim),
-      h("div", { class: "baris", style: { justifyContent: "space-between", marginTop: "6px" } }, baru, hitung),
+      h("div", { class: "penulis" }, input, kirim),
+      h("div", { class: "form-tanya-kaki" }, hitung),
     )
   );
 
@@ -105,11 +119,16 @@ export default async function tanya(ctx) {
     h(
       "div",
       { class: "tanya-tata" },
-      h("h1", null, "Tanya Lexa"),
-      h("p", { class: "redup" }, "Jawaban disusun AI hanya dari pasal yang ditemukan di indeks Lexa, dan sumbernya selalu ditampilkan. Bila dasarnya tidak cukup, Lexa akan mengatakannya."),
-      peringatan("info", h("p", null, h("strong", null, "Bukan nasihat hukum. "), "Periksa pasal yang dikutip dan, untuk keputusan penting, rujuk naskah resmi serta konsultasikan dengan ahli.")),
+      h("div", { class: "kepala-halaman" }, h("h1", null, "Tanya Lexa"), baru),
+      h(
+        "p",
+        { class: "catatan-kecil" },
+        h("strong", null, "Bukan nasihat hukum. "),
+        "Jawaban disusun AI hanya dari pasal yang ada di indeks Lexa, dengan sumbernya; bila dasarnya tidak cukup, Lexa mengatakannya. Periksa pasal yang dikutip. ",
+        h("a", { href: "/tentang" }, "Selengkapnya"),
+      ),
       log,
-      h("div", { class: "contoh", id: "contoh-tanya", style: { justifyContent: "flex-start" } }, h("span", { class: "redup" }, "Contoh:"), CONTOH.map((c) => h("button", { type: "button", class: "chip", onclick: () => { input.value = c; sesuaikan(); input.focus(); } }, c))),
+      h("div", { class: "contoh gulir-chip", id: "contoh-tanya" }, CONTOH.map((c) => h("button", { type: "button", class: "chip", onclick: () => { input.value = c; sesuaikan(); input.focus(); } }, c))),
       form,
     ),
   );

@@ -1,7 +1,8 @@
 // @ts-check
 import { h, tunda } from "../dom.js";
-import { angka, kodeJenis, labelJenis, labelStatus } from "../format.js";
+import { angka, daftarBidang, kodeJenis, labelJenis, labelStatus } from "../format.js";
 import { ikon } from "./ikon.js";
+import { pilihMode } from "./pilihMode.js";
 
 /**
  * @typedef {{ jenis: string[], status: string[], tahun_min?: number, tahun_max?: number, bidang?: string }} FilterPeraturan
@@ -9,6 +10,8 @@ import { ikon } from "./ikon.js";
  */
 
 const STATUS = ["berlaku", "diubah", "dicabut"];
+/** Di bawah lebar ini panel menjadi lembar yang naik dari bawah (lihat app.css, @media 860px). */
+const PONSEL = "(max-width: 860px)";
 
 /**
  * Kelompok kotak centang yang bisa diperbarui di tempat (hitungan dan butir baru)
@@ -57,13 +60,22 @@ function kelompokCentang({ nama, judul, label, terpilih, saatUbah }) {
 /**
  * Panel filter peraturan: jenis, status, tahun, bidang.
  *
+ * Di layar lebar panel tampil sebagai kolom di samping hasil. Di ponsel isinya sebuah <dialog> modal
+ * yang naik dari bawah (fokus terperangkap, Esc menutup, latar tak bisa disentuh), dibuka lewat
+ * `tombol`. Filter berlaku seketika; "Tampilkan hasil" hanya menutup lembar. Filter yang aktif juga
+ * ditampilkan sebagai chip yang bisa dilepas satu per satu (`chipAktif`), di luar lembar.
+ *
+ * Bila `mode` diberikan, kelompok pertamanya adalah "Cara mencari" (Otomatis/Kata persis/Makna): di ponsel
+ * ia ada di dalam lembar bersama filter lain, dan mode selain Otomatis tampil sebagai chip aktif.
+ *
  * @param {{
  *   filter: FilterPeraturan,
  *   saatUbah: () => void,
  *   bidang?: boolean,
+ *   mode?: { ambil: () => string, ubah: (mode: string) => void },
  * }} opsi `filter` adalah objek yang dimiliki halaman; panel hanya mengubah isinya lalu memanggil `saatUbah`.
  */
-export function buatPanelFilter({ filter, saatUbah, bidang = true }) {
+export function buatPanelFilter({ filter, saatUbah, bidang = true, mode }) {
   const jenis = kelompokCentang({
     nama: "jenis",
     judul: "Jenis peraturan",
@@ -116,21 +128,8 @@ export function buatPanelFilter({ filter, saatUbah, bidang = true }) {
   );
 
   const lencana = h("span", { class: "lencana-jumlah sembunyi" });
-  const tombolToggle = h(
-    "button",
-    {
-      type: "button",
-      class: "tombol filter-toggle",
-      "aria-expanded": "false",
-      onclick: () => {
-        const tutup = el.classList.toggle("tertutup");
-        tombolToggle.setAttribute("aria-expanded", String(!tutup));
-      },
-    },
-    ikon("menu"),
-    "Filter",
-    lencana,
-  );
+  const tombol = h("button", { type: "button", class: "tombol filter-toggle", "aria-expanded": "false", "aria-haspopup": "dialog", onclick: () => buka() }, ikon("penyaring"), h("span", { class: "filter-teks" }, "Filter"), lencana);
+
   const tombolHapus = h(
     "button",
     {
@@ -150,40 +149,125 @@ export function buatPanelFilter({ filter, saatUbah, bidang = true }) {
     "Hapus semua filter",
   );
 
-  function jumlahAktif() {
-    return filter.jenis.length + filter.status.length + (filter.tahun_min ? 1 : 0) + (filter.tahun_max ? 1 : 0) + (filter.bidang ? 1 : 0);
+  const chipAktif = h("div", { class: "filter-aktif", role: "group", "aria-label": "Filter yang aktif" });
+  const kelompokMode = mode
+    ? h("div", { class: "filter-grup" }, h("h3", null, "Cara mencari"), pilihMode(mode.ambil(), (m) => { mode.ubah(m); gambarRingkasan(); }, "mode-cari"))
+    : null;
+  const tombolSelesai = h("button", { type: "button", class: "tombol tombol-utama", onclick: () => tutup() }, "Tampilkan hasil");
+
+  const dialog = /** @type {HTMLDialogElement} */ (
+    h(
+      "dialog",
+      { class: "filter-isi", "aria-labelledby": "judul-filter" },
+      h(
+        "div",
+        { class: "lembar-kepala" },
+        h("h2", { id: "judul-filter" }, "Filter"),
+        h("button", { type: "button", class: "tombol tombol-hantu tombol-ikon", "aria-label": "Tutup filter", onclick: () => tutup() }, ikon("tutup")),
+      ),
+      h(
+        "div",
+        { class: "lembar-isi" },
+        kelompokMode,
+        jenis.el,
+        status.el,
+        h("div", { class: "filter-grup" }, h("h3", null, "Tahun"), h("div", { class: "filter-tahun" }, dari, sampai)),
+        bidang ? h("div", { class: "filter-grup" }, h("h3", null, "Bidang"), pilihBidang) : null,
+        tombolHapus,
+      ),
+      h("div", { class: "lembar-kaki" }, tombolSelesai),
+    )
+  );
+  // Klik pada latar (bagian dialog di luar kotak isinya) menutup lembar di ponsel.
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog && dialog.open && mobil.matches) tutup();
+  });
+  dialog.addEventListener("close", () => tombol.setAttribute("aria-expanded", "false"));
+
+  const el = h("aside", { class: "sisi", "aria-label": "Filter pencarian" }, dialog);
+
+  // Layar lebar: panel selalu tampil (dialog non-modal). Ponsel: tertutup sampai dibuka.
+  const mobil = matchMedia(PONSEL);
+  if (!mobil.matches) dialog.setAttribute("open", "");
+  mobil.addEventListener("change", () => {
+    if (mobil.matches) {
+      if (dialog.open) dialog.close();
+    } else if (!dialog.open) {
+      dialog.show();
+    }
+  });
+
+  function buka() {
+    if (!mobil.matches) return;
+    if (!dialog.open) dialog.showModal();
+    tombol.setAttribute("aria-expanded", "true");
   }
-  function ubah() {
+  function tutup() {
+    if (mobil.matches && dialog.open) dialog.close();
+    tombol.focus({ preventScroll: true });
+  }
+
+  /** Filter aktif sebagai butir yang bisa dilepas. @returns {Array<{ label: string, lepas: () => void }>} */
+  function butirAktif() {
+    /** @type {Array<{ label: string, lepas: () => void }>} */
+    const daftar = [];
+    if (mode && mode.ambil() !== "hybrid") {
+      daftar.push({
+        label: `Cara: ${mode.ambil() === "keyword" ? "Kata persis" : "Makna"}`,
+        lepas: () => /** @type {HTMLInputElement | null} */ (kelompokMode?.querySelector('input[value="hybrid"]'))?.click(),
+      });
+    }
+    for (const j of filter.jenis) daftar.push({ label: kodeJenis(j), lepas: () => setelahLepas(() => (filter.jenis = filter.jenis.filter((x) => x !== j))) });
+    for (const st of filter.status) daftar.push({ label: labelStatus(st), lepas: () => setelahLepas(() => (filter.status = filter.status.filter((x) => x !== st))) });
+    if (filter.tahun_min || filter.tahun_max) {
+      daftar.push({
+        label: filter.tahun_min && filter.tahun_max ? `${filter.tahun_min}–${filter.tahun_max}` : filter.tahun_min ? `Sejak ${filter.tahun_min}` : `Sampai ${filter.tahun_max}`,
+        lepas: () => setelahLepas(() => { filter.tahun_min = filter.tahun_max = undefined; dari.value = sampai.value = ""; }),
+      });
+    }
+    if (filter.bidang) {
+      const nama = daftarBidang(filter.bidang)[0] ?? filter.bidang;
+      daftar.push({ label: nama, lepas: () => setelahLepas(() => { filter.bidang = undefined; pilihBidang.value = ""; }) });
+    }
+    return daftar;
+  }
+
+  /** @param {() => void} ubahFilter */
+  function setelahLepas(ubahFilter) {
+    ubahFilter();
+    jenis.perbarui([], false);
+    status.perbarui(STATUS.map((value) => ({ value })));
+    ubah();
+  }
+
+  function jumlahAktif() {
+    return (mode && mode.ambil() !== "hybrid" ? 1 : 0) + filter.jenis.length + filter.status.length + (filter.tahun_min ? 1 : 0) + (filter.tahun_max ? 1 : 0) + (filter.bidang ? 1 : 0);
+  }
+
+  function gambarRingkasan() {
     const n = jumlahAktif();
     lencana.textContent = String(n);
     lencana.classList.toggle("sembunyi", n === 0);
     tombolHapus.classList.toggle("sembunyi", n === 0);
-    saatUbah();
+    chipAktif.replaceChildren(
+      ...butirAktif().map((b) =>
+        h("button", { type: "button", class: "chip-filter", "aria-label": `Lepas filter ${b.label}`, onclick: b.lepas }, b.label, ikon("tutup")),
+      ),
+    );
   }
 
-  const el = h(
-    "aside",
-    { class: "sisi tertutup", "aria-label": "Filter pencarian" },
-    tombolToggle,
-    h(
-      "div",
-      { class: "filter-isi" },
-      jenis.el,
-      status.el,
-      h("div", { class: "filter-grup" }, h("h3", null, "Tahun"), h("div", { class: "filter-tahun" }, dari, sampai)),
-      bidang ? h("div", { class: "filter-grup" }, h("h3", null, "Bidang"), pilihBidang) : null,
-      tombolHapus,
-    ),
-  );
-
-  // Keadaan awal dari URL.
-  const n0 = jumlahAktif();
-  lencana.textContent = String(n0);
-  lencana.classList.toggle("sembunyi", n0 === 0);
-  tombolHapus.classList.toggle("sembunyi", n0 === 0);
+  function ubah() {
+    gambarRingkasan();
+    saatUbah();
+  }
+  gambarRingkasan(); // keadaan awal dari URL
 
   return {
     el,
+    /** Tombol pembuka lembar (hanya tampil di ponsel); halaman menaruhnya di bilah alatnya. */
+    tombol,
+    /** Chip filter aktif; halaman menaruhnya di dekat hasil. */
+    chipAktif,
     /** @param {{ jenis?: ButirFacet[], status?: ButirFacet[] }} facet */
     perbaruiFacet(facet) {
       // Selalu dipanggil, juga tanpa facet: butir yang sudah dipilih dari URL harus tetap tampil.
@@ -194,10 +278,14 @@ export function buatPanelFilter({ filter, saatUbah, bidang = true }) {
     isiBidang(daftar) {
       pilihBidang.replaceChildren(
         h("option", { value: "" }, "Semua bidang"),
-        ...daftar.map((b) => h("option", { value: b.nama }, `${b.nama} (${angka(b.jumlah)})`)),
+        ...daftar.map((b) => h("option", { value: b.nama }, `${daftarBidang(b.nama)[0] ?? b.nama} (${angka(b.jumlah)})`)),
       );
-      if (filter.bidang && !daftar.some((b) => b.nama === filter.bidang)) pilihBidang.appendChild(h("option", { value: filter.bidang }, filter.bidang));
+      if (filter.bidang && !daftar.some((b) => b.nama === filter.bidang)) pilihBidang.appendChild(h("option", { value: filter.bidang }, daftarBidang(filter.bidang)[0] ?? filter.bidang));
       pilihBidang.value = filter.bidang ?? "";
+    },
+    /** Teks tombol penutup lembar, mis. "Tampilkan 20 hasil". @param {string} teks */
+    setTombolSelesai(teks) {
+      tombolSelesai.textContent = teks;
     },
     jumlahAktif,
   };
