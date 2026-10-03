@@ -1,0 +1,16 @@
+# Dependensi dan artefak build
+node_modules/
+dist/
+dist-check/
+coverage/
+.wrangler/
+
+# Rahasia lokal. Jangan pernah di-commit; secret produksi dipasang lewat
+# `wrangler secret put` atau dashboard Cloudflare.
+.dev.vars
+.env
+.env.*
+
+# Lain-lain
+*.log
+.DS_Store

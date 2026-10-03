@@ -1,0 +1,17 @@
+# Contoh variabel rahasia untuk pengembangan lokal (`npm run dev`).
+# Salin menjadi `.dev.vars` lalu isi. Berkas `.dev.vars` sudah di-ignore Git.
+#
+# Di produksi, nilai-nilai ini dipasang sebagai secret Worker:
+#   npx wrangler secret put ADMIN_TOKEN
+# Hindari memasukkan nilai lewat pipa (`echo xxx | wrangler secret put`); newline
+# ikut tersimpan. Kode memangkasnya, tetapi lebih baik dipasang bersih.
+
+# Token untuk endpoint /api/impor/* dan /api/admin/* (header x-admin-token).
+ADMIN_TOKEN=ganti-dengan-token-acak-yang-panjang
+
+# Token API pasal.id (sumber metadata, pohon pasal, dan relasi).
+PASAL_API_TOKEN=
+
+# Login Google (OAuth). Bila kosong, aplikasi tetap berjalan dalam mode tamu.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
