@@ -1,0 +1,50 @@
+name: CI
+
+# Pemeriksaan kualitas tanpa secrets dan tanpa menyentuh akun Cloudflare.
+# Deploy TIDAK dilakukan di sini: deploy ditangani Cloudflare Workers Builds
+# (lihat docs/hubungkan-github-cloudflare.md).
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  WRANGLER_SEND_METRICS: "false"
+
+jobs:
+  check:
+    name: Typecheck, tes, bundling, migrasi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Pasang dependensi
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tes
+        run: npm test
+
+      # Membundel Worker secara lokal (tanpa login dan tanpa deploy) untuk
+      # memastikan konfigurasi dan impor valid.
+      - name: Bundling (dry run)
+        run: npm run build
+
+      # Pastikan seluruh migrasi D1 berjalan pada basis data kosong.
+      - name: Migrasi D1 pada basis data kosong
+        run: npm run d1:migrate:local
