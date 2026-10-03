@@ -8,6 +8,7 @@ import { tokenSah } from "../lib/auth";
 import { pilihDalam } from "../lib/d1";
 import { gabungkanBidang, type RingkasBidang } from "../lib/bidang";
 import type { JenisRelasi, StatusPeraturan } from "../../shared/types";
+import { labelSitasi } from "../../shared/label";
 
 type Bindings = Env;
 
@@ -136,7 +137,7 @@ fitur.get("/relasi/graf", async (c) => {
       uri: u,
       // Peraturan yang belum ter-ingest tetap ditampilkan — keberadaan
       // relasinya adalah informasi, meski judulnya belum diketahui.
-      label: m ? `${m.jenis} ${m.nomor}/${m.tahun}` : u.split("/").slice(-3).join("/"),
+      label: m ? labelSitasi(m) : u.split("/").slice(-3).join("/"),
       jenis: m?.jenis ?? null,
       tahun: m?.tahun ?? null,
       status: m?.status ?? null,

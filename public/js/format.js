@@ -48,7 +48,21 @@ export function kodeJenis(kode) {
  * @param {{ jenis: string, nomor: string, tahun: number }} l
  */
 export function sitasi(l) {
-  return `${kodeJenis(l.jenis)} ${l.nomor}/${l.tahun}`;
+  return `${kodeJenis(l.jenis)} ${nomorTahun(l.jenis, l.nomor, l.tahun)}`;
+}
+
+const POLA_SLUG_POJK = /^(\d+)-pojk-(\d{2})-(\d{4})$/i;
+
+/**
+ * "13/2003"; untuk POJK bernomor slug ("48-pojk-04-2016") penulisan resminya "48/POJK.04/2016".
+ * Salinan dari src/shared/label.ts (dijaga sama oleh test/web.test.ts).
+ * @param {string} jenis
+ * @param {string} nomor
+ * @param {number} tahun
+ */
+export function nomorTahun(jenis, nomor, tahun) {
+  const m = jenis === "POJK" ? POLA_SLUG_POJK.exec(nomor) : null;
+  return m ? `${m[1]}/POJK.${m[2]}/${m[3]}` : `${nomor}/${tahun}`;
 }
 
 /**
@@ -64,7 +78,8 @@ export function sitasiPasal(l, pasal, ayat) {
 
 /** "Undang-Undang Nomor 13 Tahun 2003" @param {{ jenis: string, nomor: string, tahun: number }} l */
 export function namaLengkap(l) {
-  return `${labelJenis(l.jenis)} Nomor ${l.nomor} Tahun ${l.tahun}`;
+  const resmi = l.jenis === "POJK" && POLA_SLUG_POJK.test(l.nomor);
+  return `${labelJenis(l.jenis)} Nomor ${resmi ? nomorTahun(l.jenis, l.nomor, l.tahun) : `${l.nomor} Tahun ${l.tahun}`}`;
 }
 
 export const LABEL_STATUS = /** @type {Record<string, string>} */ ({

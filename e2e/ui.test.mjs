@@ -156,6 +156,42 @@ describe("pencarian", () => {
     expect(await page.locator(".hasil").first().locator(".sumber-chip").allTextContents()).toContain("Sitasi");
   });
 
+  it("POJK lama (nomor slug) tampil dengan penomoran resmi dan ditemukan lewat penomoran itu", async () => {
+    await reset();
+    const pojk = (bpk_id, sektor) => ({
+      bpk_id,
+      meta: { Judul: `Peraturan OJK Nomor 48/POJK.${sektor}/2016 tentang Tata Cara Contoh`, "Bentuk Singkat": "POJK", Nomor: `48-pojk-${sektor}-2016`, Tahun: "2016", Status: "Berlaku" },
+      relasi: [],
+    });
+    const res = await fetch(`${BASE}/api/impor/manifest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": "token-admin-uji" },
+      body: JSON.stringify({ versi: 1, dokumen: [pojk("9601", "03"), pojk("9602", "04")] }),
+    });
+    expect(res.status).toBe(200);
+
+    // Penomoran resmi menemukan tepat satu sektor, dengan label resmi (bukan "48-pojk-04-2016/2016").
+    await page.goto(BASE + "/cari?q=" + encodeURIComponent("POJK 48/POJK.04/2016") + "&mode=keyword", { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    const pertama = page.locator(".hasil").first();
+    expect(await pertama.locator(".hasil-sitasi").textContent()).toBe("POJK 48/POJK.04/2016");
+    expect(await pertama.locator(".sumber-chip").allTextContents()).toContain("Sitasi");
+    expect(await page.locator(".hasil .sumber-chip", { hasText: "Sitasi" }).count()).toBe(1);
+
+    // Tanpa sektor: kedua POJK bernomor 48 tahun 2016 ditemukan sebagai sitasi.
+    await page.goto(BASE + "/cari?q=" + encodeURIComponent("Peraturan OJK Nomor 48 Tahun 2016") + "&mode=keyword", { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    const label = await page.locator(".hasil", { has: page.locator(".sumber-chip", { hasText: "Sitasi" }) }).locator(".hasil-sitasi").allTextContents();
+    expect(label.sort()).toEqual(["POJK 48/POJK.03/2016", "POJK 48/POJK.04/2016"]);
+
+    // Halaman detail memakai label yang sama pada tombol salin sitasi dan judul halaman.
+    await page.goto(BASE + urlUU("/akn/id/act/pojk/2016/48-pojk-04-2016"), { waitUntil: "networkidle" });
+    await page.waitForSelector("main h1");
+    expect(await page.textContent("main")).toContain("POJK 48/POJK.04/2016");
+    expect(await page.textContent("main")).not.toContain("48-pojk-04-2016");
+    await reset();
+  });
+
   it("mengganti mode dan filter memperbarui URL dan hasil", async () => {
     await page.goto(BASE + "/cari?q=" + encodeURIComponent("cipta kerja") + "&mode=keyword", { waitUntil: "networkidle" });
     await page.waitForSelector(".daftar-hasil .hasil");

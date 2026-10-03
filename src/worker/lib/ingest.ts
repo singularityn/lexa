@@ -15,6 +15,7 @@
  */
 
 import type { Article, Law } from "../../shared/types";
+import { labelSitasi } from "../../shared/label";
 import { PasalClient, PasalRateLimitError } from "./pasal";
 import { uraikanPasal, idPasalUnik, nilaiKualitasEkstraksi, type LaporanKualitas } from "./bpk";
 
@@ -332,7 +333,7 @@ export async function indeksVektor(ctx: KonteksIngest, frbrUri: string): Promise
     .bind(frbrUri)
     .all<{ id: string; nomor_pasal: string; ayat: string | null; isi: string }>();
 
-  const sitasi = `${law.jenis} ${law.nomor}/${law.tahun}`;
+  const sitasi = labelSitasi(law);
 
   // Selalu indeks judul peraturan sebagai satu vektor tersendiri, supaya kueri
   // bergaya "aturan tentang X" tetap menemukan dokumen meski tanpa pasal.

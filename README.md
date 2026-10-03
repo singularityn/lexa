@@ -11,7 +11,8 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
 
 ## Yang dilakukan
 
-- **Pencarian hybrid** untuk peraturan dan pasal: jalur sitasi ("UU 13/2003"), kata kunci (FTS5 dengan
+- **Pencarian hybrid** untuk peraturan dan pasal: jalur sitasi ("UU 13/2003", "Peraturan Pemerintah
+  Republik Indonesia Nomor 35 Tahun 2021", "POJK 48/POJK.04/2016"), kata kunci (FTS5 dengan
   stemmer dan sinonim bahasa Indonesia), dan makna (Vectorize + embedding Workers AI), digabung dengan
   Reciprocal Rank Fusion, di-cache di KV. Tiga mode: Gabungan, Kata kunci, Makna.
 - **Telusur** dengan filter dan facet: jenis, tahun, status, instansi, bidang.
@@ -167,11 +168,24 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 - `/api/suggest?q=%%` cocok dengan semua judul, dan kueri panjang ditolak D1 (pola LIKE maksimal 50 byte).
 - Filter bidang memakai `LIKE` dengan pola yang melampaui 50 byte untuk nama bidang BPK yang panjang (mis.
   "PEMBENTUKAN, PERUBAHAN, DAN PEMBUBARAN KOMISI / KOMITE / …"); kini memakai `INSTR`.
+- Jalur sitasi melewatkan sebagian besar bentuk yang lazim diketik: nama panjang ("Peraturan Pemerintah
+  Nomor 35 Tahun 2021"), "UU RI No. 13 Tahun 2003", "Perpu 2/2022", Peraturan Menteri/OJK/BI. Lebih buruk,
+  "Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022" dibaca sebagai **UU** 2/2022 (hukum yang
+  keliru dengan bobot sitasi 12). Pengurai relasi impor BPK punya kekeliruan jenis yang sama. Kini keduanya
+  memakai satu tata bahasa ketat (`src/worker/lib/sitasi.ts`).
+- 422 dari 547 POJK produksi bernomor slug (`48-pojk-04-2016`), sehingga pencarian sitasi persis `nomor = ?`
+  tak pernah menemukannya dan "48/POJK.04/2016" bahkan tidak dikenali. Pencarian sitasi kini mencocokkan slug
+  (dan awalan `n-`), dan label POJK ditulis dengan penomoran resminya ("POJK 48/POJK.04/2016").
+- Klien API menganggap jawaban 2xx yang badannya tak terbaca sebagai `null`, sehingga `sesi.data` bisa menjadi
+  `null` dan header meledak (ditemukan CI saat pengguna berpindah halaman di tengah permintaan). Kini menjadi
+  galat yang tertangani, dan kerangka pemuatan tidak lagi memakai kelas `.hasil` milik hasil sungguhan.
 
 ## Isu yang diketahui
 
-- Stemmer belum melucuti awalan "be-" ("bekerja" tidak menghasilkan "kerja"), dan nama panjang seperti
-  "Peraturan Pemerintah Nomor 35 Tahun 2021" belum dikenali sebagai sitasi (keduanya `it.todo`).
+- Stemmer belum melucuti awalan "be-" ("bekerja" tidak menghasilkan "kerja"; `it.todo`).
+- Sitasi bernama kementerian dikenali sebagai Peraturan Menteri umum: basis data tidak menyimpan kementerian
+  pada judul PERMEN, jadi "Peraturan Menteri Kesehatan Nomor 29 Tahun 2025" menampilkan semua PERMEN 29/2025.
+  Penomoran resmi selain POJK (mis. "91/PMK.05/2024") belum dikenali.
 - Ambang relevansi Tanya Lexa berbasis peringkat RRF, bukan kemiripan mutlak: enam hasil vektor teratas
   selalu lolos untuk kueri apa pun. Perlindungan utamanya prompt yang tegas; ambang sesungguhnya butuh skor
   kosinus dari Vectorize.

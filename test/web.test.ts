@@ -5,9 +5,10 @@
 import { describe, expect, it } from "vitest";
 import {
   angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, istilahDariKueri, jangkarDariId, kelompokkanPasal,
-  kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, queryString, sisiUnik, sitasi,
+  kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, nomorTahun, queryString, sisiUnik, sitasi,
   sitasiPasal, tanggalIndonesia, tataLetakGraf, urlPeraturan,
 } from "../public/js/format.js";
+import { labelSitasi, nomorTahun as nomorTahunServer } from "../src/shared/label";
 
 const artikel = (nomor: string, ayat: string | null, bab: string | null, urutan = 0, bagian: string | null = null) => ({
   id: `/akn/id/act/uu/2003/13#pasal-${nomor}${ayat ? `-ayat-${ayat}` : ""}`,
@@ -22,6 +23,35 @@ describe("pelabelan", () => {
     expect(sitasiPasal(uu, "82", "1")).toBe("UU 13/2003 Pasal 82 ayat (1)");
     expect(sitasiPasal(uu, "156")).toBe("UU 13/2003 Pasal 156");
     expect(sitasiPasal(uu, null)).toBe("UU 13/2003");
+  });
+
+  it("POJK lama bernomor slug ditulis dengan penomoran resminya", () => {
+    const pojk = { jenis: "POJK", nomor: "48-pojk-04-2016", tahun: 2016 };
+    expect(sitasi(pojk)).toBe("POJK 48/POJK.04/2016");
+    expect(sitasiPasal(pojk, "5", "2")).toBe("POJK 48/POJK.04/2016 Pasal 5 ayat (2)");
+    expect(namaLengkap(pojk)).toBe("Peraturan OJK Nomor 48/POJK.04/2016");
+    // POJK bernomor polos dan jenis lain tidak berubah.
+    expect(sitasi({ jenis: "POJK", nomor: "23", tahun: 2023 })).toBe("POJK 23/2023");
+    expect(namaLengkap({ jenis: "POJK", nomor: "23", tahun: 2023 })).toBe("Peraturan OJK Nomor 23 Tahun 2023");
+    // Slug pada jenis lain bukan urusan format ini.
+    expect(sitasi({ jenis: "PP", nomor: "1-pojk-03-2019", tahun: 2019 })).toBe("PP 1-pojk-03-2019/2019");
+  });
+
+  it("pemformat label di Worker (src/shared/label.ts) dan antarmuka (format.js) selalu sama", () => {
+    const kasus = [
+      { jenis: "UU", nomor: "13", tahun: 2003 },
+      { jenis: "POJK", nomor: "48-pojk-04-2016", tahun: 2016 },
+      { jenis: "POJK", nomor: "1-POJK-05-2019", tahun: 2019 },
+      { jenis: "POJK", nomor: "23", tahun: 2023 },
+      { jenis: "POJK", nomor: "48-pojk-4-2016", tahun: 2016 }, // bukan bentuk slug yang sah
+      { jenis: "PERMEN", nomor: "pmk91+", tahun: 2024 },
+      { jenis: "TAP_MPR", nomor: "XVI/MPR/1998", tahun: 1998 },
+    ];
+    for (const k of kasus) {
+      expect(nomorTahun(k.jenis, k.nomor, k.tahun), JSON.stringify(k)).toBe(nomorTahunServer(k.jenis, k.nomor, k.tahun));
+      // Antarmuka memendekkan kode jenis (PERDA_PROV -> PERDA); untuk jenis di atas keduanya identik.
+      expect(sitasi(k), JSON.stringify(k)).toBe(labelSitasi(k).replace("TAP_MPR", "TAP MPR"));
+    }
   });
 
   it("jenis bersufiks provinsi/kabupaten dipersingkat pada sitasi, jenis tak dikenal tetap terbaca", () => {

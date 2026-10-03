@@ -2,7 +2,7 @@
 import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
-  angka, bersihkanArtefak, istilahDariKueri, jangkarDariId, kelompokkanPasal, labelJenis, labelRelasi, namaLengkap,
+  angka, bersihkanArtefak, istilahDariKueri, jangkarDariId, kelompokkanPasal, labelJenis, labelRelasi, namaLengkap, nomorTahun,
   queryString, sitasi, sitasiPasal, tanggalIndonesia, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
 import { ikon } from "../komponen/ikon.js";
@@ -11,6 +11,22 @@ import { tombolTandai } from "../komponen/tombolTandai.js";
 import { bukaDialogLaporan } from "../komponen/dialogLaporan.js";
 import { buatGrafik } from "../komponen/grafik.js";
 import { halamanKosong, keadaanKosong, kerangka, kotakGalat, lencanaStatus, peringatan, tombolIkon } from "../komponen/umum.js";
+
+/**
+ * "13 / 2003"; POJK lama bernomor slug ditulis resmi ("48/POJK.04/2016", tahun sudah di dalamnya).
+ * @param {{ jenis: string, nomor: string, tahun: number }} l
+ */
+const nomorResmi = (l) => {
+  const resmi = nomorTahun(l.jenis, l.nomor, l.tahun);
+  return resmi === `${l.nomor}/${l.tahun}` ? `${l.nomor} / ${l.tahun}` : resmi;
+};
+
+/**
+ * Relasi yang peraturan tujuannya ada di indeks selalu punya jenis, nomor, dan tahun
+ * (kolom NOT NULL di tabel laws); tipe relasi menganggapnya bisa null karena LEFT JOIN.
+ * @param {import("../../../src/shared/types").Relation} r
+ */
+const sitasiRelasi = (r) => sitasi({ jenis: r.jenis ?? "", nomor: r.nomor ?? "", tahun: r.tahun ?? 0 });
 
 /** @typedef {import("../../../src/shared/types").Law} Law */
 /** @typedef {import("../../../src/shared/types").LawDetailResponse} Detail */
@@ -94,7 +110,7 @@ function tampilkan(ctx, d, q) {
       dicabut ? "dicabut" : "diubah",
       h("p", null, h("strong", null, dicabut ? "Peraturan ini berstatus dicabut" : "Peraturan ini telah diubah"), dicabut ? ", sehingga ketentuannya mungkin tidak lagi berlaku." : "; ketentuannya mungkin sudah berbeda dari teks di bawah."),
       pengganti.length
-        ? h("p", null, `${dicabut ? "Dicabut" : "Diubah"} oleh: `, pengganti.map((r, i) => [i ? ", " : "", r.judul && r.jenis ? h("a", { href: urlPeraturan(r.to_uri) }, `${r.jenis} ${r.nomor}/${r.tahun}`) : (r.keterangan ?? r.to_uri)]))
+        ? h("p", null, `${dicabut ? "Dicabut" : "Diubah"} oleh: `, pengganti.map((r, i) => [i ? ", " : "", r.judul && r.jenis ? h("a", { href: urlPeraturan(r.to_uri) }, sitasiRelasi(r)) : (r.keterangan ?? r.to_uri)]))
         : h("p", null, "Periksa tab Relasi untuk peraturan yang mengubah atau mencabutnya."),
     );
   })();
@@ -119,7 +135,7 @@ function tampilkan(ctx, d, q) {
     { class: "metadata" },
     ...[
       ["Jenis", labelJenis(l.jenis)],
-      ["Nomor / tahun", `${l.nomor} / ${l.tahun}`],
+      ["Nomor / tahun", nomorResmi(l)],
       l.tanggal_penetapan ? ["Ditetapkan", tanggalIndonesia(l.tanggal_penetapan)] : null,
       l.tanggal_berlaku ? ["Berlaku", tanggalIndonesia(l.tanggal_berlaku)] : null,
       l.instansi ? ["Instansi", l.instansi] : null,
@@ -382,7 +398,7 @@ function panelRelasi(d, ctx) {
               null,
               r.judul && r.jenis
                 ? [
-                    h("a", { class: "sitasi", href: urlPeraturan(r.to_uri) }, `${r.jenis} ${r.nomor}/${r.tahun}`),
+                    h("a", { class: "sitasi", href: urlPeraturan(r.to_uri) }, sitasiRelasi(r)),
                     h("span", null, r.judul),
                     r.status ? lencanaStatus(r.status) : null,
                   ]

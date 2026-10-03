@@ -7,6 +7,7 @@ import { headerCors } from "../lib/cors";
 import { klausaBidang } from "../lib/bidang";
 import { PasalClient, urlBpk } from "../lib/pasal";
 import { jadwalkanSinkronisasi, type KonteksIngest, type PesanIngest } from "../lib/ingest";
+import { labelSitasi } from "../../shared/label";
 
 type Bindings = Env;
 
@@ -265,7 +266,7 @@ api.get("/suggest", async (c) => {
     suggestions: [
       ...laws.results.map((l) => ({
         tipe: "peraturan" as const,
-        teks: `${l.jenis} ${l.nomor}/${l.tahun} — ${l.judul}`,
+        teks: `${labelSitasi(l)} — ${l.judul}`,
         uri: l.frbr_uri,
       })),
       ...populer.results.map((p) => ({ tipe: "kueri" as const, teks: p.query, uri: null })),
