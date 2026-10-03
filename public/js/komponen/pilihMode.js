@@ -23,7 +23,7 @@ export function modeTersimpan() {
 export function pilihMode(nilai, saatUbah, nama = "mode") {
   return h(
     "fieldset",
-    { class: "segmen", style: { border: "1px solid var(--garis-kuat)", margin: "0", padding: "0" } },
+    { class: "segmen", style: { border: "1px solid var(--garis-kontrol)", margin: "0", padding: "0" } },
     h("legend", { class: "sr-only" }, "Mode pencarian"),
     MODE.map(([kode, label, bantuan]) =>
       h(

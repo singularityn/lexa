@@ -1,0 +1,198 @@
+# Analisis lanjutan: UI/UX dan fitur Lexa
+
+Dokumen ini melanjutkan [analisis-kelayakan-lexa.md](analisis-kelayakan-lexa.md) setelah situs berjalan di
+Cloudflare. Pemicunya: situs sudah hidup, tetapi tampilannya dinilai buruk, fiturnya masih kurang, dan
+aplikasi harus nyaman di ponsel serta bisa ditambahkan ke layar utama.
+
+Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan tindakan](#3-temuan-dan-tindakan) ·
+[fitur baru](#4-fitur-baru-dan-cara-memakainya) · [kualitas data](#5-kualitas-data-yang-memengaruhi-pengalaman) ·
+[peta jalan](#6-peta-jalan) · [Claude Design](#7-memakai-claude-design) ·
+[ke layar utama](#8-menambahkan-ke-layar-utama-dan-memeriksanya-di-perangkat-asli) ·
+[yang perlu keputusan Anda](#9-yang-perlu-keputusan-atau-tindakan-anda) · [pengujian](#10-pengujian)
+
+## 1. Ringkasan
+
+- **Penyebab utama kesan "buruk"** bukan satu bug, melainkan tiga hal yang bertumpuk: (1) tata letak dirancang untuk
+  layar lebar lalu dikecilkan, (2) data hasil ekstraksi PDF tampil apa adanya (judul huruf besar semua, teks
+  patah di tengah kalimat, penjelasan bercampur dengan pasal, "390 pasal" untuk undang-undang yang pasalnya 193),
+  dan (3) hampir tidak ada fitur membaca yang diharapkan pembaca peraturan: daftar isi, lompat ke pasal,
+  rujukan yang bisa diklik, ukuran huruf, melanjutkan bacaan.
+- **Yang sudah diubah** (semua di cabang `main`, terpasang otomatis lewat Workers Builds):
+  kerangka ponsel dengan bilah navigasi bawah; beranda, hasil pencarian, filter, dan Tanya Lexa yang dirancang
+  ulang mulai dari layar 390 px; halaman peraturan yang baru (header ringkas, daftar isi, lembar aksi, tampilan
+  teks, penjelasan terpisah, rujukan antarpasal yang bisa diklik); PWA yang bisa dipasang dan terbaca luring;
+  perbaikan relevansi pencarian dan kebersihan data.
+- **Yang tidak bisa saya lakukan dari sini**: membuka situs produksi (jaringan sandbox dibatasi) dan menguji di
+  perangkat Android/iPhone sungguhan. Semuanya diuji di Chromium dengan emulasi sentuh, salinan data produksi, dan
+  uji otomatis. Daftar periksa untuk perangkat asli ada di [bagian 8](#8-menambahkan-ke-layar-utama-dan-memeriksanya-di-perangkat-asli).
+- **Claude Design bisa dipakai**, sebagai alat merancang tampilan (mockup), bukan sebagai pengganti kode. Alurnya
+  di [bagian 7](#7-memakai-claude-design).
+
+## 2. Cara menilai
+
+1. Salinan baris produksi (181 peraturan, 1.126 baris pasal, 513 relasi) dimuat ke pratinjau lokal
+   (`LEXA_DATA_NYATA=.dev/data-nyata.json npm run dev:node`; berkas itu sengaja tidak masuk Git). Hanya empat
+   peraturan yang punya teks pasal (UU 13/2003, 7/2014, 8/1999, 11/2008), jadi di situlah kualitas baca diukur.
+2. Tiap layar diambil gambarnya di 390×844 (ponsel, sentuh), 1024×768 (tablet), dan 1280×900 (desktop), terang dan
+   gelap, lalu dinilai satu per satu. Setiap perbaikan diverifikasi ulang dengan gambar, bukan hanya dengan tes.
+3. Perilaku dijaga tes: unit (`npm test`), e2e Chromium (`npm run e2e`) termasuk emulasi sentuh dan jaringan yang
+   diputus untuk service worker, serta axe-core (aksesibilitas) pada halaman dan semua lembar, tema terang dan gelap.
+   Tiap perilaku utama diperiksa dengan mutasi: kode sengaja dirusak untuk memastikan tesnya benar-benar gagal.
+4. Perilaku di runtime Cloudflare diperiksa dengan `wrangler dev --local` (workerd) untuk perubahan yang menyentuh
+   Worker; perubahan antarmuka murni tidak menyentuhnya.
+
+## 3. Temuan dan tindakan
+
+| Area | Temuan | Tindakan |
+|---|---|---|
+| Kerangka ponsel | Menu hamburger, header tinggi, tidak ada area aman (takik dan bilah gestur menimpa konten), sasaran ketuk kecil, bilah tetap tampil saat papan ketik terbuka | Bilah navigasi bawah 5 tab (Cari, Telusuri, Tanya, Koleksi, Masuk) yang menyingkir saat mengetik; header satu baris; `viewport-fit=cover` dan `env(safe-area-inset-*)`; sasaran ketuk 44 px; `dvh` alih-alih `vh`; pita luring |
+| Beranda | Empat kartu statistik di paling atas tidak berguna bagi pembaca; kotak cari kecil dan placeholder terpotong | Hero ringkas, kotak cari 56 px, chip contoh yang digulir menyamping, kartu ajakan ke Tanya Lexa, "Terakhir dilihat" (membuka langsung di pasal terakhir dibaca) dan "Terakhir dicari" |
+| Kartu hasil | Judul UPPERCASE panjang, lencana jenis dan chip "kata kunci/makna" yang hanya bermakna bagi mesin, "N pasal" yang sebenarnya jumlah baris | Judul hanya topik dengan huruf dirapikan, sitasi sebagai penanda utama, status "Berlaku" menjadi titik hijau di ponsel, seluruh kartu bisa diketuk, cuplikan yang mengulang judul disembunyikan |
+| Filter | Panel samping memakan layar ponsel | Lembar modal dari bawah (`<dialog>`, fokus terperangkap, Esc menutup), filter aktif tampil sebagai chip yang bisa dilepas satu per satu |
+| Tanya Lexa | Kotak tulis tidak menempel; mengetuk tombol kirim di ponsel kehilangan ketukan karena fokus lepas dan bilah bawah muncul lagi | Tata letak obrolan (kotak tulis menempel di atas bilah bawah, contoh pertanyaan di atasnya); fokus dijaga saat tombol kirim ditekan |
+| Halaman peraturan | Header memakan lebih dari satu layar ponsel; enam tombol aksi; tab tidak menempel; teks tanpa tipografi; tidak ada daftar isi | Header ringkas (tab dan awal teks terlihat tanpa menggulir di 390×844); tiga aksi utama, sisanya di lembar "Lainnya"; tab menempel di bawah header; daftar isi; teks berhuruf berkaki dengan panjang baris dibatasi 72ch |
+| Teks hasil ekstraksi PDF | Baris patah di tengah kalimat, kepala halaman ("PRESIDEN REPUBLIK INDONESIA- 18 -") dan "### Page 80" ikut tampil, daftar butir menyatu menjadi satu paragraf | Penyusunan ulang teks (`bacaIsiPasal`): butir 1./a. dengan indentasi menggantung, baris yang dipatahkan lebar kolom disambung, artefak halaman dibuang |
+| Penjelasan | UU 13/2003 menampilkan "390 pasal": penjelasan pasal demi pasal memakai ulang nomor pasal, dan penjelasan umum menempel di Pasal 193 (8.630 karakter) | Penjelasan dikenali (penjelasan umum yang terbawa, penomoran yang kembali ke awal, atau id berakhiran ~n), diberi judul sendiri, dihitung terpisah, dan punya kelompok sendiri di daftar isi: "193 pasal dan penjelasannya" |
+| Daftar isi | Tidak ada | Lembar dari bawah (kolom lengket di samping teks di layar ≥1100 px): BAB dengan rentang pasalnya, "Lompat ke pasal" ("156", "Pasal 5A"), tombol mengambang |
+| Pencarian | "pesangon" menempatkan Perpres 22/2015 di atas UU 13/2003 Pasal 156 karena sinonim muncul di judulnya; "perlindungan data pribadi" tidak menemukan UU "Pelindungan Data Pribadi"; kalimat ("berapa lama cuti melahirkan…") tidak menemukan apa-apa | Kata yang diketik dicari lebih dulu daripada sinonim, ejaan lain dianggap kata yang sama, cadangan longgar untuk kueri ≥3 kata yang dinyatakan terus terang di atas hasil |
+| Data | 72,8% kolom `instansi` di produksi berisi "[object Object]" | Dirapikan saat dibaca; perbaikan permanen perlu persetujuan Anda ([bagian 9](#9-yang-perlu-keputusan-atau-tindakan-anda)) |
+| Aksesibilitas | Batas kolom isian dan kontrol segmen hanya 1,5–1,8:1 terhadap latar (di bawah 3:1 menurut WCAG 1.4.11); cincin fokus tembus pandang 45–50% | Token `garis-kontrol` (3,2:1 atau lebih di kedua tema) untuk batas kolom isian dan kontrol pilihan, cincin fokus 80% (≥3:1); axe-core tanpa pelanggaran serius/kritis pada semua halaman utama dan semua lembar, terang dan gelap; fokus kembali ke pemicu saat lembar ditutup; tautan di dalam teks dibedakan dengan garis titik-titik, bukan warna saja. Kontras token dijaga `test/tokens.test.ts` |
+
+## 4. Fitur baru dan cara memakainya
+
+| Fitur | Di mana | Catatan |
+|---|---|---|
+| Pasang ke layar utama | Spanduk "Pasang Lexa", halaman Akun | Android: tombol Pasang; iOS: Bagikan > Tambahkan ke Layar Utama (panduan tampil di aplikasi) |
+| Baca luring otomatis | Otomatis | Peraturan yang pernah dibuka tetap terbaca tanpa jaringan (80 jawaban terakhir) |
+| **Simpan untuk dibaca luring** | Lembar "Lainnya" di peraturan; daftar di Akun | Tidak ikut terbuang oleh batas di atas, diperbarui otomatis saat daring, maksimal 30 peraturan, dengan ukurannya |
+| Daftar isi dan lompat ke pasal | Tombol "Daftar isi" di peraturan | Kolom di samping teks di layar lebar |
+| Rujukan antarpasal | Di dalam teks pasal | "Pasal 156 ayat (2)" membuka pasalnya; pasal milik peraturan lain tidak ditautkan |
+| Lanjutkan membaca | Peraturan dan beranda | Posisi disimpan di perangkat ini saja |
+| Tandai pasal | Ikon penanda di judul tiap pasal | Disimpan ke Koleksi (tamu: di perangkat; masuk: tersinkron), lengkap dengan catatan |
+| Tampilan teks | Tombol "Tampilan teks" | Lima ukuran huruf, berkaki atau tanpa kaki |
+| Bagikan | Lembar "Lainnya" dan lembar tiap pasal | Memakai lembar bagikan perangkat (WhatsApp, Telegram, dll.) dengan sitasi dan tautan |
+| Cetak atau simpan PDF | Lembar "Lainnya" | Hanya judul, status, dan seluruh teks; tanpa navigasi |
+| Riwayat | Beranda; dihapus dari Akun | Hanya di perangkat, tidak dikirim ke server |
+
+## 5. Kualitas data yang memengaruhi pengalaman
+
+- **Hanya 4 dari 181 peraturan punya teks pasal.** Selebihnya hanya metadata, sehingga halaman bacanya menampilkan
+  "Teks pasal belum tersedia" dan tautan ke naskah resmi. Ini batas terbesar pengalaman membaca, lebih besar daripada
+  desain apa pun. Pengisiannya lewat ingest dari BPK (`POST /api/impor/manifest` dan `PUT /api/impor/pdf`).
+- **Teks yang ada berasal dari ekstraksi PDF yang memuat penanda halaman dan penjelasan.** Parser sekarang berhenti
+  di "PENJELASAN"/"PASAL DEMI PASAL" dan tidak lagi memecah pasal di rujukan silang seperti "Pasal 9; dan/atau",
+  jadi peraturan yang diingest ulang akan lebih bersih. Antarmuka tetap menangani data yang sudah ada (penjelasan,
+  nomor kembar) saat dibaca.
+- **`instansi` rusak** di sebagian besar baris produksi (lihat bagian 9).
+- **Tanya Lexa** memberi label "Pasal N" juga pada kutipan yang sebenarnya penjelasan (data lama). Dampaknya
+  kecil karena jawabannya wajib menyebut sumber, tetapi akan hilang sendiri setelah peraturan diingest ulang tanpa penjelasan.
+
+## 6. Peta jalan
+
+Urutan berdasarkan dampak bagi pembaca dibanding usaha. Belum dikerjakan kecuali disebut lain.
+
+**P1: berikutnya**
+1. **Pratinjau tautan per peraturan** (Open Graph): saat tautan dibagikan ke WhatsApp/Telegram, judul dan ringkasannya
+   tampil, bukan hanya "Lexa". Perlu Worker menyuntikkan tag ke cangkang untuk `/peraturan` (mengubah routing
+   produksi, jadi diuji dulu di workerd).
+2. **Ingest teks lebih banyak peraturan** dari BPK, mulai dari yang paling sering dicari (UU, PP, Perpres bidang
+   ketenagakerjaan, pajak, data pribadi). Tanpa ini fitur baca hanya berguna untuk 4 peraturan.
+3. **Sorot dan catatan pada kalimat**, bukan hanya pada pasal.
+
+**P2**
+4. Bandingkan versi (sebelum/sesudah perubahan) untuk peraturan yang diubah; butuh data versi per pasal.
+5. Peringatan saat peraturan di koleksi dicabut atau diubah (butuh pemeriksaan berkala).
+6. Pencarian di dalam peraturan dengan lompat antarkemunculan.
+7. Penyimpanan luring otomatis untuk isi Koleksi (dengan batas ukuran).
+
+**P3**
+8. Notifikasi push (Android dan iOS 16.4+ untuk aplikasi yang dipasang).
+9. Mode baca fokus (header menyingkir saat menggulir).
+10. Ekspor koleksi ke format sitasi (BibTeX, RIS).
+
+## 7. Memakai Claude Design
+
+**Bisa**, dengan pembagian tugas yang jelas:
+
+- Claude Design (kanvas desain di claude.ai) cocok untuk **merancang tampilan**: layar beranda, hasil, halaman
+  baca, variasi tema, tata letak tablet. Hasilnya mockup dan prototipe, bukan kode yang langsung dipakai.
+- Lexa tidak punya langkah build dan memakai CSP ketat (tanpa gaya atau skrip sebaris), jadi desain tidak bisa
+  "dilepas" begitu saja ke situs. Desain diterjemahkan ke `public/css/app.css` (token warna, tipografi, jarak) dan modul
+  di `public/js/`. Itu bagian yang saya kerjakan: Anda memberi arah dan gambar, saya memasangkannya, menjalankan tes,
+  dan memeriksa hasilnya.
+- Titik awal yang praktis adalah **Design System**, supaya layar yang dihasilkan Claude Design konsisten dengan
+  yang sudah ada. **Design System Lexa sudah dibuat**: <https://claude.ai/artifact/WFTDkg5SPJLMVKaKQvV32R>.
+  Sifatnya **pribadi**: hanya akun Anda yang bisa membukanya, dan saya tidak bisa membagikannya (pakai menu
+  Share di halamannya bila ingin berbagi dengan orang lain). Isinya:
+  - **Token** dibaca langsung dari `public/css/app.css`, bukan diketik ulang: 23 warna (terang dan gelap, tiap
+    catatan menyebut permukaan tempat teksnya terbaca dan kontras minimalnya), 14 gaya huruf, 9 langkah jarak, 6
+    radius, bayangan, dan ukuran tata letak (lebar konten, tinggi bilah bawah, sasaran ketuk 44 px).
+  - **Buku merek** (README): bahasa dan nada, warna, tipografi, jarak dan bentuk, aturan "ponsel dulu",
+    aksesibilitas, ikon, dan hal yang dihindari.
+  - **Tujuh komponen** dengan pratinjau dan panduan: Tombol, Lencana status, Kotak cari, Kartu hasil, Lembar aksi,
+    Bilah navigasi bawah, dan Teks pasal; ditambah sampul.
+  - **Aset**: tanda Lexa (`lexa-mark.svg`) dan 31 ikon garis (`ikon.json`), diambil dari kode.
+  - Pratinjau komponen adalah **rendisi statis** (HTML dan kelas CSS yang sama dengan aplikasi), bukan komponen
+    React hidup, karena Lexa tidak memakai kerangka komponen. Halaman penuh (beranda, halaman peraturan, Tanya Lexa)
+    belum ada sebagai komponen sendiri.
+
+Alur yang disarankan:
+1. Di Claude Design, mulai desain baru dengan design system **Lexa**, lalu minta layar yang ingin diubah (mis.
+   "halaman baca peraturan di ponsel dengan daftar isi mengambang").
+2. Bandingkan dengan tangkapan layar situs sekarang; pilih yang disukai dan beri catatan.
+3. Kirim hasilnya (tautan atau gambar) ke sini. Saya terjemahkan ke CSS/JS, uji di 390×844 dan 1280×900 terang dan
+   gelap, dan terapkan ke `main`.
+
+Batas: Design System tidak otomatis mengikuti kode. Setelah `app.css` atau ikon berubah, minta saya
+menyinkronkan ulang ("perbarui Design System Lexa dari repositori"); token, ikon, dan pratinjau dibangun ulang dari
+kode, sedangkan catatan yang Anda tulis sendiri di halamannya dipertahankan.
+
+## 8. Menambahkan ke layar utama dan memeriksanya di perangkat asli
+
+**Android (Chrome):** buka situs, ketuk **Pasang** di spanduk atau menu ⋮ > **Pasang aplikasi**. Ikon Lexa muncul di
+layar utama dan membuka aplikasi tanpa bilah alamat.
+
+**iPhone/iPad (Safari):** buka situs di **Safari** (bukan di dalam aplikasi lain), ketuk **Bagikan** > **Tambahkan ke
+Layar Utama**. iOS tidak punya tombol Pasang; panduannya ditampilkan di aplikasi. Aplikasi yang dibuka dari layar
+utama menyimpan data sendiri, dan Lexa menyediakan tombol kembali karena iOS tidak punya.
+
+Daftar periksa (belum bisa saya jalankan di perangkat asli):
+1. Pasang, lalu buka dari ikon: tanpa bilah alamat; warna bilah status mengikuti tema aplikasi.
+2. Bilah navigasi bawah tidak tertutup bilah gestur; berputar ke lanskap tetap rapi.
+3. Matikan data dan Wi-Fi: Beranda tampil, peraturan yang pernah dibuka terbaca, pita "Luring" muncul.
+4. "Simpan untuk dibaca luring" pada satu peraturan, mode pesawat, peraturan itu tetap terbaca.
+5. Bagikan satu peraturan ke WhatsApp: sitasi dan tautan terisi.
+6. Perbesar ukuran huruf sistem: tidak ada teks terpotong.
+7. Tema gelap: kontras teks pasal dan tautan rujukan.
+8. Perbarui: setelah rilis baru, muncul tawaran "Muat ulang" (bukan paksaan).
+
+## 9. Yang perlu keputusan atau tindakan Anda
+
+1. **Hapus cabang lama `claude/zealous-brown-63ek65`** di GitHub (Branches). Penghapusan dari sini ditolak (HTTP 403).
+2. **Perbaikan `instansi` di produksi** (mengubah data, jadi menunggu persetujuan):
+   ```sql
+   -- periksa dulu (hanya membaca)
+   SELECT COUNT(*) AS rusak FROM laws WHERE instansi LIKE '%[object Object]%';
+   -- perbaikan: nilai aslinya sudah hilang, kosongkan; terisi lagi saat peraturan diingest ulang
+   UPDATE laws SET instansi = NULL WHERE instansi LIKE '%[object Object]%';
+   ```
+   Tampilan sudah menganggap nilai itu kosong, jadi perbaikan ini tidak mengubah apa yang dilihat pembaca.
+3. **Kursor Cron** melampaui isi basis data (lihat [hubungkan-github-cloudflare.md](hubungkan-github-cloudflare.md)):
+   `UPDATE sync_state SET value = '0' WHERE key LIKE 'offset:%';` supaya sinkronisasi mulai dari awal.
+4. **Matikan Preview Builds** di Workers Builds bila belum: tanpa blok `previews` di `wrangler.jsonc` build pratinjau tidak didukung.
+5. **Periksa di perangkat asli** memakai daftar di bagian 8 dan laporkan yang janggal.
+
+## 10. Pengujian
+
+```bash
+npm run check        # tipe + semua tes unit dan integrasi
+npm run e2e          # Chromium: antarmuka, PWA/luring, halaman baca (butuh Chromium)
+npm run sw           # WAJIB setelah mengubah berkas di public/ (daftar precache service worker)
+LEXA_DATA_NYATA=.dev/data-nyata.json npm run dev:node   # pratinjau dengan salinan data produksi
+```
+
+`e2e/baca.test.mjs` menguji halaman peraturan (ponsel sentuh dan layar lebar, axe di semua lembar),
+`e2e/pwa.test.mjs` menguji pemasangan, luring, dan simpanan luring dengan service worker sungguhan, dan
+`e2e/ui.test.mjs` menguji halaman lain. Tes unit utama: `test/web.test.ts` (fungsi murni antarmuka),
+`test/pwa.test.ts` (service worker dengan Cache API tiruan), `test/tokens.test.ts` (kontras warna token di kedua
+tema), dan `test/browser/*.test.ts`.

@@ -19,6 +19,10 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
 - **Detail peraturan**: pasal dan ayat, pencarian di dalam peraturan, relasi antar-peraturan (mengubah,
   mencabut, dasar hukum, dan seterusnya) beserta peta relasi dua arah, tautan ke naskah resmi di
   peraturan.bpk.go.id, PDF dan teks hasil konversi bila sudah diarsipkan, lapor kesalahan data.
+- **Membaca di ponsel**: halaman peraturan dengan daftar isi dan lompat ke pasal, lima ukuran huruf, Penjelasan
+  yang dipisahkan dari batang tubuh, rujukan antarpasal yang bisa diketuk ("Pasal 156 ayat (2)"), lanjutkan
+  membaca dari posisi terakhir, bagikan, cetak atau simpan PDF, penanda per pasal ke Koleksi, dan simpan untuk
+  dibaca luring.
 - **Tanya Lexa**: jawaban AI yang hanya boleh bersumber dari kutipan pasal yang ditemukan, wajib
   menyebut sumbernya, dan menandai peraturan yang sudah dicabut atau diubah.
 - **Akun opsional**: login Google, koleksi pribadi dengan catatan (tamu menyimpannya di perangkat; saat
@@ -76,6 +80,9 @@ navigasi utama ada di bilah bawah, dan area aman (takik, bilah gestur) dihormati
   Strateginya **jaringan dulu**: saat daring pengguna tidak pernah disuguhi salinan usang; salinan hanya
   dipakai bila jaringan gagal, lambat, atau server 5xx. Pencarian, tanya jawab, sesi, dan koleksi tidak pernah
   disentuh.
+- **Simpan untuk dibaca luring** (lembar "Lainnya" di halaman peraturan): isi, status dokumen, dan peta relasi
+  langsung disalin ke cache `lexa-simpan-v1` (maksimal 30 peraturan; tidak ikut dibuang oleh batas 80 entri cache
+  baca) dan diperbarui otomatis setiap kali dibuka saat daring. Daftar dan tombol hapusnya ada di halaman Akun.
 - **Setiap kali berkas di `public/` berubah, jalankan `npm run sw`** (menulis ulang daftar precache dan
   versi di `sw.js`). `npm test` gagal bila lupa, supaya pengguna tidak terjebak di cangkang lama.
 
@@ -114,7 +121,10 @@ cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignor
 - **`npm run dev:node`** menjalankan Worker asli dan antarmuka di atas SQLite sungguhan dengan 11 peraturan
   contoh (parafrase singkat, **bukan naskah resmi**; ada pita peringatan di layar). Workers AI, Vectorize,
   KV, R2, dan Queue berupa tiruan, sehingga pencarian makna dan jawaban Tanya Lexa hanya peragaan. "Masuk
-  dengan Google" diganti masuk instan sebagai pengguna uji agar alur akun bisa dicoba.
+  dengan Google" diganti masuk instan sebagai pengguna uji agar alur akun bisa dicoba. Dengan
+  `LEXA_DATA_NYATA=berkas.json` pratinjau memuat salinan baris produksi (`laws`, `articles`, `relations`) agar
+  tampilan dinilai dengan judul dan pasal sungguhan; berkas itu jangan di-commit (`.dev/` diabaikan Git).
+  `LEXA_TANPA_CACHE_API=1` hanya dipakai tes e2e service worker.
 - **`npm test`** menjalankan vitest: tes unit, tes integrasi (SQLite sungguhan lewat `node:sqlite`,
   dilewati bila Node Anda tidak menyertakannya), dan tes fungsi murni antarmuka.
 - **`npm run build`** hanya membundel Worker (dry run), tanpa login dan tanpa deploy.
@@ -202,6 +212,11 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 
 ## Isu yang diketahui
 
+- Pada salinan data produksi yang diperiksa, hanya 4 dari 181 peraturan punya teks pasal (UU 13/2003, 7/2014,
+  8/1999, 11/2008); selebihnya hanya metadata, sehingga halaman bacanya menampilkan "Teks pasal belum tersedia"
+  dan tautan ke naskah resmi. Pengisiannya lewat ingest BPK (`POST /api/impor/manifest`, `PUT /api/impor/pdf`).
+- 72,8% kolom `instansi` di produksi berisi "[object Object]" (kerusakan lama pada ingest); antarmuka dan API
+  menganggapnya kosong saat dibaca, datanya sendiri belum diperbaiki.
 - Stemmer belum melucuti awalan "be-" ("bekerja" tidak menghasilkan "kerja"; `it.todo`).
 - Sitasi bernama kementerian dikenali sebagai Peraturan Menteri umum: basis data tidak menyimpan kementerian
   pada judul PERMEN, jadi "Peraturan Menteri Kesehatan Nomor 29 Tahun 2025" menampilkan semua PERMEN 29/2025.
@@ -235,3 +250,5 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
   data BPK, estimasi biaya, peta jalan, dan peta fitur.
 - [docs/hubungkan-github-cloudflare.md](docs/hubungkan-github-cloudflare.md): menghubungkan repo ini ke
   Worker `lexa` lewat Workers Builds, dengan daftar periksa pasca-deploy dan rollback.
+- [docs/analisis-ux-dan-fitur.md](docs/analisis-ux-dan-fitur.md): analisis lanjutan UI/UX dan fitur (temuan,
+  tindakan, peta jalan), memakai Claude Design, memasang ke layar utama, dan daftar periksa di perangkat asli.
