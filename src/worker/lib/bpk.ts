@@ -297,10 +297,13 @@ const RE_PASAL =
  * Sisa baris yang menandakan ini BUKAN judul pasal:
  * - "Pasal 2 ayat (2) terdiri atas:" — sambungan rujukan silang dari baris
  *   sebelumnya yang berakhir "sebagaimana dimaksud dalam".
+ * - "Pasal 9; dan/atau" atau "Pasal 48, Pasal 87, ..." — rujukan silang yang
+ *   terpotong baris tepat sebelum tanda baca. Judul pasal sungguhan tidak
+ *   pernah langsung diikuti titik koma atau koma.
  * - "Pasal 15 . . ." — catchword di kaki halaman, penanda sambung ke halaman
  *   berikutnya.
  */
-const RE_RUJUKAN_AYAT = /^ayat\b/i;
+const RE_RUJUKAN_AYAT = /^(?:ayat\b|[;,])/i;
 // `+`, bukan `*`: dengan `*` pola ini juga cocok dengan string kosong, sehingga
 // judul pasal klasik "Pasal 1" (yang sisa barisnya memang kosong) ikut terbuang.
 const RE_CATCHWORD = /^[.·…]+[.\s·…]*$/;

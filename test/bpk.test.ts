@@ -130,6 +130,32 @@ describe("uraikanPasal", () => {
     expect(pasal.some((p) => p.isi.includes("Cukup jelas"))).toBe(false);
   });
 
+  it("rujukan silang yang terpotong tepat sebelum tanda baca tetap menjadi isi pasal yang sedang berjalan", () => {
+    // Pola nyata UU 13/2003: baris berikutnya diawali "Pasal 9;" atau "Pasal 48, Pasal 87, ...".
+    const hasil = uraikanPasal(
+      [
+        "Pasal 17",
+        "(2) Sanksi dijatuhkan apabila pelatihan:",
+        "a. tidak sesuai dengan arah pelatihan kerja sebagaimana dimaksud dalam",
+        "Pasal 9; dan/atau",
+        "b. tidak memenuhi persyaratan sebagaimana dimaksud dalam Pasal 15.",
+        "Pasal 18",
+        "Pengaturan lebih lanjut diatur dengan Peraturan Pemerintah.",
+        "Pasal 190",
+        "Pengusaha yang melanggar Pasal 5, Pasal 6, Pasal 15, Pasal 25, Pasal 38 ayat (2), Pasal 45 ayat (1),",
+        "Pasal 48, Pasal 87, Pasal 106 dikenakan sanksi administratif.",
+      ].join("\n"),
+    );
+    expect(hasil.map((p) => p.nomor_pasal)).toEqual(["17", "18", "190"]);
+    expect(hasil[0].isi).toContain("sebagaimana dimaksud dalam\nPasal 9; dan/atau\nb. tidak memenuhi");
+    expect(hasil[2].isi).toContain("Pasal 48, Pasal 87, Pasal 106 dikenakan sanksi administratif.");
+  });
+
+  it("judul pasal yang diikuti kata (bukan tanda baca) tetap judul: 'Pasal 12 dihapus.'", () => {
+    const hasil = uraikanPasal(["Pasal 11", "Ketentuan sebelas.", "Pasal 12 dihapus.", "Pasal 13", "Ketentuan tiga belas."].join("\n"));
+    expect(hasil.map((p) => p.nomor_pasal)).toEqual(["11", "12", "13"]);
+  });
+
   it("membentuk ID pasal yang stabil dan unik", () => {
     expect(idPasal("/akn/id/act/uu/2003/13", "156", null)).toBe("/akn/id/act/uu/2003/13#pasal-156");
     expect(idPasal("/akn/id/act/uu/2003/13", "156", "1")).toBe("/akn/id/act/uu/2003/13#pasal-156-ayat-1");
