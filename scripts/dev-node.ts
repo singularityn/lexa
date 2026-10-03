@@ -1,0 +1,215 @@
+/**
+ * Pratinjau lokal Lexa di Node, tanpa akun Cloudflare dan tanpa wrangler.
+ *
+ * Menjalankan Worker ASLI (src/worker/index.ts) bersama antarmuka (public/) di
+ * atas SQLite sungguhan (node:sqlite) dengan migrasi produksi apa adanya. Binding
+ * lain berupa tiruan (lihat test/integration/harness.ts): KV, R2, Queue, Workers
+ * AI, dan Vectorize. Akibatnya pencarian makna dan jawaban Tanya Lexa di sini
+ * hanya peragaan; kualitasnya tidak mewakili produksi.
+ *
+ *   npm run dev:node            # http://localhost:8787
+ *   PORT=3000 npm run dev:node
+ *
+ * Aturan routing meniru wrangler.jsonc: /api/*, /robots.txt, dan /sitemap.xml
+ * dilayani Worker; selainnya aset statis dengan fallback SPA. Header dari
+ * public/_headers (termasuk CSP) diterapkan agar pelanggarannya terlihat di sini.
+ */
+import { createServer } from "node:http";
+import { readFile, stat } from "node:fs/promises";
+import { extname, join, normalize, resolve } from "node:path";
+import worker from "../src/worker/index";
+import { buatLingkungan, indeksSemua, masukSebagai, sisipkan, sisipkanRelasi, TOKEN_ADMIN, type Lingkungan } from "../test/integration/harness";
+import { isiDataContoh, jawabanContoh, PERATURAN_CONTOH } from "./dev-seed";
+
+const PORT = Number(process.env.PORT ?? 8787);
+const AKAR_PUBLIK = resolve("public");
+
+const PDF_CONTOH = new TextEncoder().encode(
+  "%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
+    "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 144]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n" +
+    "4 0 obj<</Length 48>>stream\nBT /F1 18 Tf 20 70 Td (Contoh PDF Lexa) Tj ET\nendstream endobj\n" +
+    "5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
+);
+
+async function siapkan(): Promise<Lingkungan> {
+  const l = buatLingkungan();
+  // Kunci tiruan agar tombol "Masuk dengan Google" tampil; alurnya dialihkan ke /__dev/masuk (lihat bawah).
+  Object.assign(l.env, { GOOGLE_CLIENT_ID: "pratinjau-lokal", GOOGLE_CLIENT_SECRET: "pratinjau-lokal" });
+  l.ai.jawaban = (masukan) => jawabanContoh(masukan.messages.at(-1)?.content ?? "");
+  await isiDataContoh(l, sisipkan, sisipkanRelasi);
+  await indeksSemua(l, PERATURAN_CONTOH.map((p) => p.uri));
+
+  // Satu peraturan lengkap dengan arsip PDF dan teks, untuk memperagakan tab Naskah.
+  const uri = "/akn/id/act/uu/2003/13";
+  await l.r2.put("pdf/akn/id/act/uu/2003/13.pdf", PDF_CONTOH, { httpMetadata: { contentType: "application/pdf" } });
+  await l.r2.put("teks/akn/id/act/uu/2003/13.md", "# UU 13/2003\n\nContoh teks hasil konversi.\n\nPasal 82\n(1) Pekerja perempuan berhak …", {
+    httpMetadata: { contentType: "text/markdown" },
+  });
+  await l.db
+    .prepare(`UPDATE laws SET r2_pdf_key = 'pdf/akn/id/act/uu/2003/13.pdf', r2_text_key = 'teks/akn/id/act/uu/2003/13.md' WHERE frbr_uri = ?`)
+    .bind(uri)
+    .run();
+  await l.db.prepare(`INSERT INTO sync_log (job, status, detail, jumlah, durasi_ms) VALUES ('jadwal_sinkronisasi','sukses','diperiksa 11',11,420)`).run();
+  await l.db.prepare(`INSERT INTO sync_log (job, status, detail, jumlah) VALUES ('antrean_ingest','gagal','rate limit pasal.id — 3 pesan ditunda 60 detik',3)`).run();
+  return l;
+}
+
+const TIPE: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".json": "application/json",
+  ".txt": "text/plain; charset=utf-8",
+  ".webmanifest": "application/manifest+json",
+};
+
+/** Header global dari public/_headers (hanya blok `/*`, cukup untuk pratinjau). */
+async function bacaHeaderStatik(): Promise<Record<string, string>> {
+  const hasil: Record<string, string> = {};
+  try {
+    const teks = new TextDecoder().decode(await readFile(join(AKAR_PUBLIK, "_headers")));
+    let aktif = false;
+    for (const baris of teks.split("\n")) {
+      if (!baris.trim() || baris.trim().startsWith("#")) continue;
+      if (!/^\s/.test(baris)) {
+        aktif = baris.trim() === "/*";
+        continue;
+      }
+      if (!aktif) continue;
+      const i = baris.indexOf(":");
+      if (i > 0) hasil[baris.slice(0, i).trim()] = baris.slice(i + 1).trim();
+    }
+  } catch {
+    // tanpa _headers pun pratinjau tetap jalan
+  }
+  return hasil;
+}
+
+const PITA = '<div class="pita-dev" role="note">Pratinjau lokal · data contoh, bukan naskah resmi</div>';
+
+async function main() {
+  let l = await siapkan();
+  const headerStatik = await bacaHeaderStatik();
+  const tugas: Promise<unknown>[] = [];
+  const ctx = {
+    waitUntil: (p: Promise<unknown>) => void tugas.push(p),
+    passThroughOnException: () => {},
+  } as unknown as ExecutionContext;
+
+  const server = createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? `localhost:${PORT}`}`);
+      // Pratinjau saja: "Masuk dengan Google" diganti masuk instan sebagai pengguna uji,
+      // supaya alur akun dan sinkronisasi koleksi bisa dicoba tanpa Google.
+      if (url.pathname === "/api/auth/google") {
+        res.writeHead(302, { location: `/__dev/masuk${url.search}` });
+        res.end();
+        return;
+      }
+      // Pratinjau saja: kembalikan semua data ke keadaan awal (dipakai tes e2e).
+      if (url.pathname === "/__dev/reset" && req.method === "POST") {
+        l.tutup();
+        l = await siapkan();
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      if (url.pathname === "/__dev/masuk") {
+        const { cookie } = await masukSebagai(l, { id: "pengguna-uji", email: "penguji@lexa.test", nama: "Penguji Lexa", idSesi: "sesi-pratinjau" });
+        const kembali = url.searchParams.get("kembali") ?? "/akun";
+        res.writeHead(302, {
+          location: kembali.startsWith("/") && !kembali.startsWith("//") ? kembali : "/akun",
+          "set-cookie": `${cookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`,
+        });
+        res.end();
+        return;
+      }
+      const keWorker = url.pathname.startsWith("/api/") || url.pathname === "/robots.txt" || url.pathname === "/sitemap.xml";
+
+      if (keWorker) {
+        const potongan: Uint8Array[] = [];
+        await new Promise<void>((selesai, gagal) => {
+          req.on("data", (c) => potongan.push(c));
+          req.on("end", () => selesai());
+          req.on("error", gagal);
+        });
+        const panjang = potongan.reduce((n, c) => n + c.byteLength, 0);
+        const badan = new Uint8Array(panjang);
+        let posisi = 0;
+        for (const c of potongan) {
+          badan.set(c, posisi);
+          posisi += c.byteLength;
+        }
+
+        const header = new Headers();
+        for (const [k, v] of Object.entries(req.headers)) if (v !== undefined) header.set(k, Array.isArray(v) ? v.join(", ") : v);
+        header.set("cf-connecting-ip", req.socket.remoteAddress ?? "127.0.0.1");
+        const metode = req.method ?? "GET";
+        const tanpaBadan = metode === "GET" || metode === "HEAD" || panjang === 0;
+        const respons = await worker.fetch(new Request(url, { method: metode, headers: header, body: tanpaBadan ? undefined : badan }), l.env, ctx);
+        await Promise.allSettled(tugas.splice(0));
+
+        const keluar: Record<string, string | string[]> = {};
+        respons.headers.forEach((v, k) => {
+          if (k !== "set-cookie") keluar[k] = v;
+        });
+        const cookie = respons.headers.getSetCookie();
+        if (cookie.length) keluar["set-cookie"] = cookie;
+        res.writeHead(respons.status, keluar);
+        res.end(new Uint8Array(await respons.arrayBuffer()));
+        return;
+      }
+
+      // Aset statis dengan fallback SPA (not_found_handling: single-page-application).
+      const bersih = normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, "");
+      let berkas = join(AKAR_PUBLIK, bersih);
+      if (!berkas.startsWith(AKAR_PUBLIK)) {
+        res.writeHead(403);
+        res.end("Dilarang");
+        return;
+      }
+      let ada = await stat(berkas).then((s) => s.isFile()).catch(() => false);
+      if (!ada) {
+        // Permintaan berkas yang tak ada (mis. /js/nggak.js) dijawab 404, bukan HTML SPA.
+        if (extname(url.pathname) && extname(url.pathname) !== ".html") {
+          res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+          res.end("Tidak ditemukan");
+          return;
+        }
+        berkas = join(AKAR_PUBLIK, "index.html");
+        ada = true;
+      }
+      let isi = await readFile(berkas);
+      const jenis = TIPE[extname(berkas)] ?? "application/octet-stream";
+      if (berkas.endsWith("index.html")) {
+        isi = new TextEncoder().encode(new TextDecoder().decode(isi).replace("</body>", `${PITA}</body>`));
+      }
+      res.writeHead(200, { "content-type": jenis, "cache-control": "no-cache", ...headerStatik });
+      res.end(isi);
+    } catch (e) {
+      console.error(e);
+      res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+      res.end("Galat server pratinjau");
+    }
+  });
+
+  server.listen(PORT, () => {
+    process.stdout.write(
+      `\nLexa (pratinjau lokal) berjalan di http://localhost:${PORT}\n` +
+        `  - Worker asli + SQLite sungguhan; AI, Vectorize, KV, R2, Queue berupa tiruan\n` +
+        `  - Data contoh: ${PERATURAN_CONTOH.length} peraturan (bukan naskah resmi)\n` +
+        `  - Token admin lokal: ${TOKEN_ADMIN}\n` +
+        `  - Tekan Ctrl+C untuk berhenti\n\n`,
+    );
+  });
+  const berhenti = () => {
+    server.close();
+    l.tutup();
+    process.exit(0);
+  };
+  process.on("SIGINT", berhenti);
+  process.on("SIGTERM", berhenti);
+}
+
+main();

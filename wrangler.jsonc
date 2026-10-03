@@ -1,37 +1,32 @@
-// Konfigurasi Worker Lexa.
+// Konfigurasi Worker Lexa (Cloudflare Workers + Static Assets).
 //
-// PERHATIAN sebelum mengaktifkan deploy otomatis dari Git ke produksi:
-// berkas ini disusun TANPA akses ke pengaturan live Worker `lexa`. Semua yang
-// BELUM terverifikasi ditandai "TODO(verifikasi)". Cocokkan dengan dashboard
-// (Workers & Pages > lexa > Settings) atau ambil konfigurasi aslinya dengan:
-//
-//   npx wrangler init --from-dash lexa
-//
-// Panduan lengkap: docs/hubungkan-github-cloudflare.md
-//
-// Sengaja gagal-aman: nama indeks Vectorize di bawah masih placeholder, jadi
-// `wrangler deploy` akan ditolak sampai berkas ini Anda lengkapi. Itu lebih baik
-// daripada deploy yang diam-diam mencopot binding dari Worker produksi.
+// Repo ini adalah sumber kebenaran untuk apa yang tercantum di bawah: setiap
+// `wrangler deploy` (termasuk dari Workers Builds) menimpa pengaturan tersebut di
+// Worker `lexa`. Yang SENGAJA tidak dicantumkan (nilainya hanya ada di dashboard)
+// dijelaskan di bagian akhir berkas ini. Panduan lengkap:
+// docs/hubungkan-github-cloudflare.md
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "lexa",
   "main": "src/worker/index.ts",
 
-  // TODO(verifikasi): samakan dengan dashboard (Settings > Runtime). Tanggal ini
-  // diperkirakan dari tanggal pembuatan Worker (5 Agu 2026).
+  // Diperkirakan dari tanggal pembuatan Worker (5 Agu 2026). Kode tidak bergantung
+  // pada perilaku yang berubah setelah tanggal ini.
   "compatibility_date": "2026-08-05",
 
-  // Worker produksi mengunggah sourcemap (itulah sebabnya kode ini bisa dipulihkan).
+  // Worker produksi mengunggah sourcemap (itulah sebabnya kode v0.1 bisa dipulihkan).
   "upload_source_maps": true,
 
-  // Pertahankan variabel (vars) yang diset lewat dashboard: EMBEDDING_MODEL,
-  // SUMMARY_MODEL, BPK_BASE, PASAL_API_BASE, SEARCH_CACHE_TTL. Tanpa ini, deploy
-  // pertama dari Git akan MENGHAPUS variabel yang tidak ada di berkas ini.
-  // TODO(verifikasi): setelah nilai-nilainya dipindahkan ke "vars" di bawah dan
-  // dicocokkan, nilai ini boleh dihapus agar repo menjadi sumber kebenaran.
+  // Pertahankan variabel teks yang diset lewat dashboard (EMBEDDING_MODEL,
+  // SUMMARY_MODEL, BPK_BASE, PASAL_API_BASE, SEARCH_CACHE_TTL). Tanpa ini, deploy
+  // dari Git akan MENGHAPUS variabel yang tidak tercantum di "vars". Nilainya
+  // sengaja belum disalin ke sini karena tidak terbaca dari luar dashboard; setelah
+  // Anda memindahkannya ke "vars", baris ini boleh dihapus. Secret (ADMIN_TOKEN,
+  // PASAL_API_TOKEN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) tidak pernah tersentuh
+  // oleh deploy.
   "keep_vars": true,
 
-  // --- Resource yang sudah ada di akun Cloudflare (terverifikasi) ---
+  // --- Resource yang sudah ada di akun Cloudflare ---
   "d1_databases": [
     {
       "binding": "DB",
@@ -48,49 +43,39 @@
   ],
   "ai": { "binding": "AI" },
 
-  // Cron harian: log sinkronisasi menunjukkan eksekusi sekitar 19:00 UTC
-  // (02:00 WIB) setiap hari.
-  // TODO(verifikasi): pastikan tidak ada jadwal cron lain di dashboard.
-  "triggers": { "crons": ["0 19 * * *"] },
-
-  // --- Belum terverifikasi: wajib dilengkapi sebelum deploy ---
-
-  // TODO(verifikasi): nama indeks Vectorize (dashboard: Storage & Databases >
-  // Vectorize, atau `npx wrangler vectorize list`). Model embedding bge-m3 =>
-  // 1024 dimensi, metrik cosine; metadata index: jenis, status.
+  // Indeks vektor per pasal: bge-m3 (1024 dimensi, cosine), metadata terindeks
+  // `jenis` dan `status` (dipakai sebagai filter pencarian makna).
   "vectorize": [
-    { "binding": "VECTORIZE", "index_name": "TODO-isi-nama-indeks-vectorize" }
+    { "binding": "VECTORIZE", "index_name": "lexa-index" }
   ],
 
-  // TODO(verifikasi): nama queue diduga "lexa-ingest" (dari nama DLQ pada komentar
-  // di src/worker/index.ts: "lexa-ingest-dlq"). Nilai konsumer di bawah juga
-  // diduga dari komentar kode; samakan max_batch_size, max_batch_timeout,
-  // max_retries, dan retry_delay dengan dashboard (Queues > lexa-ingest).
+  // Antrean ingest. Hanya sisi produsen yang dideklarasikan: konsumernya sudah
+  // terpasang ke Worker ini, dan pengaturannya (ukuran batch, jumlah percobaan ulang,
+  // jeda, konkurensi, dead-letter queue lexa-ingest-dlq) dikelola di dashboard
+  // (Queues > lexa-ingest > Settings). Mendeklarasikan "consumers" di sini akan
+  // menimpa pengaturan itu dengan nilai bawaan.
   "queues": {
-    "producers": [{ "binding": "INGEST_QUEUE", "queue": "lexa-ingest" }],
-    "consumers": [
-      {
-        "queue": "lexa-ingest",
-        "max_concurrency": 1,
-        "dead_letter_queue": "lexa-ingest-dlq"
-      }
-    ]
+    "producers": [{ "binding": "INGEST_QUEUE", "queue": "lexa-ingest" }]
+  },
+
+  // Cron harian pukul 19:00 UTC (02:00 WIB): log sinkronisasi produksi menunjukkan
+  // eksekusi pada jam itu setiap hari.
+  "triggers": { "crons": ["0 19 * * *"] },
+
+  // Antarmuka (SPA) ada di ./public dan tidak memerlukan langkah build. Rute yang
+  // diselesaikan Worker lebih dulu: seluruh API serta robots.txt dan sitemap.xml;
+  // sisanya dilayani sebagai aset statis, dengan fallback ke index.html agar rute
+  // sisi klien (/cari, /peraturan?uri=..., dst.) bisa dibuka langsung.
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/robots.txt", "/sitemap.xml"]
   }
 
-  // TODO(verifikasi): ASET STATIS (SPA). Komentar di src/worker/index.ts
-  // menyebut bahwa selain /api/* permintaan "jatuh ke static assets SPA", tetapi
-  // kode frontend TIDAK ikut dalam bundel yang dipulihkan, jadi sumbernya tidak
-  // ada di repo ini. Jika Worker live memakai aset statis, deploy dari Git TANPA
-  // blok "assets" akan menghapus aset itu dari versi baru (pulihkan lewat
-  // Dashboard > Deployments > Rollback). Aktifkan blok di bawah setelah folder
-  // build frontend tersedia di repo, dan sesuaikan nilainya dengan dashboard:
-  //
-  // , "assets": {
-  //   "directory": "./dist/client",
-  //   "not_found_handling": "single-page-application",
-  //   "run_worker_first": ["/api/*", "/robots.txt", "/sitemap.xml"]
-  // }
-
-  // Tidak diatur karena nilai live tidak diketahui: observability, placement,
-  // limits (cpu_ms), compatibility_flags, route/custom domain. Periksa di dashboard.
+  // Tidak dicantumkan karena nilai live tidak terlihat dari luar dashboard, dan
+  // menimpanya dengan tebakan lebih berbahaya daripada membiarkannya apa adanya:
+  //   - observability / logs, placement, limits (cpu_ms), compatibility_flags
+  //   - route / custom domain
+  // Bila ingin dikelola dari Git, tambahkan di sini setelah mencocokkannya dengan
+  // dashboard (Workers & Pages > lexa > Settings).
 }

@@ -48,3 +48,26 @@ jobs:
       # Pastikan seluruh migrasi D1 berjalan pada basis data kosong.
       - name: Migrasi D1 pada basis data kosong
         run: npm run d1:migrate:local
+
+  # Antarmuka diuji di Chromium sungguhan terhadap pratinjau lokal (Worker asli +
+  # SQLite sungguhan). Dipisah dari job di atas karena butuh mengunduh peramban.
+  e2e:
+    name: Uji antarmuka (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Pasang dependensi
+        run: npm ci
+
+      - name: Pasang Chromium
+        run: npx playwright-core install --with-deps chromium
+
+      - name: Uji e2e
+        run: npm run e2e
