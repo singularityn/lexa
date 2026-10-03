@@ -5,6 +5,7 @@
 
 import { Hono } from "hono";
 import { tokenSah } from "../lib/auth";
+import { pilihDalam } from "../lib/d1";
 import { gabungkanBidang, type RingkasBidang } from "../lib/bidang";
 import type { JenisRelasi, StatusPeraturan } from "../../shared/types";
 
@@ -76,30 +77,42 @@ fitur.get("/relasi/graf", async (c) => {
   const sisi: Sisi[] = [];
   const jarakSimpul = new Map<string, number>([[uri, 0]]);
   const sudahDitelusuri = new Set<string>();
+  const sisiTercatat = new Set<string>();
   let lapisan = [uri];
+
+  // Batas pengaman: peraturan yang dirujuk ratusan peraturan lain (mis. UU induk bidang
+  // tertentu) membuat kedalaman 2 meledak menjadi ribuan simpul dan puluhan kueri D1.
+  // Antarmuka pun hanya menggambar sebagian kecil dari itu.
+  const MAKS_SIMPUL = 200;
 
   for (let d = 0; d < kedalaman && lapisan.length; d++) {
     const belum = lapisan.filter((u) => !sudahDitelusuri.has(u));
     if (!belum.length) break;
     belum.forEach((u) => sudahDitelusuri.add(u));
 
-    const tanda = belum.map(() => "?").join(",");
     // Relasi dua arah: sebuah peraturan sama pentingnya dilihat dari apa yang
-    // ia ubah maupun apa yang mengubahnya.
-    const { results } = await c.env.DB.prepare(
-      `SELECT from_uri, to_uri, jenis_relasi FROM relations
-        WHERE from_uri IN (${tanda}) OR to_uri IN (${tanda})`,
-    ).bind(...belum, ...belum).all<{
-      from_uri: string; to_uri: string; jenis_relasi: JenisRelasi;
-    }>();
+    // ia ubah maupun apa yang mengubahnya. Daftar `belum` bisa panjang, jadi
+    // dipecah (D1 membatasi 100 parameter per kueri); sisi yang sama bisa muncul
+    // dari dua potongan dan dibuang duplikatnya di bawah.
+    const hasil = await pilihDalam<{ from_uri: string; to_uri: string; jenis_relasi: JenisRelasi }>(
+      c.env.DB,
+      belum,
+      (t) => `SELECT from_uri, to_uri, jenis_relasi FROM relations WHERE from_uri IN (${t}) OR to_uri IN (${t})`,
+      { ulang: 2 },
+    );
 
     const berikut: string[] = [];
-    for (const r of results) {
-      sisi.push({ dari: r.from_uri, ke: r.to_uri, jenis: r.jenis_relasi });
+    for (const r of hasil) {
       for (const u of [r.from_uri, r.to_uri]) {
-        if (jarakSimpul.has(u)) continue;
+        if (jarakSimpul.has(u) || jarakSimpul.size >= MAKS_SIMPUL) continue;
         jarakSimpul.set(u, d + 1);
         berikut.push(u);
+      }
+      // Sisi hanya dicatat bila kedua ujungnya masuk dalam graf yang dikembalikan.
+      const kunci = `${r.from_uri}\u0000${r.to_uri}\u0000${r.jenis_relasi}`;
+      if (jarakSimpul.has(r.from_uri) && jarakSimpul.has(r.to_uri) && !sisiTercatat.has(kunci)) {
+        sisiTercatat.add(kunci);
+        sisi.push({ dari: r.from_uri, ke: r.to_uri, jenis: r.jenis_relasi });
       }
     }
     lapisan = berikut;
@@ -107,12 +120,13 @@ fitur.get("/relasi/graf", async (c) => {
 
   // Satu kueri metadata untuk seluruh simpul, arah relasinya tidak lagi relevan.
   const semuaUri = [...jarakSimpul.keys()];
-  const { results: meta } = await c.env.DB.prepare(
-    `SELECT frbr_uri, jenis, nomor, tahun, status
-       FROM laws WHERE frbr_uri IN (${semuaUri.map(() => "?").join(",")})`,
-  ).bind(...semuaUri).all<{
+  const meta = await pilihDalam<{
     frbr_uri: string; jenis: string; nomor: string; tahun: number; status: StatusPeraturan;
-  }>();
+  }>(
+    c.env.DB,
+    semuaUri,
+    (t) => `SELECT frbr_uri, jenis, nomor, tahun, status FROM laws WHERE frbr_uri IN (${t})`,
+  );
 
   const petaMeta = new Map(meta.map((m) => [m.frbr_uri, m]));
 

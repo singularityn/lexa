@@ -56,7 +56,9 @@ function bacaFilters(c: Ctx): SearchFilters {
   );
 
   return {
-    jenis: daftarParam(c, "jenis"),
+    // Jenis peraturan yang ada hanya belasan; daftar yang lebih panjang berarti masukan
+    // sembarangan, dan tiap butir menjadi parameter terikat (batas D1: 100 per kueri).
+    jenis: daftarParam(c, "jenis")?.slice(0, 30),
     status: status?.length ? status : undefined,
     tahun_min: Number.isFinite(tahunMin) && tahunMin > 0 ? tahunMin : undefined,
     tahun_max: Number.isFinite(tahunMax) && tahunMax > 0 ? tahunMax : undefined,
@@ -238,10 +240,12 @@ api.get("/laws/detail", async (c) => {
 // GET /api/suggest — saran ketik berdasarkan judul + kueri populer
 // ---------------------------------------------------------------------------
 api.get("/suggest", async (c) => {
-  const q = (c.req.query("q") ?? "").trim();
+  // Wildcard LIKE dibuang lebih dulu, lalu panjangnya diperiksa: "%%" tidak boleh
+  // lolos sebagai kueri dua karakter yang kemudian berubah menjadi pola "%" (cocok semua).
+  const q = (c.req.query("q") ?? "").trim().replace(/[%_]/g, "");
   if (q.length < 2) return c.json({ suggestions: [] });
 
-  const pola = `${q.replace(/[%_]/g, "")}%`;
+  const pola = `${q}%`;
   const [laws, populer] = await Promise.all([
     c.env.DB.prepare(
       `SELECT frbr_uri, jenis, nomor, tahun, judul FROM laws

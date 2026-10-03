@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { petakanDokumen, type Manifest } from "../lib/bpk";
 import { tokenSah } from "../lib/auth";
+import { pilihDalam } from "../lib/d1";
 import { headerCors as corsUntuk } from "../lib/cors";
 import type { PesanIngest } from "../lib/ingest";
 
@@ -113,12 +114,13 @@ impor.post("/manifest", async (c) => {
   // dokumen mana yang perlu diunggah dan tidak mengirim ulang yang sudah ada.
   let butuhPdf: string[] = [];
   if (diterima.length) {
-    const { results } = await c.env.DB.prepare(
-      `SELECT frbr_uri FROM laws
-        WHERE frbr_uri IN (${diterima.map(() => "?").join(",")})
-          AND jumlah_pasal = 0`,
-    ).bind(...diterima).all<{ frbr_uri: string }>();
-    butuhPdf = results.map((r) => r.frbr_uri);
+    // Sampai 500 dokumen per kiriman; D1 membatasi 100 parameter per kueri, jadi dipecah.
+    const kosong = await pilihDalam<{ frbr_uri: string }>(
+      c.env.DB,
+      diterima,
+      (t) => `SELECT frbr_uri FROM laws WHERE frbr_uri IN (${t}) AND jumlah_pasal = 0`,
+    );
+    butuhPdf = kosong.map((r) => r.frbr_uri);
   }
 
   await c.env.DB.prepare(

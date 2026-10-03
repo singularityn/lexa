@@ -57,6 +57,9 @@ export class PernyataanPalsu {
   ) {}
 
   bind(...nilai: unknown[]): PernyataanPalsu {
+    // D1 menolak kueri dengan lebih dari 100 parameter terikat (SQLite biasa mengizinkan puluhan ribu).
+    // Tanpa pagar ini, daftar IN yang panjang lolos di tes dan baru gagal di produksi.
+    if (nilai.length > 100) throw new Error(`D1_ERROR: too many SQL variables (${nilai.length} > 100)`);
     return new PernyataanPalsu(this.db, this.sql, nilai.map(keNilaiD1));
   }
 

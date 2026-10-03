@@ -87,6 +87,17 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       expect((await json<{ butuh_pdf: string[] }>(await manifest([dokumenBpk()]))).butuh_pdf).toEqual([]);
     });
 
+    it("manifest besar (sampai 500 dokumen) diterima utuh walau D1 membatasi 100 parameter per kueri", async () => {
+      const dokumen = Array.from({ length: 300 }, (_, i) =>
+        dokumenBpk({ bpk_id: String(1000 + i), meta: { ...dokumenBpk().meta, Nomor: String(i + 1), Judul: `Judul ${i}` }, relasi: [] }),
+      );
+      const res = await manifest(dokumen);
+      expect(res.status).toBe(200);
+      const b = await json<{ diterima: number; butuh_pdf: string[] }>(res);
+      expect(b.diterima).toBe(300);
+      expect(b.butuh_pdf).toHaveLength(300);
+    });
+
     it("badan kosong -> 400; lebih dari 500 dokumen -> 413", async () => {
       const kosong = await manifest([]);
       expect(kosong.status).toBe(400);
@@ -411,11 +422,11 @@ describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
       expect(panggilanPasal[0].searchParams.get("offset")).toBe("50"); // melanjutkan, bukan mengulang
     });
 
-    // Bug v0.1: kena 429 membuat fungsi `return` sebelum antrean lokal dikirim, padahal kursor
-    // offset sudah dimajukan dan log mengaku "diantrekan 50". Peraturan di halaman yang sudah
-    // dilewati hilang sampai kursor berputar penuh. Ini kandidat utama penyebab sinkronisasi
+    // Bug v0.1 yang sudah diperbaiki: kena 429 membuat fungsi `return` sebelum antrean lokal dikirim,
+    // padahal kursor offset sudah dimajukan dan log mengaku "diantrekan 50". Peraturan di halaman yang
+    // sudah dilewati hilang sampai kursor berputar penuh. Ini kandidat utama penyebab sinkronisasi
     // yang "sering terhenti".
-    it.fails("pesan yang sudah terkumpul sebelum kena 429 tetap dikirim ke antrean", async () => {
+    it("pesan yang sudah terkumpul sebelum kena 429 tetap dikirim ke antrean", async () => {
       const banyak = Array.from({ length: 120 }, (_, i) => hukumPasal("UU", 2000, i + 1, `Judul ${i}`));
       stubPasal({
         daftar: { UU: banyak },
@@ -423,6 +434,27 @@ describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
       });
       await jalankanCron(l);
       expect(l.antrean.pesan).toHaveLength(50);
+      expect((l.antrean.pesan as Array<{ frbr_uri: string }>)[0].frbr_uri).toBe("/akn/id/act/uu/2000/1");
+      expect((l.antrean.pesan as Array<{ frbr_uri: string }>)[49].frbr_uri).toBe("/akn/id/act/uu/2000/50");
+    });
+
+    it("pesan dari jenis sebelumnya juga ikut terkirim bila jenis berikutnya kena 429", async () => {
+      stubPasal({
+        daftar: { UU: [hukumPasal("UU", 2003, 13, "Ketenagakerjaan")], PP: [hukumPasal("PP", 2021, 35, "PKWT")] },
+        batasLaju: (u) => u.searchParams.get("type") === "PP",
+      });
+      await jalankanCron(l);
+      expect(l.antrean.pesan.map((p) => (p as { frbr_uri: string }).frbr_uri)).toEqual(["/akn/id/act/uu/2003/13"]);
+      expect((await l.db.prepare(`SELECT value FROM sync_state WHERE key = 'offset:UU'`).first<{ value: string }>())?.value).toBe("0");
+    });
+
+    it("kursor tidak maju bila pengiriman ke antrean gagal, sehingga jalan berikutnya mengulang halaman itu", async () => {
+      stubPasal({ daftar: { UU: [hukumPasal("UU", 2003, 13, "Ketenagakerjaan"), hukumPasal("UU", 2020, 11, "Cipta Kerja")] } });
+      l.antrean.sendBatch = async () => {
+        throw new Error("Queues sedang gangguan");
+      };
+      await expect(jalankanCron(l)).resolves.toBeUndefined(); // dibungkus catch di scheduled()
+      expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM sync_state`).first<{ n: number }>())?.n).toBe(0);
     });
 
     it("error selain 429 pada satu jenis dicatat, jenis lain tetap diproses", async () => {

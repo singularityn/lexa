@@ -122,6 +122,19 @@ export async function jadwalkanSinkronisasi(
   let diantrekan = 0;
   let diperiksa = 0;
   const antrean: PesanIngest[] = [];
+  /** Kursor yang baru ditulis SETELAH pesannya masuk antrean, bukan sebelum. */
+  const kursorBaru = new Map<string, string>();
+
+  // Queues menerima maksimal 100 pesan per panggilan sendBatch.
+  const kirimAntrean = async () => {
+    for (let i = 0; i < antrean.length; i += 100) {
+      await ctx.queue.sendBatch(antrean.slice(i, i + 100).map((body) => ({ body })));
+    }
+    antrean.length = 0;
+  };
+  const simpanKursor = async () => {
+    for (const [kunci, nilai] of kursorBaru) await tulisState(ctx.db, kunci, nilai);
+  };
 
   for (const jenis of daftarJenis) {
     // Kursor menyimpan OFFSET, bukan nomor halaman: API memakai limit/offset,
@@ -137,8 +150,13 @@ export async function jadwalkanSinkronisasi(
       } catch (e) {
         if (e instanceof PasalRateLimitError) {
           // Berhenti rapi; Cron berikutnya melanjutkan dari kursor yang sama.
+          // Pesan yang sudah terkumpul HARUS tetap dikirim: kursornya sudah maju, jadi
+          // membuangnya berarti peraturan di halaman-halaman itu terlewat sampai
+          // kursor berputar penuh.
+          kursorBaru.set(kunciOffset, String(offset));
+          await kirimAntrean();
+          await simpanKursor();
           await catatLog(ctx.db, "jadwal_sinkronisasi", "gagal", `rate limit pada ${jenis}`, diantrekan);
-          await tulisState(ctx.db, kunciOffset, String(offset));
           return { diantrekan, diperiksa };
         }
         await catatLog(ctx.db, "jadwal_sinkronisasi", "gagal", `${jenis}: ${String(e)}`, diantrekan);
@@ -148,7 +166,7 @@ export async function jadwalkanSinkronisasi(
       if (!hasil.laws.length) {
         // Habis — mulai lagi dari awal pada siklus berikutnya agar perubahan
         // pada peraturan lama juga tertangkap.
-        await tulisState(ctx.db, kunciOffset, "0");
+        kursorBaru.set(kunciOffset, "0");
         break;
       }
 
@@ -184,18 +202,13 @@ export async function jadwalkanSinkronisasi(
       // Maju dengan jumlah yang benar-benar diterima. Kalau API memaksakan
       // limit lebih kecil dari yang diminta, offset tetap tidak melompati data.
       offset = hasil.offsetBerikut;
-      await tulisState(ctx.db, kunciOffset, String(offset));
-      if (!hasil.hasMore) {
-        await tulisState(ctx.db, kunciOffset, "0");
-        break;
-      }
+      kursorBaru.set(kunciOffset, hasil.hasMore ? String(offset) : "0");
+      if (!hasil.hasMore) break;
     }
   }
 
-  // Queues menerima maksimal 100 pesan per panggilan sendBatch.
-  for (let i = 0; i < antrean.length; i += 100) {
-    await ctx.queue.sendBatch(antrean.slice(i, i + 100).map((body) => ({ body })));
-  }
+  await kirimAntrean();
+  await simpanKursor();
 
   await catatLog(
     ctx.db, "jadwal_sinkronisasi", "sukses",

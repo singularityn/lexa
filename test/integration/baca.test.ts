@@ -106,6 +106,12 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
       expect(ekonomi.laws.map((x) => x.frbr_uri).sort()).toEqual(["/akn/id/act/uu/2020/11", "/akn/id/act/uu/2023/6"]);
     });
 
+    it("daftar filter jenis yang sangat panjang tidak menjatuhkan permintaan", async () => {
+      const banyak = Array.from({ length: 300 }, (_, i) => `JENIS${i}`).join(",");
+      const res = await panggil(l, `/api/laws?jenis=UU,${banyak}`);
+      expect(res.status).toBe(200);
+    });
+
     it("nilai status yang tidak dikenal diabaikan, bukan menjadi filter kosong", async () => {
       expect((await ambil("?status=sembarang")).total).toBe(4);
     });
@@ -190,11 +196,18 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
       expect(b.suggestions).toEqual([]);
     });
 
-    // Bug v0.1: "%%" lolos pemeriksaan panjang, wildcard-nya dibuang, dan sisanya
-    // menjadi pola "%" yang cocok dengan semua judul.
-    it.fails("kueri yang hanya berisi karakter wildcard tidak menghasilkan saran", async () => {
-      const b = await json<{ suggestions: unknown[] }>(await panggil(l, "/api/suggest?q=%25%25"));
-      expect(b.suggestions).toEqual([]);
+    // Bug v0.1 yang sudah diperbaiki: "%%" lolos pemeriksaan panjang, wildcard-nya dibuang, dan
+    // sisanya menjadi pola "%" yang cocok dengan semua judul.
+    it("kueri yang hanya berisi karakter wildcard tidak menghasilkan saran", async () => {
+      for (const q of ["%25%25", "__", "%25_%25", "%25a"]) {
+        const b = await json<{ suggestions: unknown[] }>(await panggil(l, `/api/suggest?q=${q}`));
+        expect(b.suggestions, q).toEqual([]);
+      }
+    });
+
+    it("wildcard di tengah kueri dibuang, bukan dijadikan pola", async () => {
+      const b = await json<{ suggestions: Array<{ teks: string }> }>(await panggil(l, "/api/suggest?q=k%25et"));
+      expect(b.suggestions.map((s) => s.teks)).toEqual(["UU 13/2003 — Ketenagakerjaan"]);
     });
 
     it("kueri populer dari log pencarian ikut disarankan, hanya yang pernah ada hasilnya", async () => {
@@ -264,6 +277,28 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
       expect(dua.simpul).toHaveLength(3);
       expect(Math.max(...dua.simpul.map((s) => s.jarak))).toBe(2);
       expect(tinggi.simpul).toHaveLength(3);
+    });
+
+    it("peraturan dengan ratusan relasi tetap terbaca (D1 membatasi 100 parameter per kueri)", async () => {
+      // UU yang banyak dirujuk, mis. UU Ketenagakerjaan: 250 peraturan melaksanakannya.
+      await sisipkan(l, Array.from({ length: 250 }, (_, i) => ({
+        uri: `/akn/id/act/pp/2000/${i + 1}`, jenis: "PP", nomor: String(i + 1), tahun: 2000, judul: `Pelaksana ${i + 1}`,
+      })));
+      await sisipkanRelasi(l, Array.from({ length: 250 }, (_, i) => ({
+        dari: `/akn/id/act/pp/2000/${i + 1}`, ke: "/akn/id/act/uu/2003/13", jenis: "melaksanakan",
+      })));
+      for (const kedalaman of [1, 2]) {
+        const res = await graf(`uri=${encodeURIComponent("/akn/id/act/uu/2003/13")}&kedalaman=${kedalaman}`);
+        expect(res.status, `kedalaman ${kedalaman}`).toBe(200);
+        const b = await json<{ simpul: Array<{ uri: string }>; sisi: Array<{ dari: string; ke: string }> }>(res);
+        // Dibatasi 200 simpul agar respons dan jumlah kueri tetap wajar; pusat selalu ada.
+        expect(b.simpul, `kedalaman ${kedalaman}`).toHaveLength(200);
+        expect(b.simpul.some((n) => n.uri === "/akn/id/act/uu/2003/13")).toBe(true);
+        // Setiap sisi yang dikembalikan menghubungkan dua simpul yang juga dikembalikan.
+        const uri = new Set(b.simpul.map((n) => n.uri));
+        expect(b.sisi.length).toBeGreaterThan(100);
+        expect(b.sisi.every((e) => uri.has(e.dari) && uri.has(e.ke))).toBe(true);
+      }
     });
 
     it("peraturan tanpa relasi hanya memuat dirinya sendiri; tanpa uri -> 400", async () => {
