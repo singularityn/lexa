@@ -63,15 +63,20 @@
   "triggers": { "crons": ["0 19 * * *"] },
 
   // Antarmuka (SPA) ada di ./public dan tidak memerlukan langkah build. Rute yang
-  // diselesaikan Worker lebih dulu: seluruh API serta robots.txt dan sitemap.xml;
+  // diselesaikan Worker lebih dulu: seluruh API, robots.txt, sitemap.xml, dan /peraturan
+  // (cangkang SPA; untuk perayap dan aplikasi pesan ditambah judul, deskripsi, dan gambar
+  // pratinjau tautan, lihat src/worker/lib/pratinjau.ts, yang jatuh ke cangkang biasa
+  // bila apa pun gagal; pembaca biasa langsung menerima cangkang tanpa menyentuh D1);
   // sisanya dilayani sebagai aset statis, dengan fallback ke index.html agar rute
-  // sisi klien (/cari, /peraturan?uri=..., dst.) bisa dibuka langsung. Akibat dari
+  // sisi klien (/cari, /telusuri, dst.) bisa dibuka langsung. Akibat dari
   // run_worker_first berupa daftar: jalur yang tak cocok dengan aset apa pun, termasuk
   // berkas yang salah ketik, dijawab index.html (200), bukan 404 (diverifikasi di workerd).
+  // Binding ASSETS memberi Worker akses ke berkas statis itu.
   "assets": {
     "directory": "./public",
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/robots.txt", "/sitemap.xml"]
+    "run_worker_first": ["/api/*", "/robots.txt", "/sitemap.xml", "/peraturan"]
   }
 
   // Tidak dicantumkan karena nilai live tidak terlihat dari luar dashboard, dan

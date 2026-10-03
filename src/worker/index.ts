@@ -15,6 +15,7 @@ import { fitur } from "./routes/fitur";
 import { auth } from "./routes/auth";
 import { tanya } from "./routes/tanya";
 import { koleksi } from "./routes/koleksi";
+import { layaniPeraturan } from "./lib/pratinjau";
 import { PasalClient, PasalRateLimitError } from "./lib/pasal";
 import {
   jadwalkanSinkronisasi,
@@ -43,6 +44,10 @@ app.route("/api/tanya", tanya);
 app.route("/api/koleksi", koleksi);
 app.route("/api", fitur);
 app.route("/api", api);
+
+// --- Halaman peraturan: cangkang SPA dengan pratinjau tautan (WhatsApp, Telegram, mesin pencari) ---
+// Termasuk run_worker_first di wrangler.jsonc; lihat lib/pratinjau.ts.
+app.get("/peraturan", (c) => layaniPeraturan(c.req.raw, c.env));
 
 // --- robots.txt & sitemap: halaman peraturan sangat layak diindeks mesin cari ---
 app.get("/robots.txt", (c) => {

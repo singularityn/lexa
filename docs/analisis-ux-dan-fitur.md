@@ -21,7 +21,7 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
   kerangka ponsel dengan bilah navigasi bawah; beranda, hasil pencarian, filter, dan Tanya Lexa yang dirancang
   ulang mulai dari layar 390 px; halaman peraturan yang baru (header ringkas, daftar isi, lembar aksi, tampilan
   teks, penjelasan terpisah, rujukan antarpasal yang bisa diklik); PWA yang bisa dipasang dan terbaca luring;
-  perbaikan relevansi pencarian dan kebersihan data.
+  pratinjau tautan saat peraturan dibagikan; perbaikan relevansi pencarian dan kebersihan data.
 - **Yang tidak bisa saya lakukan dari sini**: membuka situs produksi (jaringan sandbox dibatasi) dan menguji di
   perangkat Android/iPhone sungguhan. Semuanya diuji di Chromium dengan emulasi sentuh, salinan data produksi, dan
   uji otomatis. Daftar periksa untuk perangkat asli ada di [bagian 8](#8-menambahkan-ke-layar-utama-dan-memeriksanya-di-perangkat-asli).
@@ -30,9 +30,13 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
 
 ## 2. Cara menilai
 
-1. Salinan baris produksi (181 peraturan, 1.126 baris pasal, 513 relasi) dimuat ke pratinjau lokal
-   (`LEXA_DATA_NYATA=.dev/data-nyata.json npm run dev:node`; berkas itu sengaja tidak masuk Git). Hanya empat
-   peraturan yang punya teks pasal (UU 13/2003, 7/2014, 8/1999, 11/2008), jadi di situlah kualitas baca diukur.
+1. Contoh baris produksi (181 dari 5.634 peraturan, dengan 1.126 baris pasal dan 513 relasi) dimuat ke pratinjau
+   lokal (`LEXA_DATA_NYATA=.dev/data-nyata.json npm run dev:node`; berkas itu sengaja tidak masuk Git). Teks pasal
+   hanya disertakan untuk empat peraturan (UU 13/2003, 7/2014, 8/1999, 11/2008) agar berkasnya kecil, jadi di
+   situlah kualitas baca diukur. Untuk melihat variasi data yang sebenarnya, 130 peraturan acak dari produksi
+   (UU, PP, Perpres, POJK, Permen, Perppu; 2.316 baris pasal) disapu lewat penyusun teks halaman baca dengan kueri
+   baca-saja ke D1: tidak ada galat, tidak ada penanda halaman tersisa, setiap peraturan diproses di bawah 250 ms.
+   Temuannya menjadi perbaikan nomor pasal OCR dan catatan di bagian 5.
 2. Tiap layar diambil gambarnya di 390×844 (ponsel, sentuh), 1024×768 (tablet), dan 1280×900 (desktop), terang dan
    gelap, lalu dinilai satu per satu. Setiap perbaikan diverifikasi ulang dengan gambar, bukan hanya dengan tes.
 3. Perilaku dijaga tes: unit (`npm test`), e2e Chromium (`npm run e2e`) termasuk emulasi sentuh dan jaringan yang
@@ -52,6 +56,7 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
 | Tanya Lexa | Kotak tulis tidak menempel; mengetuk tombol kirim di ponsel kehilangan ketukan karena fokus lepas dan bilah bawah muncul lagi | Tata letak obrolan (kotak tulis menempel di atas bilah bawah, contoh pertanyaan di atasnya); fokus dijaga saat tombol kirim ditekan |
 | Halaman peraturan | Header memakan lebih dari satu layar ponsel; enam tombol aksi; tab tidak menempel; teks tanpa tipografi; tidak ada daftar isi | Header ringkas (tab dan awal teks terlihat tanpa menggulir di 390×844); tiga aksi utama, sisanya di lembar "Lainnya"; tab menempel di bawah header; daftar isi; teks berhuruf berkaki dengan panjang baris dibatasi 72ch |
 | Teks hasil ekstraksi PDF | Baris patah di tengah kalimat, kepala halaman ("PRESIDEN REPUBLIK INDONESIA- 18 -") dan "### Page 80" ikut tampil, daftar butir menyatu menjadi satu paragraf | Penyusunan ulang teks (`bacaIsiPasal`): butir 1./a. dengan indentasi menggantung, baris yang dipatahkan lebar kolom disambung, artefak halaman dibuang |
+| Nomor pasal salah baca OCR | Angka nol terbaca huruf O: "Pasal 1O" untuk 10, "12O" untuk 120 (154 baris di 42 peraturan produksi, termasuk KUHP, Cipta Kerja, Pelindungan Data Pribadi); daftar isi, "Lompat ke pasal", dan tautan rujukan tidak menemukannya | Nomor dirapikan saat dibaca di API (detail, hasil pencarian, Tanya Lexa) dan di antarmuka (termasuk jawaban lama yang tersimpan di perangkat); parser ingest memperbaikinya sejak awal. Data di D1 tidak diubah |
 | Penjelasan | UU 13/2003 menampilkan "390 pasal": penjelasan pasal demi pasal memakai ulang nomor pasal, dan penjelasan umum menempel di Pasal 193 (8.630 karakter) | Penjelasan dikenali (penjelasan umum yang terbawa, penomoran yang kembali ke awal, atau id berakhiran ~n), diberi judul sendiri, dihitung terpisah, dan punya kelompok sendiri di daftar isi: "193 pasal dan penjelasannya" |
 | Daftar isi | Tidak ada | Lembar dari bawah (kolom lengket di samping teks di layar ≥1100 px): BAB dengan rentang pasalnya, "Lompat ke pasal" ("156", "Pasal 5A"), tombol mengambang |
 | Pencarian | "pesangon" menempatkan Perpres 22/2015 di atas UU 13/2003 Pasal 156 karena sinonim muncul di judulnya; "perlindungan data pribadi" tidak menemukan UU "Pelindungan Data Pribadi"; kalimat ("berapa lama cuti melahirkan…") tidak menemukan apa-apa | Kata yang diketik dicari lebih dulu daripada sinonim, ejaan lain dianggap kata yang sama, cadangan longgar untuk kueri ≥3 kata yang dinyatakan terus terang di atas hasil |
@@ -73,16 +78,23 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
 | Bagikan | Lembar "Lainnya" dan lembar tiap pasal | Memakai lembar bagikan perangkat (WhatsApp, Telegram, dll.) dengan sitasi dan tautan |
 | Cetak atau simpan PDF | Lembar "Lainnya" | Hanya judul, status, dan seluruh teks; tanpa navigasi |
 | Riwayat | Beranda; dihapus dari Akun | Hanya di perangkat, tidak dikirim ke server |
+| **Pratinjau tautan** | Saat tautan peraturan dibagikan ke WhatsApp, Telegram, dll. | Judul ("UU 13/2003 Ketenagakerjaan"), deskripsi (ringkasan; peraturan dicabut/diubah diawali statusnya), dan gambar merek tampil, bukan sekadar "Lexa". Disuntikkan Worker ke cangkang SPA hanya untuk perayap dan aplikasi pesan (pembaca biasa tidak menunggu pencarian D1); bila gagal, cangkang biasa |
 
 ## 5. Kualitas data yang memengaruhi pengalaman
 
-- **Hanya 4 dari 181 peraturan punya teks pasal.** Selebihnya hanya metadata, sehingga halaman bacanya menampilkan
-  "Teks pasal belum tersedia" dan tautan ke naskah resmi. Ini batas terbesar pengalaman membaca, lebih besar daripada
-  desain apa pun. Pengisiannya lewat ingest dari BPK (`POST /api/impor/manifest` dan `PUT /api/impor/pdf`).
-- **Teks yang ada berasal dari ekstraksi PDF yang memuat penanda halaman dan penjelasan.** Parser sekarang berhenti
-  di "PENJELASAN"/"PASAL DEMI PASAL" dan tidak lagi memecah pasal di rujukan silang seperti "Pasal 9; dan/atau",
-  jadi peraturan yang diingest ulang akan lebih bersih. Antarmuka tetap menangani data yang sudah ada (penjelasan,
-  nomor kembar) saat dibaca.
+- **Cakupan teks sudah luas.** Pada 3 Okt 2026, produksi memuat 5.634 peraturan (4.358 berlaku, 1.042 dicabut, 234
+  diubah) dan 71.481 baris pasal. 5.451 peraturan (97%) punya teks pasal; 183 hanya metadata, sehingga halaman
+  bacanya menampilkan "Teks pasal belum tersedia" dengan tautan ke naskah resmi. Yang menurunkan mutu baca bukan
+  ketiadaan teks, melainkan sisa ekstraksi lama (butir berikutnya).
+- **Teks yang ada berasal dari ekstraksi PDF yang memuat penanda halaman dan penjelasan.** Di produksi, 401
+  peraturan punya baris pasal ber-id `~n` (4.815 baris, umumnya Penjelasan yang memakai ulang nomor pasal) dan 289
+  memuat teks "PENJELASAN" di dalam baris pasalnya. Parser sekarang berhenti di "PENJELASAN"/"PASAL DEMI PASAL"
+  dan tidak lagi memecah pasal di rujukan silang seperti "Pasal 9; dan/atau", jadi peraturan yang diingest ulang
+  akan lebih bersih. Antarmuka tetap menangani data yang sudah ada (penjelasan, nomor kembar) saat dibaca.
+- **PDF hasil pindai** (mis. KUHP, UU 1/2023; UU 2/2022) diekstrak dengan salah baca OCR: kata menempel ("sesuaidengan"),
+  nomor pasal bergeser atau hilang. Dari 1.577 ekstraksi PDF produksi, 1.103 bersih, 146 rusak ringan, 7 rusak
+  berat, dan 320 tidak menemukan pasal sama sekali (kemungkinan besar pindaian). Hanya ekstraksi ulang dengan
+  sumber yang lebih baik yang memperbaikinya; antarmuka tidak bisa menebak kata yang hilang.
 - **`instansi` rusak** di sebagian besar baris produksi (lihat bagian 9).
 - **Tanya Lexa** memberi label "Pasal N" juga pada kutipan yang sebenarnya penjelasan (data lama). Dampaknya
   kecil karena jawabannya wajib menyebut sumber, tetapi akan hilang sendiri setelah peraturan diingest ulang tanpa penjelasan.
@@ -92,12 +104,13 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
 Urutan berdasarkan dampak bagi pembaca dibanding usaha. Belum dikerjakan kecuali disebut lain.
 
 **P1: berikutnya**
-1. **Pratinjau tautan per peraturan** (Open Graph): saat tautan dibagikan ke WhatsApp/Telegram, judul dan ringkasannya
-   tampil, bukan hanya "Lexa". Perlu Worker menyuntikkan tag ke cangkang untuk `/peraturan` (mengubah routing
-   produksi, jadi diuji dulu di workerd).
-2. **Ingest teks lebih banyak peraturan** dari BPK, mulai dari yang paling sering dicari (UU, PP, Perpres bidang
-   ketenagakerjaan, pajak, data pribadi). Tanpa ini fitur baca hanya berguna untuk 4 peraturan.
-3. **Sorot dan catatan pada kalimat**, bukan hanya pada pasal.
+1. **Ekstrak ulang peraturan lama dengan parser saat ini** (terutama ~400 peraturan yang Penjelasannya tercampur
+   dengan pasal), dan lengkapi 183 peraturan yang belum punya teks pasal. Sinkronisasi Cron harian berhenti di tengah jalan karena
+   batas laju pasal.id pada PERPRES (254 sampai 369 peraturan diantrekan per hari); pemulihan kursornya menunggu
+   persetujuan Anda (bagian 9).
+2. **Sorot dan catatan pada kalimat**, bukan hanya pada pasal.
+3. **Pratinjau tautan yang lebih kaya**: gambar per peraturan (sitasi dan topik di dalam gambar), dan pratinjau
+   untuk hasil pencarian. Pratinjau dasar per peraturan sudah ada (bagian 4).
 
 **P2**
 4. Bandingkan versi (sebelum/sesudah perubahan) untuk peraturan yang diubah; butuh data versi per pasal.
@@ -181,6 +194,9 @@ Daftar periksa (belum bisa saya jalankan di perangkat asli):
    `UPDATE sync_state SET value = '0' WHERE key LIKE 'offset:%';` supaya sinkronisasi mulai dari awal.
 4. **Matikan Preview Builds** di Workers Builds bila belum: tanpa blok `previews` di `wrangler.jsonc` build pratinjau tidak didukung.
 5. **Periksa di perangkat asli** memakai daftar di bagian 8 dan laporkan yang janggal.
+6. **Coba pratinjau tautan**: bagikan satu tautan peraturan (mis. UU 13/2003) ke diri sendiri di WhatsApp atau
+   Telegram. Judul dan gambar seharusnya tampil. Tautan yang pernah dikirim sebelum rilis ini bisa tetap
+   tampil lama karena aplikasi pesan menyimpan pratinjaunya; pakai tautan yang belum pernah dikirim.
 
 ## 10. Pengujian
 
@@ -189,10 +205,13 @@ npm run check        # tipe + semua tes unit dan integrasi
 npm run e2e          # Chromium: antarmuka, PWA/luring, halaman baca (butuh Chromium)
 npm run sw           # WAJIB setelah mengubah berkas di public/ (daftar precache service worker)
 LEXA_DATA_NYATA=.dev/data-nyata.json npm run dev:node   # pratinjau dengan salinan data produksi
+node scripts/buat-og.mjs   # buat ulang gambar pratinjau tautan (public/og/lexa.png), hanya bila merek berubah
 ```
 
 `e2e/baca.test.mjs` menguji halaman peraturan (ponsel sentuh dan layar lebar, axe di semua lembar),
 `e2e/pwa.test.mjs` menguji pemasangan, luring, dan simpanan luring dengan service worker sungguhan, dan
-`e2e/ui.test.mjs` menguji halaman lain. Tes unit utama: `test/web.test.ts` (fungsi murni antarmuka),
+`e2e/ui.test.mjs` menguji halaman lain (termasuk pratinjau tautan dengan JavaScript dimatikan, seperti perayap).
+`test/integration/pratinjau.test.ts` menguji penyuntikan di Worker asli (pelolosan HTML, jatuh ke cangkang biasa).
+Tes unit utama: `test/web.test.ts` (fungsi murni antarmuka),
 `test/pwa.test.ts` (service worker dengan Cache API tiruan), `test/tokens.test.ts` (kontras warna token di kedua
 tema), dan `test/browser/*.test.ts`.

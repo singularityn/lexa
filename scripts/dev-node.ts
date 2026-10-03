@@ -11,8 +11,8 @@
  *   PORT=3000 npm run dev:node
  *   LEXA_DATA_NYATA=.dev/data-nyata.json npm run dev:node   # salinan data produksi, lihat muatDataNyata
  *
- * Aturan routing meniru wrangler.jsonc: /api/*, /robots.txt, dan /sitemap.xml
- * dilayani Worker; selainnya aset statis dengan fallback SPA. Header dari
+ * Aturan routing meniru wrangler.jsonc: /api/*, /robots.txt, /sitemap.xml, dan
+ * /peraturan dilayani Worker; selainnya aset statis dengan fallback SPA. Header dari
  * public/_headers (termasuk CSP) diterapkan agar pelanggarannya terlihat di sini.
  */
 import { createServer } from "node:http";
@@ -63,6 +63,8 @@ async function muatDataNyata(l: Lingkungan, berkas: string): Promise<string[]> {
 
 async function siapkan(): Promise<Lingkungan> {
   const l = buatLingkungan();
+  // Binding ASSETS (dipakai /peraturan untuk pratinjau tautan) menyajikan cangkang yang sama dengan jalur statis di bawah.
+  l.aset.gantiCangkang = (html) => html.replace("</body>", `${PITA}</body>`);
   // Kunci tiruan agar tombol "Masuk dengan Google" tampil; alurnya dialihkan ke /__dev/masuk (lihat bawah).
   Object.assign(l.env, { GOOGLE_CLIENT_ID: "pratinjau-lokal", GOOGLE_CLIENT_SECRET: "pratinjau-lokal" });
   l.ai.jawaban = (masukan) => jawabanContoh(masukan.messages.at(-1)?.content ?? "");
@@ -181,7 +183,7 @@ async function main() {
         res.end();
         return;
       }
-      const keWorker = url.pathname.startsWith("/api/") || url.pathname === "/robots.txt" || url.pathname === "/sitemap.xml";
+      const keWorker = url.pathname.startsWith("/api/") || ["/robots.txt", "/sitemap.xml", "/peraturan"].includes(url.pathname);
 
       if (keWorker) {
         const potongan: Uint8Array[] = [];

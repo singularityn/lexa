@@ -3,7 +3,7 @@ import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
   angka, bacaIsiPasal, bersihkanArtefak, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, labelJenis, labelRelasi,
-  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
+  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, pratinjauPeraturan, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
 import { bacaPref, HURUF, simpanPref, terapkanPref, UKURAN } from "../bacaan.js";
 import { buatDaftarIsi } from "../komponen/daftarIsi.js";
@@ -128,8 +128,8 @@ function tampilkan(ctx, d, q) {
   const topik = judulRingkas(l.judul);
   const kelompok = kelompokkanPasal(d.articles);
   riwayat.catatDilihat({ uri: l.frbr_uri, sitasi: nama, judul: l.judul });
-  const deskripsi = (l.ringkasan || `${namaLengkap(l)} tentang ${topik}.`).slice(0, 180);
-  ctx.setJudul(`${nama} ${topik}`, deskripsi);
+  const halaman = pratinjauPeraturan(l);
+  ctx.setJudul(halaman.judul, halaman.deskripsi);
 
   const aksiRelasi = (/** @type {string} */ jenis) => d.relations.filter((r) => r.jenis_relasi === jenis);
   const pengganti = [...aksiRelasi("dicabut_oleh"), ...aksiRelasi("diubah_oleh")];

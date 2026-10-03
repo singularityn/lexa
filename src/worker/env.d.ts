@@ -19,6 +19,8 @@ interface Env {
   VECTORIZE: VectorizeIndex;
   /** Antrean ingest (producer dan konsumer ada pada Worker yang sama). */
   INGEST_QUEUE: Queue<import("./lib/ingest").PesanIngest>;
+  /** Aset statis (`public/`): dipakai untuk menyajikan cangkang SPA dengan pratinjau tautan (lib/pratinjau.ts). */
+  ASSETS: Fetcher;
 
   // --- Variabel (bukan rahasia) ---
   /** Model embedding Workers AI, mis. `@cf/baai/bge-m3`. */

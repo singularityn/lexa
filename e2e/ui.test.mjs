@@ -489,6 +489,43 @@ describe("halaman peraturan", () => {
     expect(await page.locator(".kosong a").count()).toBeGreaterThanOrEqual(2);
   });
 
+  it("pratinjau tautan: tanpa JavaScript (seperti perayap WhatsApp/Telegram), judul, deskripsi, dan gambar sudah ada", async () => {
+    const polos = await browser.newContext({ javaScriptEnabled: false, serviceWorkers: "block", userAgent: "WhatsApp/2.24.20.85 A" });
+    try {
+      const p = await polos.newPage();
+      await p.goto(BASE + urlUU(UU13), { waitUntil: "load" });
+      const isi = (kunci) => p.locator(`meta[name="${kunci}"], meta[property="${kunci}"]`).first().getAttribute("content");
+      expect(await p.title()).toBe("UU 13/2003 Ketenagakerjaan · Lexa");
+      expect(await isi("og:title")).toBe("UU 13/2003 Ketenagakerjaan");
+      // Data contoh memuat ringkasan UU 13/2003, dan itulah yang dipakai sebagai deskripsi.
+      expect(await isi("og:description")).toMatch(/^Mengatur hubungan kerja/);
+      expect(await isi("description")).toBe(await isi("og:description"));
+      expect(await isi("og:url")).toBe(`${BASE}${urlUU(UU13)}`);
+      expect(await isi("twitter:card")).toBe("summary_large_image");
+      const gambar = await isi("og:image");
+      expect(gambar).toBe(`${BASE}/og/lexa.png`);
+      const res = await fetch(gambar);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/png");
+    } finally {
+      await polos.close();
+    }
+    // Pembaca biasa langsung menerima cangkang (tanpa pencarian D1); judulnya disetel JavaScript setelah dimuat.
+    const biasa = await (await fetch(`${BASE}${urlUU(UU13)}`, { headers: { "user-agent": "Mozilla/5.0 (Linux; Android 14) Chrome/130.0.0.0 Mobile Safari/537.36" } })).text();
+    expect(biasa).toContain("<title>Lexa: cari peraturan perundang-undangan Indonesia</title>");
+    expect(biasa).not.toContain("og:image");
+    // Rute lain tetap membawa pratinjau umum situs.
+    const beranda = await (await fetch(`${BASE}/`)).text();
+    expect(beranda).toContain('<meta property="og:title" content="Lexa: cari peraturan perundang-undangan Indonesia">');
+    expect(beranda).not.toContain("og:image");
+  });
+
+  it("peraturan yang tidak ada di indeks tidak mendapat pratinjau khusus (cangkang biasa)", async () => {
+    const html = await (await fetch(`${BASE}${urlUU("/akn/id/act/uu/1999/99")}`, { headers: { "user-agent": "TelegramBot (like TwitterBot)" } })).text();
+    expect(html).toContain("<title>Lexa: cari peraturan perundang-undangan Indonesia</title>");
+    expect(html).not.toContain("og:image");
+  });
+
   it("menyalin sitasi ke papan klip", async () => {
     await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
     await page.waitForSelector(".pasal");

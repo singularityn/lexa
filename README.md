@@ -33,8 +33,9 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
 ## Arsitektur
 
 Satu Worker (`src/worker/index.ts`, Hono) mengerjakan tiga peran: `fetch` (API `/api/*`, `robots.txt`,
-`sitemap.xml`), `scheduled` (Cron harian) dan `queue` (konsumer antrean ingest). Selain rute itu,
-permintaan dilayani sebagai aset statis dari `public/` dengan fallback ke `index.html` (rute sisi klien).
+`sitemap.xml`, dan `/peraturan` untuk pratinjau tautan), `scheduled` (Cron harian) dan `queue` (konsumer
+antrean ingest). Selain rute itu, permintaan dilayani sebagai aset statis dari `public/` dengan fallback ke
+`index.html` (rute sisi klien).
 
 | Binding | Layanan | Resource | Fungsi |
 |---|---|---|---|
@@ -44,6 +45,7 @@ permintaan dilayani sebagai aset statis dari `public/` dengan fallback ke `index
 | `AI` | Workers AI | n/a | embedding, ringkasan, tanya-jawab, `toMarkdown` untuk PDF |
 | `VECTORIZE` | Vectorize | `lexa-index` | vektor per pasal (bge-m3, 1024 dimensi, cosine) |
 | `INGEST_QUEUE` | Queues | `lexa-ingest` | antrean ingest; DLQ `lexa-ingest-dlq` |
+| `ASSETS` | Static Assets | `public/` | cangkang SPA yang dipakai `/peraturan` untuk pratinjau tautan |
 
 Cron: harian pukul 19:00 UTC (02:00 WIB). Skema D1 dan alasan desainnya ada di `migrations/`.
 
@@ -69,6 +71,19 @@ Rute: `/` beranda, `/cari`, `/telusuri`, `/peraturan?uri=…` (sama dengan URL p
 `innerHTML`), CSP ketat lewat `public/_headers`, dan JavaScript-nya dicek tipenya (`checkJs`) lewat
 `tsconfig.web.json`.
 
+#### Pratinjau tautan
+
+WhatsApp, Telegram, dan mesin pencari membaca `<head>` tanpa menjalankan JavaScript. Karena itu
+`GET /peraturan?uri=…` dilayani Worker (`src/worker/lib/pratinjau.ts`, termasuk `run_worker_first`). Untuk
+perayap dan aplikasi pesan (dikenali dari User-Agent) ia mengambil `index.html` lewat binding `ASSETS` dan
+menyuntikkan judul, deskripsi, alamat kanonik, dan gambar (`public/og/lexa.png`, dibuat `node scripts/buat-og.mjs`)
+dari data peraturannya. Pembaca biasa langsung menerima cangkang tanpa pencarian D1, jadi waktu muat tidak
+bertambah; peramban menyetel judul dan deskripsi yang sama lewat JavaScript (`pratinjauPeraturan` di
+`public/js/format.js` dipakai kedua sisi, dan peraturan yang dicabut atau diubah diawali statusnya). Bila apa
+pun gagal (peraturan tidak ada, D1 galat, `index.html` berubah bentuk), yang disajikan adalah cangkang biasa,
+tidak pernah galat. Halaman lain memakai pratinjau umum situs. Mencobanya:
+`curl -A "WhatsApp/2" 'https://<situs>/peraturan?uri=/akn/id/act/uu/2003/13' | grep og:`.
+
 #### Ponsel dan layar utama (PWA)
 
 Lexa dirancang mobile-first dan dapat dipasang ke layar utama (Android/Chrome lewat tombol Pasang, iOS lewat
@@ -92,14 +107,14 @@ navigasi utama ada di bilah bawah, dan area aman (takik, bilah gestur) dihormati
 src/worker/index.ts      titik masuk: fetch + scheduled + queue
 src/worker/routes/       api, fitur, dokumen, auth, tanya, koleksi, impor
 src/worker/lib/          query (stemmer, parser kueri), search (hybrid + RRF), pasal (klien pasal.id),
-                         bpk (parser manifest dan PDF), ingest (pipeline), sesi, auth, cors, bidang, d1
+                         bpk (parser manifest dan PDF), ingest (pipeline), pratinjau (pratinjau tautan), sesi, auth, cors, bidang, d1
 src/worker/env.d.ts      tipe global Env (binding, variabel, secret)
 src/shared/types.ts      tipe bersama
-public/                  antarmuka (index.html, css/, js/, _headers, favicon)
+public/                  antarmuka (index.html, css/, js/, _headers, favicon, ikon/, og/)
 migrations/              migrasi D1 0000-0004 (direkonstruksi dari skema produksi)
 test/                    tes unit; test/integration: Worker asli di atas SQLite sungguhan
 e2e/                     tes antarmuka di Chromium
-scripts/                 pratinjau lokal (dev-node.ts), data contoh, pembuat ikon, pembaruan sw.js
+scripts/                 pratinjau lokal (dev-node.ts), data contoh, pembuat ikon dan gambar pratinjau, pembaruan sw.js
 docs/                    analisis kelayakan dan panduan koneksi GitHub-Cloudflare
 wrangler.jsonc           konfigurasi Worker
 ```
@@ -212,9 +227,19 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 
 ## Isu yang diketahui
 
-- Pada salinan data produksi yang diperiksa, hanya 4 dari 181 peraturan punya teks pasal (UU 13/2003, 7/2014,
-  8/1999, 11/2008); selebihnya hanya metadata, sehingga halaman bacanya menampilkan "Teks pasal belum tersedia"
-  dan tautan ke naskah resmi. Pengisiannya lewat ingest BPK (`POST /api/impor/manifest`, `PUT /api/impor/pdf`).
+- Cakupan data produksi (diperiksa 3 Okt 2026): 5.634 peraturan dan 71.481 baris pasal; 5.451 peraturan (97%) punya
+  teks pasal, 183 hanya metadata (halaman bacanya menampilkan "Teks pasal belum tersedia" dan tautan ke naskah
+  resmi), dan 1.578 punya PDF yang diarsipkan. Sinkronisasi Cron harian berhenti karena batas laju pasal.id pada
+  PERPRES (lihat `sync_log` dan langkah pemulihan di docs/hubungkan-github-cloudflare.md).
+- Teks hasil ekstraksi versi lama masih memuat sisa: 401 peraturan punya baris pasal ber-id `~n` (umumnya bagian
+  Penjelasan yang memakai ulang nomor pasal; UU 13/2003 punya 72 baris seperti itu dan UU 11/2020 744) dan 289
+  memuat teks "PENJELASAN" di dalam baris pasalnya. Parser saat ini berhenti di judul "PENJELASAN"; antarmuka
+  memisahkan keduanya dan merapikan penanda halaman PDF ("### Page 97 PRESIDEN REPUBLIK INDONESIA- 18 -") saat
+  dibaca, tetapi datanya baru bersih setelah peraturan diekstrak ulang.
+- PDF hasil pindai (mis. KUHP, UU 1/2023) diekstrak dengan salah baca OCR (kata menempel, nomor pasal bergeser);
+  angka nol yang terbaca huruf O ("Pasal 1O") dirapikan saat dibaca dan saat ingest, selebihnya hanya ekstraksi
+  ulang dengan sumber yang lebih baik yang memperbaikinya. Dari 1.577 ekstraksi PDF di produksi: 1.103 bersih,
+  146 rusak ringan, 7 rusak berat, 320 tanpa pasal terdeteksi.
 - 72,8% kolom `instansi` di produksi berisi "[object Object]" (kerusakan lama pada ingest); antarmuka dan API
   menganggapnya kosong saat dibaca, datanya sendiri belum diperbaiki.
 - Stemmer belum melucuti awalan "be-" ("bekerja" tidak menghasilkan "kerja"; `it.todo`).
@@ -226,17 +251,14 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
   kosinus dari Vectorize.
 - Vektor lama tidak dihapus dari Vectorize saat peraturan diingest ulang (disaring saat pencarian, tetapi
   menumpuk).
-- Peraturan hasil ekstraksi PDF versi lama dapat memuat bagian Penjelasan yang bercampur dengan pasal (baris
-  berulang dengan id berakhiran `~n`; di produksi, UU 13/2003 punya 72 baris seperti itu dan UU 11/2020 744).
-  Parser saat ini berhenti di judul "PENJELASAN"; dokumen lama perlu diekstrak ulang untuk membersihkannya.
-  Antarmuka hanya merapikan tampilan penanda halaman PDF ("### Page 97 PRESIDEN REPUBLIK INDONESIA- 18 -");
-  data di database tidak diubah.
 - Sisa 28 relasi menggantung ke PP menunjuk peraturan yang memang belum ter-ingest (kursor sinkronisasi
   tertinggal; lihat langkah pemulihan di docs/hubungkan-github-cloudflare.md).
 - D1 dan R2 berada di Amerika Timur dengan read replication nonaktif, sehingga latensi dari Indonesia tinggi.
 - Pembatas laju `/api/tanya` berbasis KV (tidak atomik); sitemap dibatasi 5.000 URL dan memakai URL
   berparameter.
-- Halaman peraturan dirender di klien; untuk SEO yang baik, judul dan deskripsi perlu disisipkan dari Worker.
+- Pratinjau tautan hanya ada untuk halaman peraturan (`/peraturan?uri=…`), dengan gambar merek yang sama untuk
+  semuanya; halaman lain (mis. hasil pencarian) memakai pratinjau umum situs. WhatsApp dan Telegram menyimpan
+  pratinjau per tautan, jadi tautan yang pernah dibagikan sebelum fitur ini ada bisa tetap tampil lama.
 
 ## Yang belum ada
 

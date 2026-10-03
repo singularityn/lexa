@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, istilahDariKueri, jangkarDariId,
   hitungPasal, judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, namaPasal, nomorTahun, pisahJudul,
-  bacaIsiPasal, pecahRujukan, pisahPenjelasanTertanam, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
+  bacaIsiPasal, pecahRujukan, pisahPenjelasanTertanam, pratinjauPeraturan, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
 } from "../public/js/format.js";
 import { labelSitasi, nomorTahun as nomorTahunServer, rapikanNomorPasal as rapikanNomorPasalServer } from "../src/shared/label";
 
@@ -535,6 +535,42 @@ describe("pisahJudul / judulRingkas", () => {
     expect(judulRingkas("Peraturan Pemerintah Nomor 85 Tahun 2013 tentang TATA CARA HUBUNGAN ANTAR LEMBAGA")).toBe("Tata Cara Hubungan Antar Lembaga");
     expect(judulRingkas("Peraturan Presiden Nomor 22 Tahun 2015 tentang Pemberian Uang Bagi Ketua Dan Anggota")).toBe("Pemberian Uang bagi Ketua dan Anggota");
     expect(judulRingkas("Ketenagakerjaan")).toBe("Ketenagakerjaan");
+  });
+});
+
+describe("pratinjauPeraturan (judul tab, meta description, dan pratinjau tautan)", () => {
+  const uu = { jenis: "UU", nomor: "13", tahun: 2003, judul: "Undang-Undang Republik Indonesia Nomor 13 Tahun 2003 tentang KETENAGAKERJAAN" };
+
+  it("judul = sitasi + topik berhuruf rapi; deskripsi bawaan = nama lengkap + topik", () => {
+    expect(pratinjauPeraturan({ ...uu, status: "berlaku", ringkasan: null })).toEqual({
+      judul: "UU 13/2003 Ketenagakerjaan",
+      deskripsi: "Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan.",
+    });
+  });
+
+  it("memakai ringkasan bila ada (dirapatkan spasinya), dan ringkasan kosong dianggap tidak ada", () => {
+    expect(pratinjauPeraturan({ ...uu, ringkasan: "  Mengatur\n hubungan   kerja.  " }).deskripsi).toBe("Mengatur hubungan kerja.");
+    expect(pratinjauPeraturan({ ...uu, ringkasan: "   " }).deskripsi).toBe("Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan.");
+  });
+
+  it("dipotong 180 karakter, termasuk awalan status", () => {
+    const panjang = "x".repeat(400);
+    expect(pratinjauPeraturan({ ...uu, ringkasan: panjang }).deskripsi).toHaveLength(180);
+    expect(pratinjauPeraturan({ ...uu, status: "dicabut", ringkasan: panjang }).deskripsi).toBe(`Dicabut. ${"x".repeat(171)}`);
+  });
+
+  it("peraturan dicabut atau diubah diawali statusnya; berlaku dan tak dikenal tidak", () => {
+    expect(pratinjauPeraturan({ ...uu, status: "dicabut" }).deskripsi.startsWith("Dicabut. Undang-Undang Nomor 13")).toBe(true);
+    expect(pratinjauPeraturan({ ...uu, status: "diubah" }).deskripsi.startsWith("Diubah. ")).toBe(true);
+    for (const status of ["berlaku", null, undefined, "lainnya"]) {
+      expect(pratinjauPeraturan({ ...uu, status }).deskripsi.startsWith("Undang-Undang Nomor 13"), String(status)).toBe(true);
+    }
+  });
+
+  it("POJK bernomor slug memakai penomoran resminya", () => {
+    const p = pratinjauPeraturan({ jenis: "POJK", nomor: "48-pojk-04-2016", tahun: 2016, judul: "Peraturan OJK Nomor 48/POJK.04/2016 tentang Penerbitan" });
+    expect(p.judul).toBe("POJK 48/POJK.04/2016 Penerbitan");
+    expect(p.deskripsi).toBe("Peraturan OJK Nomor 48/POJK.04/2016 tentang Penerbitan.");
   });
 });
 

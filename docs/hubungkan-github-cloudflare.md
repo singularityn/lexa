@@ -12,8 +12,9 @@ URL pratinjau per branch/PR, dan check run di GitHub). Langkah di dashboard hany
   dan aset statis dari `./public`. Tidak ada lagi placeholder yang membuat deploy ditolak.
 - Antarmuka (SPA) ada di `public/`. Frontend v0.1 tidak bisa dipulihkan (tidak ikut dalam bundel Worker),
   jadi repo ini membawa antarmuka baru.
-- `npm run check` (typecheck + tes) lolos, `npm run build` (`wrangler deploy --dry-run`) menampilkan 6
-  binding dan 36 aset, dan CI GitHub hijau (termasuk tes e2e di Chromium).
+- `npm run check` (typecheck + tes) lolos, `npm run build` (`wrangler deploy --dry-run`) menampilkan 7
+  binding (termasuk `ASSETS`, aset statis yang dipakai pratinjau tautan) dan 55 aset, dan CI GitHub hijau
+  (termasuk tes e2e di Chromium).
 
 ## Yang berubah pada deploy pertama dari Git
 
@@ -23,7 +24,7 @@ Deploy dari Git **menimpa pengaturan Worker dengan isi `wrangler.jsonc`**. Rinci
 |---|---|
 | Kode Worker | diganti dengan kode repo (sama dengan produksi + perbaikan bug) |
 | Antarmuka di URL dasar | **diganti** dengan `public/`. Bila sebelumnya ada UI lama, ia tidak ikut dipertahankan (lihat Rollback) |
-| Binding `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE` | ditetapkan sesuai berkas. **Binding lain yang hanya ada di dashboard akan terlepas** (kode tidak memakai yang lain) |
+| Binding `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` | ditetapkan sesuai berkas. **Binding lain yang hanya ada di dashboard akan terlepas** (kode tidak memakai yang lain) |
 | Variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `PASAL_API_BASE`, `SEARCH_CACHE_TTL`) | dipertahankan (`keep_vars: true`) |
 | Secret (`ADMIN_TOKEN`, `PASAL_API_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) | tidak tersentuh |
 | Cron | ditetapkan `0 19 * * *` (sesuai jam eksekusi di log sinkronisasi) |
@@ -94,7 +95,7 @@ Siapkan Rollback (di bawah) sebelum mulai.
 |---|---|---|
 | Versi aktif | Deployments | versi baru bersumber GitHub, aktif |
 | Antarmuka | buka URL dasar | beranda Lexa tampil dengan statistik; `/tentang` dibuka langsung tanpa 404 |
-| Binding | Settings > Bindings | `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE` utuh |
+| Binding | Settings > Bindings | `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` utuh |
 | Variabel | Settings > Variables and secrets | kelima variabel teks dan keempat secret masih ada |
 | Cron | Settings > Trigger events | `0 19 * * *` |
 | Konsumer antrean | Queues > lexa-ingest | masih terhubung ke `lexa`, DLQ dan retry seperti sebelumnya |
@@ -103,6 +104,8 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Sitasi nama panjang | `/cari?q=Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022` | Perppu 2/2022 di urutan pertama berlabel "Sitasi" (bukan UU 2/2022) |
 | Sitasi POJK | `/cari?q=POJK 1 Tahun 2019` dan `/cari?q=POJK 48/POJK.04/2016` | POJK bernomor slug ditemukan; label "POJK 48/POJK.04/2016" |
 | Relasi ke Perppu | `/peraturan?uri=/akn/id/act/uu/1998/10`, tab Relasi | "PERPU No. 2 Tahun 2022" berupa tautan aktif ke halaman Perppu 2/2022 (dulu teks mati) |
+| Pratinjau tautan | `curl -s -A 'WhatsApp/2' 'URL/peraturan?uri=/akn/id/act/uu/2003/13' \| grep -E 'og:(title\|image)'` (tanpa `-A`, seperti pembaca biasa, jawabannya cangkang umum) | `og:title` "UU 13/2003 …" dan `og:image` berupa alamat mutlak ke `/og/lexa.png`; untuk peraturan yang tidak ada, pratinjau umum situs ("Lexa: cari peraturan perundang-undangan Indonesia") |
+| Gambar pratinjau | `/og/lexa.png` | 200, `image/png` |
 | Token admin | `GET /api/admin/cek-token` dengan header `x-admin-token` | `secret_terpasang: true`, `cocok: true` |
 | Login Google (bila diaktifkan) | `/akun` > Masuk dengan Google | kembali ke Lexa dalam keadaan masuk |
 | Cron berjalan | D1: `SELECT * FROM sync_log ORDER BY id DESC LIMIT 5;` | entri `jadwal_sinkronisasi` baru sekitar 19:00 UTC |
@@ -133,6 +136,10 @@ jadi pemulihan berjalan bertahap selama beberapa hari. Pantau lewat `/status` (j
 Dashboard > `lexa` > **Deployments** > pilih versi sebelumnya > **Rollback** (atau `npx wrangler rollback`).
 Rollback mengembalikan kode, konfigurasi, **dan aset statis** versi itu, jadi UI lama (bila ada) kembali.
 Rollback **tidak** mengembalikan data D1 maupun migrasi yang sudah diterapkan.
+
+Bila hanya halaman peraturan yang bermasalah setelah rilis pratinjau tautan (`/peraturan` dilayani Worker, lihat
+`src/worker/lib/pratinjau.ts`), cukup hapus `"/peraturan"` dari `assets.run_worker_first` di `wrangler.jsonc`
+lalu deploy: halaman kembali dilayani sebagai aset statis seperti sebelumnya, hanya tanpa pratinjau tautan.
 
 ## Migrasi D1 dan pipeline
 

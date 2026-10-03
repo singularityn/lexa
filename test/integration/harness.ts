@@ -11,7 +11,8 @@
  * Yang TIDAK dibuktikan: perilaku runtime workerd dan layanan Cloudflare asli
  * (Workers AI, Vectorize); itu hanya bisa diuji pada deploy sungguhan.
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { extname, join, normalize } from "node:path";
 import { createRequire } from "node:module";
 import type { DatabaseSync } from "node:sqlite";
 import worker from "../../src/worker/index";
@@ -328,6 +329,74 @@ export class VektorPalsu {
   }
 }
 
+/** Header blok `/*` di public/_headers (CSP dan kawan-kawan), seperti yang ditambahkan Workers Static Assets. */
+function headerGlobalAset(): Record<string, string> {
+  const hasil: Record<string, string> = {};
+  let aktif = false;
+  for (const baris of readFileSync("public/_headers", "utf8").split("\n")) {
+    if (!baris.trim() || baris.trim().startsWith("#")) continue;
+    if (!/^\s/.test(baris)) {
+      aktif = baris.trim() === "/*";
+      continue;
+    }
+    const i = baris.indexOf(":");
+    if (aktif && i > 0) hasil[baris.slice(0, i).trim()] = baris.slice(i + 1).trim();
+  }
+  return hasil;
+}
+
+const JENIS_ASET: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".json": "application/json",
+};
+
+/**
+ * Binding `ASSETS` tiruan: berkas dari public/ yang sesungguhnya, dengan fallback SPA (jalur yang tak dikenal
+ * menjawab index.html, 200) dan header global dari public/_headers. Seperti aslinya, jawaban membawa ETag dan
+ * cache-control yang memaksa validasi.
+ */
+export class AsetPalsu {
+  /** Ubah isi index.html sebelum disajikan: untuk menguji cangkang yang berubah bentuk. */
+  gantiCangkang: ((html: string) => string) | null = null;
+  /** Bila diisi, setiap permintaan melempar galat ini (aset tak terjangkau). */
+  galat: Error | null = null;
+  permintaan: string[] = [];
+
+  async fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const req = new Request(input as Request, init);
+    if (this.galat) throw this.galat;
+    const jalur = new URL(req.url).pathname;
+    this.permintaan.push(jalur);
+    let berkas = join("public", normalize(jalur === "/" ? "index.html" : jalur.slice(1)));
+    let ada = false;
+    try {
+      ada = statSync(berkas).isFile();
+    } catch {
+      ada = false;
+    }
+    if (!ada) berkas = join("public", "index.html");
+
+    let badan: string | Uint8Array = readFileSync(berkas);
+    if (berkas.endsWith("index.html")) {
+      badan = readFileSync(berkas, "utf8");
+      if (this.gantiCangkang) badan = this.gantiCangkang(badan);
+    }
+    const header = new Headers({
+      ...headerGlobalAset(),
+      "content-type": JENIS_ASET[extname(berkas)] ?? "application/octet-stream",
+      "cache-control": "public, max-age=0, must-revalidate",
+      etag: '"aset-uji"',
+      "last-modified": "Sat, 03 Oct 2026 00:00:00 GMT",
+      "cf-cache-status": "HIT",
+    });
+    return new Response(badan as BodyInit, { status: 200, headers: header });
+  }
+}
+
 // --- Lingkungan uji ---------------------------------------------------------
 
 export interface Lingkungan {
@@ -339,6 +408,7 @@ export interface Lingkungan {
   antrean: AntreanPalsu;
   ai: AiPalsu;
   vektor: VektorPalsu;
+  aset: AsetPalsu;
   tutup(): void;
 }
 
@@ -359,6 +429,7 @@ export function buatLingkungan(): Lingkungan {
   const antrean = new AntreanPalsu();
   const ai = new AiPalsu();
   const vektor = new VektorPalsu();
+  const aset = new AsetPalsu();
 
   const env = {
     DB: db,
@@ -367,6 +438,7 @@ export function buatLingkungan(): Lingkungan {
     AI: ai,
     VECTORIZE: vektor,
     INGEST_QUEUE: antrean,
+    ASSETS: aset,
     EMBEDDING_MODEL: "@cf/baai/bge-m3",
     SUMMARY_MODEL: "@cf/uji/teks",
     BPK_BASE: "https://peraturan.bpk.go.id",
@@ -378,7 +450,7 @@ export function buatLingkungan(): Lingkungan {
     GOOGLE_CLIENT_SECRET: "",
   } as unknown as Env;
 
-  return { env, db, sqlite, kv, r2, antrean, ai, vektor, tutup: () => sqlite.close() };
+  return { env, db, sqlite, kv, r2, antrean, ai, vektor, aset, tutup: () => sqlite.close() };
 }
 
 // --- Memanggil Worker -------------------------------------------------------

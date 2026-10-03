@@ -234,6 +234,29 @@ export function judulRingkas(judul) {
   return rapikanHuruf(pisahJudul(judul).topik);
 }
 
+/** Batas panjang deskripsi halaman (meta description, pratinjau tautan). */
+const PANJANG_DESKRIPSI = 180;
+
+/**
+ * Judul dan deskripsi sebuah halaman peraturan: "UU 13/2003 Ketenagakerjaan" dan ringkasannya (atau, bila belum
+ * ada, "Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan."). Peraturan yang tidak berlaku diawali
+ * "Dicabut." atau "Diubah." supaya tidak terbaca sebagai hukum yang masih berlaku.
+ *
+ * Dipakai antarmuka (judul tab dan meta description) dan Worker (pratinjau tautan di WhatsApp, Telegram, dan mesin
+ * pencari, yang tidak menjalankan JavaScript), sehingga keduanya selalu sama.
+ * @param {{ jenis: string, nomor: string, tahun: number, judul: string, status?: string | null, ringkasan?: string | null }} l
+ * @returns {{ judul: string, deskripsi: string }}
+ */
+export function pratinjauPeraturan(l) {
+  const topik = judulRingkas(l.judul);
+  const awal = l.status === "dicabut" || l.status === "diubah" ? `${labelStatus(l.status)}. ` : "";
+  const isi = (l.ringkasan ?? "").trim() || `${namaLengkap(l)} tentang ${topik}.`;
+  return {
+    judul: `${sitasi(l)} ${topik}`,
+    deskripsi: (awal + isi).replace(/\s+/g, " ").slice(0, PANJANG_DESKRIPSI),
+  };
+}
+
 /**
  * Bidang dari nilai kolom `bidang` ("APBN - BUMN"): nama aslinya (untuk filter/URL) dan labelnya yang dirapikan.
  * @param {string | null | undefined} bidang

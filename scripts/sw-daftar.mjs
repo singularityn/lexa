@@ -11,6 +11,8 @@ import { join, relative, sep } from "node:path";
 
 /** Bukan bagian cangkang: berkas konfigurasi Cloudflare, dan service worker itu sendiri. */
 const KECUALI = new Set(["_headers", "sw.js"]);
+/** Folder yang bukan bagian cangkang: gambar pratinjau tautan (og/) hanya dibaca WhatsApp dan sejenisnya, bukan aplikasi. */
+const KECUALI_FOLDER = ["og/"];
 
 /** @param {string} dir @returns {Promise<string[]>} */
 async function jelajahi(dir) {
@@ -27,7 +29,7 @@ async function jelajahi(dir) {
 export async function hitungDaftar(akar = "public") {
   const berkas = (await jelajahi(akar))
     .map((p) => relative(akar, p).split(sep).join("/"))
-    .filter((p) => !KECUALI.has(p))
+    .filter((p) => !KECUALI.has(p) && !KECUALI_FOLDER.some((f) => p.startsWith(f)))
     .sort();
   const hash = createHash("sha256");
   for (const p of berkas) {

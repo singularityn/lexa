@@ -53,6 +53,9 @@ describe("daftar precache service worker", () => {
     expect(daftar).not.toContain("/sw.js");
     expect(daftar).not.toContain("/_headers");
     expect(daftar).not.toContain("/index.html");
+    // Gambar pratinjau tautan hanya dibaca WhatsApp dan sejenisnya; mengunduhnya ke setiap perangkat sia-sia.
+    expect(existsSync(join(PUBLIK, "og/lexa.png"))).toBe(true);
+    expect(daftar.filter((u) => u.startsWith("/og/"))).toEqual([]);
     expect(new Set(daftar).size).toBe(daftar.length);
     for (const u of daftar) {
       const berkas = u === "/" ? join(PUBLIK, "index.html") : join(PUBLIK, u);

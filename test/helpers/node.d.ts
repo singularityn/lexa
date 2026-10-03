@@ -22,7 +22,7 @@ declare module "node:fs" {
   export function readFileSync(path: string): Uint8Array;
   export function readdirSync(path: string): string[];
   export function existsSync(path: string): boolean;
-  export function statSync(path: string): { isDirectory(): boolean };
+  export function statSync(path: string): { isDirectory(): boolean; isFile(): boolean };
 }
 declare module "node:fs/promises" {
   export function readFile(path: string): Promise<Uint8Array>;
