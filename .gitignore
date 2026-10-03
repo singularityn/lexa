@@ -14,3 +14,4 @@ coverage/
 # Lain-lain
 *.log
 .DS_Store
+.vitest/
