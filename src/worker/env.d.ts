@@ -33,6 +33,11 @@ interface Env {
   PASAL_API_BASE: string;
   /** TTL cache hasil pencarian dalam detik (string; bawaan 3600). */
   SEARCH_CACHE_TTL: string;
+  /**
+   * Jenis peraturan yang dicakup, kode seperti `laws.jenis` dipisah koma (mis. `UUD,TAP_MPR,UU,PERPPU,PP`).
+   * Tak ada atau tak sah: `CAKUPAN_BAWAAN` di shared/cakupan.ts. Lihat berkas itu.
+   */
+  CAKUPAN_JENIS?: string;
 
   // --- Secret (dipasang lewat `wrangler secret put`) ---
   ADMIN_TOKEN: string;

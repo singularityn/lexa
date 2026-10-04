@@ -91,10 +91,11 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
   describe("relevansi: kata yang diketik di atas sinonim, ejaan, dan pencarian longgar", () => {
     it("dokumen yang memuat kata yang diketik mengalahkan dokumen yang hanya memuat sinonimnya", async () => {
       // Kasus nyata di produksi: "pesangon" menempatkan Perpres tentang "uang kompensasi" anggota KPU di atas
-      // UU Ketenagakerjaan karena "kompensasi" (sinonim) muncul di judul dan tentang-nya.
+      // UU Ketenagakerjaan karena "kompensasi" (sinonim) muncul di judul dan tentang-nya. Di sini berupa PP
+      // karena Perpres di luar cakupan; yang diuji adalah urutan hasil, bukan jenisnya.
       await sisipkan(l, [
         {
-          uri: "/akn/id/act/perpres/2015/22", jenis: "PERPRES", nomor: "22", tahun: 2015,
+          uri: "/akn/id/act/pp/2015/22", jenis: "PP", nomor: "22", tahun: 2015,
           judul: "Pemberian Uang Kompensasi Bagi Ketua dan Anggota Komisi Pemilihan Umum", tentang: "Uang kompensasi anggota komisi",
           pasal: [{ nomor: "1", isi: "Uang kompensasi diberikan sekali kepada anggota komisi. Kompensasi dibayarkan dari anggaran." }],
         },
@@ -102,7 +103,7 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
       const b = await cari(q("pesangon", "mode=keyword"));
       const urutan = uris(b.hits);
       const literal = ["/akn/id/act/uu/2003/13#pasal-156-ayat-1", "/akn/id/act/pp/2021/35#pasal-40-ayat-1"];
-      const sinonim = urutan.findIndex((u) => u.startsWith("/akn/id/act/perpres/2015/22"));
+      const sinonim = urutan.findIndex((u) => u.startsWith("/akn/id/act/pp/2015/22"));
       expect(sinonim, "yang hanya bersinonim tetap ditemukan").toBeGreaterThanOrEqual(0);
       for (const u of literal) expect(urutan.indexOf(u), u).toBeLessThan(sinonim);
     });
@@ -193,6 +194,12 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
   });
 
   describe("sitasi bentuk alami dan nomor POJK bersufiks", () => {
+    // Logika sitasi POJK dan Permen tetap dijaga walau keduanya kini di luar cakupan bawaan: cakupan dilebarkan
+    // lewat variabel CAKUPAN_JENIS, sama seperti yang akan dilakukan bila suatu hari cakupan diperluas.
+    beforeEach(() => {
+      l.env.CAKUPAN_JENIS = "UU,PERPPU,PP,PERMEN,POJK";
+    });
+
     const pojk = (nomor: string, tahun: number, judul = "Peraturan Badan") => ({
       uri: `/akn/id/act/peraturan-ojk/${tahun}/${nomor}`, jenis: "POJK", nomor, tahun, judul: `${judul} Nomor ${nomor} Tahun ${tahun}`,
     });
@@ -369,7 +376,7 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
     it("hasil yang ada isinya di-cache di KV; panggilan kedua bertanda cached", async () => {
       const pertama = await cari(q("pesangon", "mode=keyword"));
       expect(pertama.cached).toBe(false);
-      const kunci = [...l.kv.isi.keys()].filter((k) => k.startsWith("cari:v3:"));
+      const kunci = [...l.kv.isi.keys()].filter((k) => k.startsWith("cari:v4:"));
       expect(kunci).toHaveLength(1);
       const kedua = await cari(q("pesangon", "mode=keyword"));
       expect(kedua.cached).toBe(true);

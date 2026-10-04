@@ -48,6 +48,14 @@ export function kerangkaHasil(n = 4) {
 }
 
 /**
+ * Catatan singkat di atas hasil (pencarian longgar, jenis di luar cakupan): kotak berikon info.
+ * @param {...import("../dom.js").Anak} isi
+ */
+export function catatanHasil(...isi) {
+  return h("div", { class: "catatan-hasil", role: "note" }, ikon("info"), h("p", null, ...isi));
+}
+
+/**
  * Kotak galat dengan tombol ulangi.
  * @param {unknown} galat
  * @param {() => void} [ulangi]

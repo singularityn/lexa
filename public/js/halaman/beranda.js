@@ -1,7 +1,7 @@
 // @ts-check
 import { h, isi } from "../dom.js";
 import { api } from "../api.js";
-import { angka, daftarBidang, judulRingkas, queryString, sitasi, urlPeraturan } from "../format.js";
+import { angka, daftarBidang, daftarCakupan, judulRingkas, queryString, sitasi, urlPeraturan } from "../format.js";
 import { ajakanPasang } from "../komponen/ajakanPasang.js";
 import { ikon } from "../komponen/ikon.js";
 import { kotakCari } from "../komponen/kotakCari.js";
@@ -111,6 +111,7 @@ export default async function beranda(ctx) {
       s.total_peraturan === 0
         ? "Indeks masih kosong: peraturan masuk lewat sinkronisasi terjadwal dan impor dari BPK."
         : `${angka(s.total_peraturan)} peraturan dan ${angka(s.total_pasal)} pasal dan ayat di indeks.`,
+      s.cakupan?.length ? ` Cakupan saat ini: ${daftarCakupan(s.cakupan)}.` : null,
     );
   }
 

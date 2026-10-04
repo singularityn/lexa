@@ -1,7 +1,7 @@
 // @ts-check
 import { h, isi } from "../dom.js";
 import { api, dibatalkan } from "../api.js";
-import { angka, bacaFilter, queryString } from "../format.js";
+import { angka, bacaFilter, daftarCakupan, kodeJenis, queryString } from "../format.js";
 import { buatPanelFilter } from "../komponen/panelFilter.js";
 import { kartuPeraturan } from "../komponen/kartuHasil.js";
 import { keadaanKosong, kerangkaHasil, kotakGalat, paginasi } from "../komponen/umum.js";
@@ -44,6 +44,7 @@ export default async function telusuri(ctx) {
   });
   const hasil = h("div", { "aria-live": "polite" });
   const ringkas = h("span", { class: "ringkas-hasil", role: "status" });
+  const cakupanInfo = h("p", { class: "redup" });
   const urut = /** @type {HTMLSelectElement} */ (
     h(
       "select",
@@ -65,6 +66,7 @@ export default async function telusuri(ctx) {
   isi(
     ctx.akar,
     h("h1", null, "Telusuri peraturan"),
+    cakupanInfo,
     h(
       "div",
       { class: "dua-kolom" },
@@ -103,8 +105,19 @@ export default async function telusuri(ctx) {
       panel.perbaruiFacet(r.facets);
       ringkas.textContent = `${angka(r.total)} peraturan`;
       panel.setTombolSelesai(r.total ? `Tampilkan ${angka(r.total)} peraturan` : "Tutup");
+      if (r.cakupan?.length) cakupanInfo.textContent = `Cakupan saat ini: ${daftarCakupan(r.cakupan)}.`;
       if (!r.laws.length) {
-        isi(hasil, keadaanKosong("Tidak ada peraturan yang cocok", h("p", null, "Longgarkan filter di samping untuk melihat lebih banyak.")));
+        const luar = r.di_luar_cakupan?.length ? r.di_luar_cakupan : null;
+        isi(
+          hasil,
+          luar
+            ? keadaanKosong(
+                `Jenis ${luar.map(kodeJenis).join(", ")} belum dimuat Lexa`,
+                h("p", null, `Untuk saat ini Lexa hanya memuat ${daftarCakupan(r.cakupan ?? [])}.`),
+                h("div", { class: "contoh", style: { marginTop: "12px" } }, h("a", { class: "chip", href: "/telusuri" }, "Telusuri semua peraturan")),
+              )
+            : keadaanKosong("Tidak ada peraturan yang cocok", h("p", null, "Longgarkan filter di samping untuk melihat lebih banyak.")),
+        );
         return;
       }
       isi(

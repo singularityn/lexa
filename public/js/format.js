@@ -44,6 +44,18 @@ export function kodeJenis(kode) {
 }
 
 /**
+ * Cakupan peraturan sebagai bagian kalimat: `["UUD", "TAP_MPR", "UU", "PERPPU", "PP"]` menjadi
+ * "UUD, TAP MPR, UU, PERPPU, dan PP". Daftarnya datang dari API (shared/cakupan.ts), bukan ditulis di sini.
+ * @param {readonly string[]} kode
+ */
+export function daftarCakupan(kode) {
+  const k = kode.map(kodeJenis);
+  if (k.length <= 1) return k.join("");
+  if (k.length === 2) return `${k[0]} dan ${k[1]}`;
+  return `${k.slice(0, -1).join(", ")}, dan ${k[k.length - 1]}`;
+}
+
+/**
  * "UU 13/2003"
  * @param {{ jenis: string, nomor: string, tahun: number }} l
  */

@@ -122,6 +122,12 @@ export interface SearchResponse {
    * sehingga ditambah peraturan yang memuat sebagian kata. `penuh` = jumlah hasil yang memuat semua kata.
    */
   longgar?: { penuh: number };
+  /**
+   * Ada bila kueri berbentuk sitasi ke jenis peraturan di luar cakupan Lexa ("Perpres 12/2020"): kode jenisnya
+   * ("PERPRES") dan jenis yang dicakup. Peraturan itu sendiri tidak dicari; hasil lain tetap berasal dari
+   * kata-katanya.
+   */
+  di_luar_cakupan?: { jenis: string; cakupan: string[] };
 }
 
 /** Satu butir facet pada halaman telusur. */
@@ -142,6 +148,10 @@ export interface BrowseResponse {
     tahun: FacetItem[];
     status: FacetItem[];
   };
+  /** Kode jenis yang dicakup Lexa (shared/cakupan.ts); jenis lain tidak ada di daftar maupun facet. */
+  cakupan: string[];
+  /** Jenis pada filter `jenis` yang di luar cakupan dan karenanya tidak menghasilkan apa pun. */
+  di_luar_cakupan?: string[];
 }
 
 /** Respons `GET /api/laws/detail?uri=…`. */

@@ -18,6 +18,7 @@
  */
 
 import { pratinjauPeraturan } from "../../../public/js/format.js";
+import { bacaCakupan, klausaCakupan, type Cakupan } from "../../shared/cakupan";
 import { aliasUri } from "./uri";
 
 /** Gambar pratinjau (dibuat scripts/buat-og.mjs): kartu merek 1200x630. */
@@ -113,11 +114,17 @@ export function susunPratinjau(baris: BarisPratinjau, asal: string): IsiPratinja
   };
 }
 
-/** Baris peraturan untuk URI ini (atau ejaan lainnya, lihat lib/uri.ts), atau null bila tidak ada. */
-export async function cariPeraturan(db: D1Database, uri: string): Promise<BarisPratinjau | null> {
+/**
+ * Baris peraturan untuk URI ini (atau ejaan lainnya, lihat lib/uri.ts), atau null bila tidak ada atau di luar
+ * cakupan (shared/cakupan.ts): halamannya menjawab "di luar cakupan", jadi tidak layak mendapat kartu pratinjau.
+ */
+export async function cariPeraturan(db: D1Database, uri: string, cakupan: Cakupan): Promise<BarisPratinjau | null> {
   const ambil = (u: string) =>
     db
-      .prepare(`SELECT frbr_uri, jenis, nomor, tahun, judul, status, ringkasan FROM laws WHERE frbr_uri = ?`)
+      .prepare(
+        `SELECT frbr_uri, jenis, nomor, tahun, judul, status, ringkasan FROM laws
+          WHERE frbr_uri = ? AND ${klausaCakupan(cakupan, "jenis")}`,
+      )
       .bind(u)
       .first<BarisPratinjau>();
   const alias = aliasUri(uri);
@@ -166,7 +173,7 @@ export async function layaniPeraturan(req: Request, env: Env): Promise<Response>
   const [cangkang, baris] = await Promise.all([
     ambilCangkang(),
     sah
-      ? cariPeraturan(env.DB, uri).catch((galat) => {
+      ? cariPeraturan(env.DB, uri, bacaCakupan(env.CAKUPAN_JENIS)).catch((galat) => {
           console.error("pratinjau: gagal membaca peraturan", galat);
           return null;
         })

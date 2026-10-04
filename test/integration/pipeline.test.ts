@@ -128,11 +128,67 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
         { job: "impor_bpk", status: "sukses", detail: "ditolak 0", jumlah: 1 },
       ]);
     });
+
+    describe("cakupan peraturan (UUD, Tap MPR, UU, Perppu, PP)", () => {
+      const jenisLain = (bpk_id: string, bentuk: string, nomor = "7") =>
+        dokumenBpk({ bpk_id, meta: { ...dokumenBpk().meta, "Bentuk Singkat": bentuk, Nomor: nomor, Judul: `Contoh ${bentuk} ${nomor}` }, relasi: [] });
+
+      it("dokumen jenis lain ditolak dengan alasan; yang dalam cakupan di kiriman yang sama tetap diterima", async () => {
+        const b = await json<{ diterima: number; ditolak: Array<{ bpk_id: string; alasan: string }>; butuh_pdf: string[] }>(
+          await manifest([jenisLain("801", "PERPRES"), jenisLain("802", "POJK"), jenisLain("803", "PERMEN"), jenisLain("804", "PERDA"), dokumenBpk()]),
+        );
+        expect(b.diterima).toBe(1);
+        expect(b.butuh_pdf).toEqual([URI_PP99]);
+        expect(b.ditolak.map((d) => d.bpk_id)).toEqual(["801", "802", "803", "804"]);
+        expect(b.ditolak[0].alasan).toBe("di luar cakupan (PERPRES); cakupan: UUD, TAP_MPR, UU, PERPPU, PP");
+        expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(1);
+      });
+
+      it("UUD, Tap MPR, UU, Perppu (kedua ejaan sumber), dan PP diterima", async () => {
+        const b = await json<{ diterima: number; ditolak: unknown[] }>(
+          await manifest([
+            jenisLain("811", "UUD", "1945"), jenisLain("812", "TAP MPR", "16"), jenisLain("813", "UU"),
+            jenisLain("814", "PERPPU"), jenisLain("815", "PERPU", "8"), jenisLain("816", "PP"), jenisLain("817", "UU DRT", "3"),
+          ]),
+        );
+        expect(b).toMatchObject({ diterima: 7, ditolak: [] });
+        expect((await l.db.prepare(`SELECT jenis FROM laws ORDER BY jenis`).all()).results.map((r) => r.jenis)).toEqual(
+          ["PERPPU", "PERPPU", "PP", "TAP_MPR", "UU", "UU", "UUD"],
+        );
+      });
+
+      it("jenis yang tak dikenal (LAIN) pun ditolak, dan dengan cakupan dilebarkan Perpres diterima", async () => {
+        const b = await json<{ diterima: number; ditolak: unknown[] }>(await manifest([jenisLain("821", "KEPUTUSAN ANEH")]));
+        expect(b).toMatchObject({ diterima: 0 });
+        expect(b.ditolak).toHaveLength(1);
+
+        l.env.CAKUPAN_JENIS = "UU,PP,PERPRES";
+        expect(await json(await manifest([jenisLain("801", "PERPRES")]))).toMatchObject({ diterima: 1, ditolak: [] });
+      });
+
+      it("kiriman yang seluruhnya di luar cakupan dijawab 200 dengan semua dokumen di ditolak, tanpa menulis apa pun", async () => {
+        const res = await manifest([jenisLain("801", "PERPRES"), jenisLain("802", "POJK")]);
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ diterima: 0, butuh_pdf: [] });
+        expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(0);
+      });
+    });
   });
 
   describe("PUT /api/impor/pdf", () => {
     beforeEach(async () => {
       await manifest([dokumenBpk()]);
+    });
+
+    it("PDF untuk baris lama di luar cakupan ditolak: R2 tidak bertambah dan tidak ada yang diantrekan", async () => {
+      const uri = "/akn/id/act/perpres/2020/1";
+      await l.db.prepare(`INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul) VALUES (?,?,?,?,?)`).bind(uri, "PERPRES", "1", 2020, "Komisi Contoh").run();
+      const res = await unggahPdf(PDF, uri);
+      expect(res.status).toBe(422);
+      expect(await res.json()).toMatchObject({ error: "di_luar_cakupan" });
+      expect(l.r2.objek.size).toBe(0);
+      expect(l.antrean.pesan).toEqual([]);
+      expect((await l.db.prepare(`SELECT r2_pdf_key FROM laws WHERE frbr_uri = ?`).bind(uri).first<{ r2_pdf_key: string | null }>())?.r2_pdf_key).toBeNull();
     });
 
     it("menyimpan PDF ke R2, mencatat kuncinya, dan mengantrekan ekstraksi", async () => {
@@ -363,16 +419,14 @@ describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
       await jalankanCron(l);
 
       expect(l.antrean.pesan).toEqual([
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/2003/13", alasan: "baru", pasal_id: 200313 },
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/2020/11", alasan: "baru", pasal_id: 202011 },
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/pp/2021/35", alasan: "baru", pasal_id: 202135 },
+        { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/2003/13", alasan: "baru", pasal_id: 200313, jenis: "UU" },
+        { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/2020/11", alasan: "baru", pasal_id: 202011, jenis: "UU" },
+        { tipe: "peraturan", frbr_uri: "/akn/id/act/pp/2021/35", alasan: "baru", pasal_id: 202135, jenis: "PP" },
       ]);
-      // Seluruh jenis prioritas disapu, dengan token pada setiap permintaan.
-      expect(new Set(panggilanPasal.map((u) => u.searchParams.get("type")))).toEqual(
-        new Set(["UU", "PERPPU", "PP", "PERPRES", "PERMEN", "POJK", "PBI"]),
-      );
+      // Hanya jenis dalam cakupan yang disapu (UU, PERPPU, PP); PERPRES, PERMEN, POJK, dan PBI tidak disentuh.
+      expect(panggilanPasal.map((u) => u.searchParams.get("type"))).toEqual(["UU", "PERPPU", "PP"]);
       expect(await log("jadwal_sinkronisasi")).toEqual([
-        { status: "mulai", detail: "UU,PERPPU,PP,PERPRES,PERMEN,POJK,PBI", jumlah: 0 },
+        { status: "mulai", detail: "UU,PERPPU,PP", jumlah: 0 },
         { status: "sukses", detail: "diperiksa 3", jumlah: 3 },
       ]);
     });
@@ -425,7 +479,7 @@ describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
 
       // Halaman pertama (50) sudah diperiksa; permintaan kedua kena 429 dan seluruh sapuan berhenti.
       expect(await log("jadwal_sinkronisasi")).toEqual([
-        { status: "mulai", detail: "UU,PERPPU,PP,PERPRES,PERMEN,POJK,PBI", jumlah: 0 },
+        { status: "mulai", detail: "UU,PERPPU,PP", jumlah: 0 },
         { status: "gagal", detail: "rate limit pada UU", jumlah: 50 },
       ]);
       expect((await l.db.prepare(`SELECT value FROM sync_state WHERE key = 'offset:UU'`).first<{ value: string }>())?.value).toBe("50");
@@ -476,7 +530,25 @@ describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
       const jenisDiminta = () => [...new Set(panggilanPasal.map((u) => u.searchParams.get("type")))];
       const awal = async () => (await l.db.prepare(`SELECT value FROM sync_state WHERE key = 'jenis_awal'`).first<{ value: string }>())?.value;
 
-      it("kena 429 pada PERPRES: sapuan berikutnya dimulai dari PERPRES, lalu jenis di belakangnya", async () => {
+      it("kena 429 pada PERPPU: sapuan berikutnya dimulai dari PERPPU, lalu jenis di belakangnya", async () => {
+        let batas = true;
+        stubPasal({
+          daftar: { UU: [hukumPasal("UU", 2003, 13, "A")], PP: [hukumPasal("PP", 2021, 35, "B")], PERPPU: [hukumPasal("PERPPU", 2022, 2, "C")] },
+          batasLaju: (u) => batas && u.searchParams.get("type") === "PERPPU",
+        });
+        await jalankanCron(l);
+        expect(jenisDiminta()).toEqual(["UU", "PERPPU"]); // PP belum tersentuh
+        expect(await awal()).toBe("PERPPU");
+
+        batas = false;
+        panggilanPasal.length = 0;
+        await jalankanCron(l);
+        expect(jenisDiminta()).toEqual(["PERPPU", "PP", "UU"]);
+        expect(await awal()).toBe("UU"); // satu putaran penuh selesai: kembali ke awal
+      });
+
+      it("dengan cakupan dilebarkan, putaran mencakup jenis tambahan (kena 429 pada PERPRES)", async () => {
+        l.env.CAKUPAN_JENIS = "UU,PERPPU,PP,PERPRES,PERMEN,POJK,PBI";
         let batas = true;
         stubPasal({
           daftar: { UU: [hukumPasal("UU", 2003, 13, "A")], PP: [hukumPasal("PP", 2021, 35, "B")], PERPRES: [hukumPasal("PERPRES", 2020, 1, "C")], PERMEN: [hukumPasal("PERMEN", 2021, 1, "D")] },
@@ -490,13 +562,13 @@ describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
         panggilanPasal.length = 0;
         await jalankanCron(l);
         expect(jenisDiminta()).toEqual(["PERPRES", "PERMEN", "POJK", "PBI", "UU", "PERPPU", "PP"]);
-        expect(await awal()).toBe("UU"); // satu putaran penuh selesai: kembali ke awal
+        expect(await awal()).toBe("UU");
       });
 
       it("kena 429 berturut-turut maju satu jenis demi satu sampai putaran selesai", async () => {
         stubPasal({
           daftar: { UU: [hukumPasal("UU", 2003, 13, "A")] },
-          batasLaju: (u) => ["PP", "POJK"].includes(u.searchParams.get("type") ?? ""),
+          batasLaju: (u) => ["PP"].includes(u.searchParams.get("type") ?? ""),
         });
         await jalankanCron(l);
         expect(await awal()).toBe("PP");
@@ -551,6 +623,70 @@ describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
       const res = await panggil(l, "/api/admin/sync", kirim("POST", { jenis: ["PP"], maks_halaman: 1 }, adm));
       expect(await res.json()).toEqual({ status: "selesai", diantrekan: 1, diperiksa: 1 });
       expect(panggilanPasal.map((u) => u.searchParams.get("type"))).toEqual(["PP"]);
+    });
+
+    describe("cakupan peraturan (UUD, Tap MPR, UU, Perppu, PP)", () => {
+      const sync = (badan: unknown) => panggil(l, "/api/admin/sync", kirim("POST", badan, adm));
+
+      it("peraturan di luar cakupan yang ikut dalam daftar (filter type hulu diabaikan) tidak diantrekan", async () => {
+        stubPasal({ daftar: { UU: [hukumPasal("UU", 2003, 13, "Ketenagakerjaan"), hukumPasal("PERPRES", 2020, 1, "Komisi"), hukumPasal("POJK", 2019, 1, "Efek")] } });
+        await jalankanCron(l);
+        expect(l.antrean.pesan.map((p) => (p as { frbr_uri: string }).frbr_uri)).toEqual(["/akn/id/act/uu/2003/13"]);
+        expect(await log("jadwal_sinkronisasi")).toContainEqual({ status: "sukses", detail: "diperiksa 3", jumlah: 1 });
+      });
+
+      it("tekanan balik hanya menghitung peraturan kosong yang dalam cakupan (sisa lama Perpres/POJK tak menahan sapuan)", async () => {
+        for (let i = 0; i < 450; i++) {
+          await l.db
+            .prepare(`INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, jumlah_pasal) VALUES (?,?,?,?,?,0)`)
+            .bind(`/akn/id/act/perpres/2000/${i}`, "PERPRES", String(i), 2000, `Judul ${i}`)
+            .run();
+        }
+        stubPasal({ daftar: { UU: [hukumPasal("UU", 2024, 1, "Baru")] } });
+        await jalankanCron(l);
+        expect(l.antrean.pesan).toHaveLength(1);
+        expect(await log("jadwal_sinkronisasi")).toEqual([
+          { status: "mulai", detail: "UU,PERPPU,PP", jumlah: 0 },
+          { status: "sukses", detail: "diperiksa 1", jumlah: 1 },
+        ]);
+      });
+
+      it("sapuan manual untuk jenis di luar cakupan ditolak terus terang tanpa menghubungi pasal.id", async () => {
+        stubPasal({ daftar: { PERPRES: [hukumPasal("PERPRES", 2020, 1, "Komisi")] } });
+        const res = await sync({ jenis: ["PERPRES", "POJK"] });
+        expect(res.status).toBe(400);
+        expect(await res.json()).toMatchObject({ error: "di_luar_cakupan", cakupan: ["UUD", "TAP_MPR", "UU", "PERPPU", "PP"], jenis: ["PERPRES", "POJK"] });
+        expect(panggilanPasal).toEqual([]);
+        expect(l.antrean.pesan).toEqual([]);
+      });
+
+      it("sapuan manual campuran hanya menyapu jenis dalam cakupan dan menyebut yang diabaikan", async () => {
+        stubPasal({ daftar: { PP: [hukumPasal("PP", 2021, 35, "PKWT")], PERPRES: [hukumPasal("PERPRES", 2020, 1, "Komisi")] } });
+        const res = await sync({ jenis: ["PERPRES", "PP"], maks_halaman: 1 });
+        expect(await res.json()).toEqual({ status: "selesai", diantrekan: 1, diperiksa: 1, diabaikan: ["PERPRES"] });
+        expect(panggilanPasal.map((u) => u.searchParams.get("type"))).toEqual(["PP"]);
+      });
+
+      it("meminta satu peraturan di luar cakupan lewat uri ditolak; yang dalam cakupan diantrekan", async () => {
+        const luar = await sync({ uri: "/akn/id/act/perpres/2020/1" });
+        expect(luar.status).toBe(400);
+        expect(await luar.json()).toMatchObject({ error: "di_luar_cakupan", uri: "/akn/id/act/perpres/2020/1" });
+        expect(l.antrean.pesan).toEqual([]);
+        expect(await (await sync({ uri: "/akn/id/act/uu/2003/13" })).json()).toEqual({ status: "diantrekan", uri: "/akn/id/act/uu/2003/13" });
+      });
+
+      it("ringkas_kosong dan perbaiki_celah tidak mengantrekan peraturan di luar cakupan", async () => {
+        await sisipkan(l, [
+          { uri: "/akn/id/act/uu/2003/13", jenis: "UU", nomor: "13", tahun: 2003, judul: "Ketenagakerjaan", pasal: [{ nomor: "1", isi: "Isi." }, { nomor: "3", isi: "Isi tiga." }] },
+          { uri: "/akn/id/act/perpres/2020/1", jenis: "PERPRES", nomor: "1", tahun: 2020, judul: "Komisi", pasal: [{ nomor: "1", isi: "Isi." }, { nomor: "5", isi: "Isi lima." }] },
+        ]);
+        const ringkas = await (await sync({ ringkas_kosong: true })).json();
+        expect(ringkas).toEqual({ status: "diantrekan", peraturan: 1 });
+        const celah = await (await sync({ perbaiki_celah: true })).json();
+        expect(celah).toMatchObject({ status: "diantrekan", peraturan: 1 });
+        const diantrekan = l.antrean.pesan.map((p) => (p as { frbr_uri: string }).frbr_uri);
+        expect(diantrekan).toEqual(["/akn/id/act/uu/2003/13", "/akn/id/act/uu/2003/13"]);
+      });
     });
   });
 
@@ -668,6 +804,83 @@ describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
       const hasil = await jalankanAntrean(l, [pesanUU13]);
       expect(hasil.diulang).toHaveLength(1);
       expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(0);
+    });
+
+    describe("cakupan peraturan (UUD, Tap MPR, UU, Perppu, PP)", () => {
+      const luar = (tipe: string, uri: string) =>
+        (tipe === "ekstrak_pdf" ? { tipe, frbr_uri: uri, r2_key: "pdf/x.pdf" } : { tipe, frbr_uri: uri, ...(tipe === "peraturan" ? { alasan: "baru" } : {}) }) as PesanIngest;
+
+      it("pesan lama untuk peraturan yang jelas di luar cakupan di-ack tanpa menyentuh pasal.id, AI, Vectorize, R2, maupun D1", async () => {
+        stubPasal({});
+        const pesan = ["peraturan", "indeks_vektor", "ringkas", "ekstrak_pdf"].flatMap((t) =>
+          ["/akn/id/act/perpres/2020/1", "/akn/id/act/permen/2024/5", "/akn/id/act/keppres/2000/1"].map((u) => luar(t, u)),
+        );
+        const hasil = await jalankanAntrean(l, pesan);
+        expect(hasil).toEqual({ diakui: pesan.length, diulang: [] });
+        expect(panggilanPasal).toEqual([]);
+        expect(l.ai.panggilan).toEqual([]);
+        expect(l.vektor.simpan.size).toBe(0);
+        expect(l.r2.objek.size).toBe(0);
+        expect(l.antrean.pesan).toEqual([]);
+        expect(await log("antrean_ingest")).toEqual([]); // tidak memenuhi sync_log dengan ribuan baris "dilewati"
+        expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(0);
+      });
+
+      it("pesan dari Cron membawa kode jenis, sehingga jenis bersegmen tak baku (POJK, PERMEN) pun dibuang tanpa memanggil pasal.id", async () => {
+        stubPasal({});
+        const pesan = [
+          { tipe: "peraturan", frbr_uri: "/akn/id/act/peraturan-ojk/2019/1-pojk-04-2019", alasan: "baru", jenis: "POJK" },
+          { tipe: "peraturan", frbr_uri: "/akn/id/act/permenkeu/2024/5", alasan: "baru", jenis: "PERMEN" },
+        ] as PesanIngest[];
+        expect(await jalankanAntrean(l, pesan)).toEqual({ diakui: 2, diulang: [] });
+        expect(panggilanPasal).toEqual([]);
+      });
+
+      it("pesan lama tanpa jenis untuk URI tak baku diambil dulu, lalu tidak disimpan karena jenisnya di luar cakupan", async () => {
+        const uri = "/akn/id/act/permenkeu/2024/5";
+        stubPasal({ detail: { [uri]: { work: { id: 5, frbr_uri: uri, title: "Tata Cara", type: "PERMEN", number: "5", year: 2024, status: "berlaku" }, articles: [], relationships: [] } } });
+        expect(await jalankanAntrean(l, [luar("peraturan", uri)])).toEqual({ diakui: 1, diulang: [] });
+        expect(panggilanPasal).toHaveLength(1);
+        expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(0);
+      });
+
+      it("pesan indeks, ringkasan, dan ekstraksi untuk baris D1 di luar cakupan (bersegmen tak baku) tidak memanggil AI atau Vectorize", async () => {
+        const uri = "/akn/id/act/peraturan-ojk/2019/1-pojk-04-2019";
+        await sisipkan(l, [{ uri, jenis: "POJK", nomor: "1-pojk-04-2019", tahun: 2019, judul: "Pesangon Pegawai", pasal: [{ nomor: "1", isi: "Pegawai berhak atas uang pesangon." }] }]);
+        await l.r2.put("pdf/x.pdf", new TextEncoder().encode("%PDF-1.4 uji"));
+        stubPasal({});
+        const pesan = ["indeks_vektor", "ringkas", "ekstrak_pdf"].map((t) => luar(t, uri));
+        expect(await jalankanAntrean(l, pesan)).toEqual({ diakui: 3, diulang: [] });
+        expect(l.ai.panggilan).toEqual([]);
+        expect(l.vektor.simpan.size).toBe(0);
+        expect(l.antrean.pesan).toEqual([]);
+        expect((await l.db.prepare(`SELECT indexed_at, ringkasan FROM laws WHERE frbr_uri = ?`).bind(uri).first())).toEqual({ indexed_at: null, ringkasan: null });
+      });
+
+      it("pesan untuk peraturan dalam cakupan di batch yang sama tetap diproses", async () => {
+        stubPasal({ detail: { "/akn/id/act/uu/2003/13": detailUU13 } });
+        const hasil = await jalankanAntrean(l, [luar("peraturan", "/akn/id/act/perpres/2020/1"), pesanUU13]);
+        expect(hasil).toEqual({ diakui: 2, diulang: [] });
+        expect(panggilanPasal).toHaveLength(1);
+        expect((await l.db.prepare(`SELECT frbr_uri FROM laws`).all()).results).toEqual([{ frbr_uri: "/akn/id/act/uu/2003/13" }]);
+      });
+
+      it("URI dalam cakupan tetapi jenis yang dilaporkan pasal.id di luar cakupan: tidak disimpan", async () => {
+        stubPasal({ detail: { "/akn/id/act/uu/2003/13": { ...detailUU13, work: { ...detailUU13.work, type: "PERPRES" } } } });
+        const hasil = await jalankanAntrean(l, [pesanUU13]);
+        expect(hasil).toEqual({ diakui: 1, diulang: [] });
+        expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(0);
+        expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM articles`).first<{ n: number }>())?.n).toBe(0);
+        expect(l.antrean.pesan).toEqual([]);
+      });
+
+      it("dengan cakupan dilebarkan, pesan Perpres diproses seperti biasa", async () => {
+        l.env.CAKUPAN_JENIS = "UU,PERPRES";
+        const detail = { work: { id: 1, frbr_uri: "/akn/id/act/perpres/2020/1", title: "Komisi", type: "PERPRES", number: "1", year: 2020, status: "berlaku" }, articles: [], relationships: [] };
+        stubPasal({ detail: { "/akn/id/act/perpres/2020/1": detail } });
+        expect(await jalankanAntrean(l, [luar("peraturan", "/akn/id/act/perpres/2020/1")])).toEqual({ diakui: 1, diulang: [] });
+        expect((await l.db.prepare(`SELECT jenis FROM laws`).first())).toEqual({ jenis: "PERPRES" });
+      });
     });
   });
 });

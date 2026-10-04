@@ -89,8 +89,15 @@ describe("kunciCache", () => {
   it("menormalkan kueri dan mengurutkan filter agar kunci stabil", () => {
     const a = kunciCache({ ...dasar, filters: { jenis: ["PP", "UU"], status: ["berlaku"], tahun_min: 2000 } });
     const b = kunciCache({ ...dasar, query: "phk pesangon", filters: { jenis: ["UU", "PP"], status: ["berlaku"], tahun_min: 2000 } });
-    expect(a).toBe("cari:v3:phk pesangon|hybrid|20|PP,UU|berlaku|2000|||");
+    expect(a).toBe("cari:v4:PERPPU,PP,TAP_MPR,UU,UUD|phk pesangon|hybrid|20|PP,UU|berlaku|2000|||");
     expect(b).toBe(a);
+  });
+
+  it("memasukkan cakupan ke kunci, tak peduli urutannya: mengubah cakupan tidak menyajikan hasil lama", () => {
+    const bawaan = kunciCache(dasar);
+    expect(kunciCache(dasar, ["UU", "PP"])).not.toBe(bawaan);
+    expect(kunciCache(dasar, ["PP", "UU"])).toBe(kunciCache(dasar, ["UU", "PP"]));
+    expect(kunciCache(dasar, ["UUD", "TAP_MPR", "UU", "PERPPU", "PP"])).toBe(bawaan);
   });
 
   it("memasukkan semua filter ke kunci (regresi: 'bidang' pernah tertinggal)", () => {

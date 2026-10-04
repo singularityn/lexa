@@ -97,7 +97,8 @@ export const PERATURAN_CONTOH: Array<PeraturanUji & { tanggal?: string; ringkasa
   {
     uri: "/akn/id/act/perpres/2018/16", jenis: "PERPRES", nomor: "16", tahun: 2018, judul: "Pengadaan Barang/Jasa Pemerintah",
     instansi: "Presiden Republik Indonesia", bidang: "KEUANGAN NEGARA", bpkId: "73888", tanggal: "2018-03-22",
-    // Metadata saja: isinya belum diekstrak.
+    // Sengaja di luar cakupan (UUD, Tap MPR, UU, Perppu, PP): tersimpan di D1 tetapi tidak tampil di mana pun,
+    // seperti baris Perpres, Permen, dan POJK yang sudah ada di produksi. Memperagakan dan menguji penyembunyiannya.
   },
 ];
 

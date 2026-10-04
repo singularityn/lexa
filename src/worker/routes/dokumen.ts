@@ -9,6 +9,7 @@
 
 import { Hono } from "hono";
 import { urlBpk } from "../lib/pasal";
+import { bacaCakupan, klausaCakupan, type Cakupan } from "../../shared/cakupan";
 
 type Bindings = Env;
 
@@ -25,11 +26,12 @@ interface BarisBerkas {
   r2_text_key: string | null;
 }
 
-async function ambilBaris(db: D1Database, uri: string): Promise<BarisBerkas | null> {
+/** Peraturan di luar cakupan (shared/cakupan.ts) diperlakukan seperti tidak ada: berkasnya pun tidak disajikan. */
+async function ambilBaris(db: D1Database, uri: string, cakupan: Cakupan): Promise<BarisBerkas | null> {
   return db
     .prepare(
       `SELECT frbr_uri, jenis, nomor, tahun, judul, bpk_id, r2_pdf_key, r2_text_key
-         FROM laws WHERE frbr_uri = ?`,
+         FROM laws WHERE frbr_uri = ? AND ${klausaCakupan(cakupan, "jenis")}`,
     )
     .bind(uri)
     .first<BarisBerkas>();
@@ -48,7 +50,7 @@ dokumen.get("/status", async (c) => {
   const uri = c.req.query("uri");
   if (!uri) return c.json({ error: "uri_kosong", message: "Parameter `uri` wajib diisi." }, 400);
 
-  const l = await ambilBaris(c.env.DB, uri);
+  const l = await ambilBaris(c.env.DB, uri, bacaCakupan(c.env.CAKUPAN_JENIS));
   if (!l) return c.json({ error: "tidak_ditemukan", message: `${uri} tidak ada di indeks.` }, 404);
 
   return c.json({
@@ -68,7 +70,7 @@ dokumen.get("/pdf", async (c) => {
   const uri = c.req.query("uri");
   if (!uri) return c.json({ error: "uri_kosong", message: "Parameter `uri` wajib diisi." }, 400);
 
-  const l = await ambilBaris(c.env.DB, uri);
+  const l = await ambilBaris(c.env.DB, uri, bacaCakupan(c.env.CAKUPAN_JENIS));
   if (!l) return c.json({ error: "tidak_ditemukan", message: `${uri} tidak ada di indeks.` }, 404);
 
   if (!l.r2_pdf_key) {
@@ -131,7 +133,7 @@ dokumen.get("/teks", async (c) => {
   const uri = c.req.query("uri");
   if (!uri) return c.json({ error: "uri_kosong", message: "Parameter `uri` wajib diisi." }, 400);
 
-  const l = await ambilBaris(c.env.DB, uri);
+  const l = await ambilBaris(c.env.DB, uri, bacaCakupan(c.env.CAKUPAN_JENIS));
   if (!l?.r2_text_key) {
     return c.json({ error: "teks_belum_ada", message: "Teks peraturan ini belum tersedia." }, 404);
   }

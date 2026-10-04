@@ -10,6 +10,7 @@
 
 import type { SearchHit, SearchFilters, SearchMode, SearchResponse, StatusPeraturan } from "../../shared/types";
 import { rapikanNomorPasal } from "../../shared/label";
+import { CAKUPAN_BAWAAN, dalamCakupan, klausaCakupan, type Cakupan } from "../../shared/cakupan";
 import { uraiKueri, kueriUntukEmbedding } from "./query";
 import { klausaBidang } from "./bidang";
 import { pilihDalam } from "./d1";
@@ -57,9 +58,14 @@ function kunciKandidat(k: { frbr_uri: string; article_id: string | null }): stri
   return k.article_id ?? k.frbr_uri;
 }
 
-/** Bangun klausa WHERE untuk filter, beserta parameter terikatnya. */
-function bangunFilter(f: SearchFilters, alias = "l"): { sql: string; params: unknown[] } {
-  const klausa: string[] = [];
+/**
+ * Bangun klausa WHERE untuk filter, beserta parameter terikatnya.
+ *
+ * Cakupan (shared/cakupan.ts) selalu ikut, dan sebagai klausa tersendiri di samping filter jenis pengguna: yang
+ * lolos adalah irisannya, jadi `?jenis=PERPRES` tidak bisa membuka peraturan di luar cakupan.
+ */
+function bangunFilter(f: SearchFilters, cakupan: Cakupan, alias = "l"): { sql: string; params: unknown[] } {
+  const klausa: string[] = [klausaCakupan(cakupan, `${alias}.jenis`)];
   const params: unknown[] = [];
 
   if (f.jenis?.length) {
@@ -98,9 +104,10 @@ async function cariFtsPeraturan(
   db: D1Database,
   ekspresi: string,
   filters: SearchFilters,
+  cakupan: Cakupan,
   limit: number,
 ): Promise<KandidatMentah[]> {
-  const f = bangunFilter(filters);
+  const f = bangunFilter(filters, cakupan);
   // Bobot bm25: judul 3x, tentang 2x, ringkasan 1x — judul paling menentukan.
   const sql = `
     SELECT l.frbr_uri AS frbr_uri,
@@ -130,9 +137,10 @@ async function cariFtsPasal(
   db: D1Database,
   ekspresi: string,
   filters: SearchFilters,
+  cakupan: Cakupan,
   limit: number,
 ): Promise<KandidatMentah[]> {
-  const f = bangunFilter(filters);
+  const f = bangunFilter(filters, cakupan);
   const sql = `
     SELECT a.id AS article_id,
            a.frbr_uri AS frbr_uri,
@@ -166,8 +174,8 @@ async function cariFtsPasal(
  * dengan ribuan dokumen lain. Pencarian ini memakai indeks unik
  * `idx_laws_citation` sehingga biayanya satu baris, bukan pemindaian.
  */
-async function cariSitasi(db: D1Database, sitasi: Sitasi, filters: SearchFilters): Promise<KandidatMentah[]> {
-  const f = bangunFilter(filters);
+async function cariSitasi(db: D1Database, sitasi: Sitasi, filters: SearchFilters, cakupan: Cakupan): Promise<KandidatMentah[]> {
+  const f = bangunFilter(filters, cakupan);
 
   // Jenis dicocokkan longgar. Pengurai memetakan "perda" menjadi "PERDA_PROV",
   // sementara basis data bisa menyimpannya sebagai "PERDA" — kalau dicocokkan
@@ -351,10 +359,15 @@ interface BarisHidrasi {
   isi: string | null;
 }
 
-/** Ambil metadata lengkap untuk kandidat yang lolos, dalam satu kueri. */
+/**
+ * Ambil metadata lengkap untuk kandidat yang lolos, dalam satu kueri.
+ * Kandidat yang peraturannya di luar cakupan tidak ikut terambil, jadi tidak muncul di hasil: kolom `jenis`
+ * di sini adalah penentu terakhir (kandidat vektor baru disaring kasar lewat URI-nya, lihat `cari`).
+ */
 async function hidrasi(
   db: D1Database,
   kunci: Array<{ frbr_uri: string; article_id: string | null }>,
+  cakupan: Cakupan,
 ): Promise<Map<string, BarisHidrasi>> {
   if (!kunci.length) return new Map();
 
@@ -367,7 +380,7 @@ async function hidrasi(
   const lawRows = await db
     .prepare(
       `SELECT frbr_uri, jenis, nomor, tahun, judul, tentang, status
-         FROM laws WHERE frbr_uri IN (${uriUnik.map(() => "?").join(",")})`,
+         FROM laws WHERE frbr_uri IN (${uriUnik.map(() => "?").join(",")}) AND ${klausaCakupan(cakupan, "jenis")}`,
     )
     .bind(...uriUnik)
     .all<Omit<BarisHidrasi, "article_id" | "nomor_pasal" | "ayat" | "isi">>();
@@ -419,6 +432,8 @@ export interface KonteksPencarian {
   cache: KVNamespace;
   embeddingModel: string;
   cacheTtl: number;
+  /** Jenis peraturan yang boleh muncul di hasil (shared/cakupan.ts). */
+  cakupan: Cakupan;
 }
 
 /**
@@ -432,11 +447,14 @@ export interface KonteksPencarian {
  *
  * Versi kunci dinaikkan ke v2 supaya entri lama yang sudah telanjur salah
  * tidak terpakai lagi setelah perbaikan ini disebar. v3: peringkat kata-yang-diketik di atas sinonim,
- * cadangan longgar, dan penanda `longgar` pada jawaban.
+ * cadangan longgar, dan penanda `longgar` pada jawaban. v4: cakupan jenis ikut kunci, sehingga hasil lama
+ * yang memuat Perpres, Permen, dan POJK tidak disajikan lagi sesudah cakupan dibatasi (dan mengubah
+ * `CAKUPAN_JENIS` di kemudian hari tidak perlu menunggu TTL).
  */
-export function kunciCache(o: OpsiPencarian): string {
+export function kunciCache(o: OpsiPencarian, cakupan: Cakupan = CAKUPAN_BAWAAN): string {
   const f = o.filters ?? {};
   const bagian = [
+    [...cakupan].sort().join(","),
     o.query.toLowerCase().trim(),
     o.mode ?? "hybrid",
     o.limit ?? 20,
@@ -447,7 +465,7 @@ export function kunciCache(o: OpsiPencarian): string {
     f.instansi ?? "",
     f.bidang ?? "",
   ];
-  return `cari:v3:${bagian.join("|")}`;
+  return `cari:v4:${bagian.join("|")}`;
 }
 
 export async function cari(
@@ -476,17 +494,26 @@ export async function cari(
   // Sitasi diperiksa pada semua mode, termasuk "makna". Pengguna yang mengetik
   // "UU 13/2003" menginginkan dokumen itu, bukan yang menyerupainya — apa pun
   // mode yang kebetulan sedang aktif.
+  //
+  // Sitasi ke jenis di luar cakupan ("Perpres 12/2020") tidak dicari, tetapi dikabarkan di jawaban agar
+  // antarmuka bisa menyatakan terus terang bahwa peraturannya memang tidak dimuat. Pencarian kata tetap
+  // jalan: peraturan dalam cakupan yang menyebutnya masih berguna bagi pencari.
+  let luarCakupan: string | undefined;
   if (terurai.sitasi) {
-    daftar.push(await cariSitasi(ctx.db, terurai.sitasi, filters).catch(() => []));
+    if (dalamCakupan(ctx.cakupan, terurai.sitasi.jenis)) {
+      daftar.push(await cariSitasi(ctx.db, terurai.sitasi, filters, ctx.cakupan).catch(() => []));
+    } else {
+      luarCakupan = terurai.sitasi.jenis;
+    }
   }
 
   if (mode === "hybrid" || mode === "keyword") {
     const adaSinonim = terurai.ftsLiteral !== terurai.fts;
     const [peraturan, pasal, peraturanHarfiah, pasalHarfiah] = await Promise.all([
-      cariFtsPeraturan(ctx.db, terurai.fts, filters, kedalaman).catch(() => []),
-      cariFtsPasal(ctx.db, terurai.fts, filters, kedalaman).catch(() => []),
-      adaSinonim ? cariFtsPeraturan(ctx.db, terurai.ftsLiteral, filters, kedalaman).catch(() => []) : [],
-      adaSinonim ? cariFtsPasal(ctx.db, terurai.ftsLiteral, filters, kedalaman).catch(() => []) : [],
+      cariFtsPeraturan(ctx.db, terurai.fts, filters, ctx.cakupan, kedalaman).catch(() => []),
+      cariFtsPasal(ctx.db, terurai.fts, filters, ctx.cakupan, kedalaman).catch(() => []),
+      adaSinonim ? cariFtsPeraturan(ctx.db, terurai.ftsLiteral, filters, ctx.cakupan, kedalaman).catch(() => []) : [],
+      adaSinonim ? cariFtsPasal(ctx.db, terurai.ftsLiteral, filters, ctx.cakupan, kedalaman).catch(() => []) : [],
     ]);
     if (adaSinonim) {
       // Daftar harfiah lebih dulu: bila dokumen yang sama muncul di kedua daftar, cuplikannya (yang
@@ -507,8 +534,8 @@ export async function cari(
     const kandidatKetat = new Set([...peraturan, ...pasal, ...peraturanHarfiah, ...pasalHarfiah].map(kunciKandidat));
     if (kandidatKetat.size < MIN_HASIL_KETAT && terurai.ftsLonggar) {
       const [peraturanLonggar, pasalLonggar] = await Promise.all([
-        cariFtsPeraturan(ctx.db, terurai.ftsLonggar, filters, kedalaman).catch(() => []),
-        cariFtsPasal(ctx.db, terurai.ftsLonggar, filters, kedalaman).catch(() => []),
+        cariFtsPeraturan(ctx.db, terurai.ftsLonggar, filters, ctx.cakupan, kedalaman).catch(() => []),
+        cariFtsPasal(ctx.db, terurai.ftsLonggar, filters, ctx.cakupan, kedalaman).catch(() => []),
       ]);
       daftar.push(denganBobot(peraturanLonggar, BOBOT_FTS_LONGGAR), denganBobot(pasalLonggar, BOBOT_FTS_LONGGAR));
       if (peraturanLonggar.length + pasalLonggar.length > 0) longgar = { penuh: kandidatKetat.size };
@@ -519,19 +546,26 @@ export async function cari(
     const vektor = await cariVektor(
       ctx.ai, ctx.vectorize, ctx.embeddingModel, opsi.query, filters, kedalaman,
     ).catch(() => []); // Vectorize/AI gagal tidak boleh menjatuhkan pencarian keyword
+    // Vektor peraturan yang kini di luar cakupan masih ada di Vectorize dan tidak disaring di sana (filter metadata
+    // hanya bekerja untuk vektor yang diunggah setelah indeks metadatanya dibuat, dan itu tak bisa dipastikan dari
+    // luar). Mereka gugur di `hidrasi` menurut kolom `jenis`.
     daftar.push(await rapikanKandidatVektor(ctx.db, vektor).catch(() => vektor));
   }
 
   const gabungan = gabungRRF(daftar);
-  const terurut = [...gabungan.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+  // Hidrasi lebih banyak daripada `limit`: kandidat vektor di luar cakupan gugur di `hidrasi`, dan halaman hasil
+  // tetap harus penuh bila masih ada kandidat dalam cakupan di bawahnya. Batas 100 mengikuti batas parameter D1.
+  const terurut = [...gabungan.values()].sort((a, b) => b.score - a.score).slice(0, Math.min(limit * 2, 100));
   const meta = await hidrasi(
     ctx.db,
     terurut.map((t) => ({ frbr_uri: t.frbr_uri, article_id: t.article_id })),
+    ctx.cakupan,
   );
 
   const hits: SearchHit[] = [];
   const sudahAda = new Set<string>();
   for (const t of terurut) {
+    if (hits.length >= limit) break;
     let m = meta.get(t.article_id ?? t.frbr_uri);
     if (!m) continue;
     // Vektor yatim: pasalnya sudah diganti saat peraturan diingest ulang, tetapi vektor lama
@@ -568,6 +602,7 @@ export async function cari(
     expanded_terms: terurai.terms,
     cached: false,
     ...(longgar ? { longgar } : {}),
+    ...(luarCakupan ? { di_luar_cakupan: { jenis: luarCakupan, cakupan: [...ctx.cakupan] } } : {}),
   };
 }
 
@@ -576,7 +611,7 @@ export async function cariDenganCache(
   ctx: KonteksPencarian,
   opsi: OpsiPencarian,
 ): Promise<SearchResponse> {
-  const kunci = kunciCache(opsi);
+  const kunci = kunciCache(opsi, ctx.cakupan);
 
   const tersimpan = await ctx.cache.get<SearchResponse>(kunci, "json").catch(() => null);
   if (tersimpan) return { ...tersimpan, cached: true };

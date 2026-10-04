@@ -17,6 +17,7 @@ import { tanya } from "./routes/tanya";
 import { koleksi } from "./routes/koleksi";
 import { layaniPeraturan } from "./lib/pratinjau";
 import { PasalClient, PasalRateLimitError } from "./lib/pasal";
+import { bacaCakupan, klausaCakupan } from "../shared/cakupan";
 import {
   jadwalkanSinkronisasi,
   prosesPesanIngest,
@@ -59,10 +60,12 @@ app.get("/robots.txt", (c) => {
 
 app.get("/sitemap.xml", async (c) => {
   const asal = new URL(c.req.url).origin;
-  // Batas protokol sitemap: 50.000 URL per berkas (produksi memuat 5.634 peraturan pada 3 Okt 2026). Bila peraturan
-  // melampauinya, ganti dengan indeks sitemap.
+  // Batas protokol sitemap: 50.000 URL per berkas (produksi memuat 3.542 peraturan dalam cakupan pada 4 Okt 2026).
+  // Bila peraturan melampauinya, ganti dengan indeks sitemap. Hanya yang dalam cakupan: halaman peraturan di
+  // luarnya menjawab "di luar cakupan" dan tidak layak diindeks mesin pencari.
   const { results } = await c.env.DB.prepare(
-    `SELECT frbr_uri, updated_at FROM laws ORDER BY tahun DESC LIMIT 50000`,
+    `SELECT frbr_uri, updated_at FROM laws WHERE ${klausaCakupan(bacaCakupan(c.env.CAKUPAN_JENIS), "jenis")}
+      ORDER BY tahun DESC LIMIT 50000`,
   ).all<{ frbr_uri: string; updated_at: string }>();
 
   const entri = results
@@ -90,6 +93,7 @@ function konteksIngest(env: Env): KonteksIngest {
     pasal: new PasalClient({ base: env.PASAL_API_BASE, token: env.PASAL_API_TOKEN }),
     embeddingModel: env.EMBEDDING_MODEL,
     summaryModel: env.SUMMARY_MODEL,
+    cakupan: bacaCakupan(env.CAKUPAN_JENIS),
   };
 }
 

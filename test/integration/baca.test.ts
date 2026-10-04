@@ -124,18 +124,18 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
     it("filter bidang dengan nama panjang (pola LIKE D1 maksimal 50 byte) tetap bekerja, termasuk di tengah rangkaian", async () => {
       const panjang = "PEMBENTUKAN, PERUBAHAN, DAN PEMBUBARAN KOMISI / KOMITE / BADAN / DEWAN / STAF KHUSUS / TIM / PANITIA";
       await sisipkan(l, [
-        { uri: "/akn/id/act/perpres/2020/1", jenis: "PERPRES", nomor: "1", tahun: 2020, judul: "Komisi Contoh", bidang: panjang },
-        { uri: "/akn/id/act/perpres/2021/2", jenis: "PERPRES", nomor: "2", tahun: 2021, judul: "Lembaga Contoh", bidang: `ADMINISTRASI - ${panjang} - PEREKONOMIAN` },
-        { uri: "/akn/id/act/perpres/2022/3", jenis: "PERPRES", nomor: "3", tahun: 2022, judul: "Lain", bidang: "PEREKONOMIAN" },
+        { uri: "/akn/id/act/pp/2020/1", jenis: "PP", nomor: "1", tahun: 2020, judul: "Komisi Contoh", bidang: panjang },
+        { uri: "/akn/id/act/pp/2021/2", jenis: "PP", nomor: "2", tahun: 2021, judul: "Lembaga Contoh", bidang: `ADMINISTRASI - ${panjang} - PEREKONOMIAN` },
+        { uri: "/akn/id/act/pp/2022/3", jenis: "PP", nomor: "3", tahun: 2022, judul: "Lain", bidang: "PEREKONOMIAN" },
       ]);
       const res = await panggil(l, `/api/laws?bidang=${encodeURIComponent(panjang)}`);
       expect(res.status).toBe(200);
       const b = await json<Telusur>(res);
-      expect(b.laws.map((x) => x.frbr_uri).sort()).toEqual(["/akn/id/act/perpres/2020/1", "/akn/id/act/perpres/2021/2"]);
+      expect(b.laws.map((x) => x.frbr_uri).sort()).toEqual(["/akn/id/act/pp/2020/1", "/akn/id/act/pp/2021/2"]);
       // Juga lewat pencarian kata kunci.
       const cari = await panggil(l, `/api/search?q=contoh&mode=keyword&bidang=${encodeURIComponent(panjang)}`);
       const hasil = await json<{ hits: Array<{ frbr_uri: string }> }>(cari);
-      expect(new Set(hasil.hits.map((h) => h.frbr_uri))).toEqual(new Set(["/akn/id/act/perpres/2020/1", "/akn/id/act/perpres/2021/2"]));
+      expect(new Set(hasil.hits.map((h) => h.frbr_uri))).toEqual(new Set(["/akn/id/act/pp/2020/1", "/akn/id/act/pp/2021/2"]));
     });
 
     it("karakter wildcard pada filter bidang adalah karakter biasa, bukan pola", async () => {

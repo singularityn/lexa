@@ -10,6 +10,7 @@ import { jadwalkanSinkronisasi, type KonteksIngest, type PesanIngest } from "../
 import { labelSitasi, rapikanArtikel, rapikanLaw } from "../../shared/label";
 import { pilihDalam } from "../lib/d1";
 import { aliasUri, selesaikanUri } from "../lib/uri";
+import { bacaCakupan, dalamCakupan, klausaCakupan, uriJelasDiLuarCakupan } from "../../shared/cakupan";
 
 type Bindings = Env;
 
@@ -25,6 +26,7 @@ function konteksPencarian(env: Env): KonteksPencarian {
     cache: env.CACHE,
     embeddingModel: env.EMBEDDING_MODEL,
     cacheTtl: Number(env.SEARCH_CACHE_TTL) || 3600,
+    cakupan: bacaCakupan(env.CAKUPAN_JENIS),
   };
 }
 
@@ -38,6 +40,7 @@ function konteksIngest(env: Env): KonteksIngest {
     pasal: new PasalClient({ base: env.PASAL_API_BASE, token: env.PASAL_API_TOKEN }),
     embeddingModel: env.EMBEDDING_MODEL,
     summaryModel: env.SUMMARY_MODEL,
+    cakupan: bacaCakupan(env.CAKUPAN_JENIS),
   };
 }
 
@@ -115,8 +118,10 @@ api.get("/laws", async (c) => {
   const page = Math.max(Number(c.req.query("page")) || 1, 1);
   const perPage = Math.min(Math.max(Number(c.req.query("per_page")) || 20, 1), 100);
   const f = bacaFilters(c);
+  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
 
-  const where: string[] = ["1=1"];
+  // Cakupan selalu berlaku, di samping filter jenis pengguna (irisannya yang lolos).
+  const where: string[] = [klausaCakupan(cakupan, "jenis")];
   const params: unknown[] = [];
 
   if (f.jenis?.length) {
@@ -173,6 +178,9 @@ api.get("/laws", async (c) => {
     ).bind(...params).all<{ value: string; count: number }>(),
   ]);
 
+  // Tautan lama seperti /telusuri?jenis=PERPRES tidak menghasilkan apa pun; pemanggil diberi tahu sebabnya.
+  const luarCakupan = f.jenis?.filter((j) => !dalamCakupan(cakupan, j)).slice(0, 5);
+
   const body: BrowseResponse = {
     laws: rows.results.map(rapikanLaw),
     total: total?.n ?? 0,
@@ -183,6 +191,8 @@ api.get("/laws", async (c) => {
       tahun: fTahun.results.map((r) => ({ ...r, label: r.value })),
       status: fStatus.results.map((r) => ({ ...r, label: r.value })),
     },
+    cakupan: [...cakupan],
+    ...(luarCakupan?.length ? { di_luar_cakupan: luarCakupan } : {}),
   };
 
   return c.json(body, 200, { "Cache-Control": "public, max-age=300" });
@@ -248,6 +258,15 @@ api.get("/laws/detail", async (c) => {
   if (!law) {
     return c.json({ error: "tidak_ditemukan", message: `Peraturan ${uriMinta} belum ada di indeks.` }, 404);
   }
+  // Baris di luar cakupan masih tersimpan (disembunyikan, bukan dihapus), tetapi tidak disajikan.
+  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
+  if (!dalamCakupan(cakupan, law.jenis)) {
+    return c.json({
+      error: "di_luar_cakupan",
+      message: `${labelSitasi(law)} di luar cakupan Lexa saat ini (${cakupan.join(", ")}).`,
+      cakupan,
+    }, 404);
+  }
   const uri = law.frbr_uri;
 
   const [articles, relations] = await Promise.all([
@@ -271,7 +290,12 @@ api.get("/laws/detail", async (c) => {
   const body: LawDetailResponse = {
     law: rapikanLaw(law),
     articles: articles.results.map(rapikanArtikel),
-    relations: await perbaikiRelasiBeralias(c.env.DB, relations.results),
+    // Relasi ke peraturan di luar cakupan disembunyikan: tautannya hanya akan berujung "di luar cakupan". Tujuan yang
+    // barisnya ada dinilai dari kolom `jenis`-nya; yang belum ter-ingest dari URI-nya (hanya yang jelas di luar yang disembunyikan).
+    relations: await perbaikiRelasiBeralias(
+      c.env.DB,
+      relations.results.filter((r) => (r.jenis !== null ? dalamCakupan(cakupan, r.jenis) : !uriJelasDiLuarCakupan(cakupan, r.to_uri))),
+    ),
     bpk_url: urlBpk(c.env.BPK_BASE, law.bpk_id),
   };
 
@@ -290,10 +314,11 @@ api.get("/suggest", async (c) => {
   if (q.length < 2 || new TextEncoder().encode(q).length > 44) return c.json({ suggestions: [] });
 
   const pola = `${q}%`;
+  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
   const [laws, populer] = await Promise.all([
     c.env.DB.prepare(
       `SELECT frbr_uri, jenis, nomor, tahun, judul FROM laws
-        WHERE judul LIKE ? COLLATE NOCASE ORDER BY tahun DESC LIMIT 6`,
+        WHERE judul LIKE ? COLLATE NOCASE AND ${klausaCakupan(cakupan, "jenis")} ORDER BY tahun DESC LIMIT 6`,
     ).bind(`%${pola}`).all<{ frbr_uri: string; jenis: string; nomor: string; tahun: number; judul: string }>(),
 
     c.env.DB.prepare(
@@ -319,20 +344,25 @@ api.get("/suggest", async (c) => {
 // GET /api/stats — kesehatan indeks, dipakai halaman status
 // ---------------------------------------------------------------------------
 api.get("/stats", async (c) => {
+  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
+  const dalam = klausaCakupan(cakupan, "jenis");
   const [total, perJenis, terbaru, sync] = await Promise.all([
+    // Jumlah pasal dari `laws.jumlah_pasal` (sama dengan COUNT(*) pada articles: 71.627 di produksi pada 4 Okt
+    // 2026), bukan menghitung tabel articles: beranda memanggil ini pada setiap kunjungan, dan menghitung
+    // puluhan ribu baris pasal setiap kali membebani kuota baca D1 tanpa menambah ketelitian.
     c.env.DB.prepare(
       `SELECT COUNT(*) AS laws,
-              (SELECT COUNT(*) FROM articles) AS articles,
-              (SELECT COUNT(*) FROM laws WHERE indexed_at IS NOT NULL) AS terindeks
-         FROM laws`,
+              COALESCE(SUM(jumlah_pasal), 0) AS articles,
+              COALESCE(SUM(CASE WHEN indexed_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS terindeks
+         FROM laws WHERE ${dalam}`,
     ).first<{ laws: number; articles: number; terindeks: number }>(),
 
     c.env.DB.prepare(
-      `SELECT jenis, COUNT(*) AS n FROM laws GROUP BY jenis ORDER BY n DESC LIMIT 15`,
+      `SELECT jenis, COUNT(*) AS n FROM laws WHERE ${dalam} GROUP BY jenis ORDER BY n DESC LIMIT 15`,
     ).all<{ jenis: string; n: number }>(),
 
     c.env.DB.prepare(
-      `SELECT frbr_uri, jenis, nomor, tahun, judul FROM laws
+      `SELECT frbr_uri, jenis, nomor, tahun, judul FROM laws WHERE ${dalam}
         ORDER BY created_at DESC LIMIT 8`,
     ).all<{ frbr_uri: string; jenis: string; nomor: string; tahun: number; judul: string }>(),
 
@@ -343,6 +373,7 @@ api.get("/stats", async (c) => {
   ]);
 
   return c.json({
+    cakupan,
     total_peraturan: total?.laws ?? 0,
     total_pasal: total?.articles ?? 0,
     terindeks_vektor: total?.terindeks ?? 0,
@@ -375,9 +406,14 @@ api.post("/admin/sync", async (c) => {
     batas?: number;
   };
   const body = await c.req.json<BodySync>().catch(() => ({}) as BodySync);
+  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
+  const dalam = klausaCakupan(cakupan, "jenis");
+  const luarCakupan = (extra: Record<string, unknown>) =>
+    c.json({ error: "di_luar_cakupan", message: `Di luar cakupan Lexa saat ini: ${cakupan.join(", ")}.`, cakupan, ...extra }, 400);
 
   // Ingest satu peraturan spesifik.
   if (body.uri) {
+    if (uriJelasDiLuarCakupan(cakupan, body.uri)) return luarCakupan({ uri: body.uri });
     const pesan: PesanIngest = { tipe: "peraturan", frbr_uri: body.uri, alasan: "manual" };
     await c.env.INGEST_QUEUE.send(pesan);
     return c.json({ status: "diantrekan", uri: body.uri });
@@ -390,6 +426,7 @@ api.post("/admin/sync", async (c) => {
       `SELECT frbr_uri FROM laws
         WHERE (ringkasan IS NULL OR TRIM(ringkasan) = '')
           AND (r2_text_key IS NOT NULL OR jumlah_pasal > 0)
+          AND ${dalam}
         ORDER BY tahun DESC LIMIT ?`,
     ).bind(batas).all<{ frbr_uri: string }>();
 
@@ -422,6 +459,7 @@ api.post("/admin/sync", async (c) => {
               MAX(CAST(nomor_pasal AS INTEGER)) - COUNT(DISTINCT nomor_pasal) AS hilang
          FROM articles
         WHERE nomor_pasal GLOB '[0-9]*'
+          AND frbr_uri IN (SELECT frbr_uri FROM laws WHERE ${dalam})
         GROUP BY frbr_uri
        HAVING hilang > 0
         ORDER BY hilang DESC
@@ -454,11 +492,16 @@ api.post("/admin/sync", async (c) => {
     });
   }
 
+  // Jenis di luar cakupan tidak pernah disapu. Permintaan yang seluruhnya di luar cakupan ditolak terang-terangan,
+  // bukan dijawab "selesai" dengan nol hasil yang mudah disangka sapuan yang sehat.
+  const diabaikan = body.jenis?.filter((j) => !dalamCakupan(cakupan, j));
+  if (body.jenis?.length && diabaikan?.length === body.jenis.length) return luarCakupan({ jenis: body.jenis });
+
   const hasil = await jadwalkanSinkronisasi(konteksIngest(c.env), {
     jenis: body.jenis,
     maksHalaman: body.maks_halaman,
   });
-  return c.json({ status: "selesai", ...hasil });
+  return c.json({ status: "selesai", ...hasil, ...(diabaikan?.length ? { diabaikan } : {}) });
 });
 
 // ---------------------------------------------------------------------------

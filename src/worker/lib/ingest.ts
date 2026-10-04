@@ -16,6 +16,7 @@
 
 import type { Article, Law } from "../../shared/types";
 import { labelSitasi } from "../../shared/label";
+import { dalamCakupan, klausaCakupan, uriJelasDiLuarCakupan, type Cakupan } from "../../shared/cakupan";
 import { PasalClient, PasalRateLimitError } from "./pasal";
 import { uraikanPasal, idPasalUnik, nilaiKualitasEkstraksi, type LaporanKualitas } from "./bpk";
 
@@ -26,6 +27,11 @@ export type PesanIngest =
       alasan: "baru" | "perubahan" | "manual";
       /** Id internal pasal.id, bila diketahui dari hasil pendaftaran. */
       pasal_id?: number;
+      /**
+       * Kode jenis dari daftar pasal.id (diisi Cron). Konsumer memakainya untuk membuang peraturan di luar cakupan
+       * tanpa memanggil pasal.id; pesan tanpa ini (lama, atau dari sapuan manual per URI) dinilai dari URI-nya.
+       */
+      jenis?: string;
     }
   | { tipe: "indeks_vektor"; frbr_uri: string }
   | { tipe: "ekstrak_pdf"; frbr_uri: string; r2_key: string }
@@ -43,6 +49,8 @@ export interface KonteksIngest {
   pasal: PasalClient;
   embeddingModel: string;
   summaryModel: string;
+  /** Jenis peraturan yang boleh masuk (shared/cakupan.ts). Yang lain tidak disinkronkan maupun disimpan. */
+  cakupan: Cakupan;
 }
 
 async function catatLog(
@@ -81,12 +89,17 @@ async function tulisState(db: D1Database, key: string, value: string) {
     .run();
 }
 
-/** Jenis peraturan yang disinkronkan, diurutkan dari yang paling sering dicari. */
+/**
+ * Jenis yang dikenal sebagai filter `type` pada `GET /laws` pasal.id (terbukti di produksi), diurutkan dari yang
+ * paling sering dicari. Cron hanya menyapu irisannya dengan cakupan (shared/cakupan.ts). UUD dan TAP_MPR tidak ada
+ * di daftar ini karena kode filternya belum terbukti: keduanya masuk lewat impor BPK, dan sapuan manual
+ * (`POST /api/admin/sync {"jenis":["UUD"]}`) boleh mencobanya.
+ */
 const JENIS_PRIORITAS = ["UU", "PERPPU", "PP", "PERPRES", "PERMEN", "POJK", "PBI"];
 
 /**
  * Tahap 1 — dijalankan Cron.
- * Menyapu daftar peraturan per jenis dan mengantrekan yang baru/berubah.
+ * Menyapu daftar peraturan per jenis (hanya yang dalam cakupan) dan mengantrekan yang baru/berubah.
  */
 export async function jadwalkanSinkronisasi(
   ctx: KonteksIngest,
@@ -96,6 +109,10 @@ export async function jadwalkanSinkronisasi(
   const maksHalaman = opsi.maksHalaman ?? 4; // 4 x 50 = 200 dokumen per jenis per jalan
   const UKURAN = 50;
 
+  // Jenis di luar cakupan tidak pernah ditarik, juga bila diminta lewat sapuan manual.
+  const jenisCron = JENIS_PRIORITAS.filter((j) => dalamCakupan(ctx.cakupan, j));
+  const jenisManual = opsi.jenis?.filter((j) => dalamCakupan(ctx.cakupan, j));
+
   // Urutan jenis diputar agar tidak ada yang kelaparan. Dengan urutan tetap, satu jenis di depan
   // yang selalu kena batas laju (di produksi: PERPRES, setelah ±12 permintaan) menghentikan
   // seluruh sapuan sebelum jenis di belakangnya sempat disentuh: kursor PERMEN, POJK, dan PBI
@@ -103,10 +120,14 @@ export async function jadwalkanSinkronisasi(
   // sebelumnya terhenti, dan kembali ke awal hanya setelah satu putaran penuh selesai.
   // Sapuan manual untuk jenis tertentu (opsi.jenis) tidak memutar apa pun.
   const putar = !opsi.jenis;
-  let daftarJenis = opsi.jenis ?? JENIS_PRIORITAS;
+  let daftarJenis = jenisManual ?? jenisCron;
   if (putar) {
-    const i = JENIS_PRIORITAS.indexOf((await bacaState(ctx.db, "jenis_awal")) ?? "");
-    if (i > 0) daftarJenis = [...JENIS_PRIORITAS.slice(i), ...JENIS_PRIORITAS.slice(0, i)];
+    const i = jenisCron.indexOf((await bacaState(ctx.db, "jenis_awal")) ?? "");
+    if (i > 0) daftarJenis = [...jenisCron.slice(i), ...jenisCron.slice(0, i)];
+  }
+  if (!daftarJenis.length) {
+    await catatLog(ctx.db, "jadwal_sinkronisasi", "gagal", "dilewati: tidak ada jenis dalam cakupan yang diminta", 0);
+    return { diantrekan: 0, diperiksa: 0 };
   }
 
   // Tekanan balik. Kapasitas nyata pipeline dibatasi rate limit pasal.id
@@ -117,8 +138,9 @@ export async function jadwalkanSinkronisasi(
   //
   // Peraturan dengan `jumlah_pasal = 0` adalah yang metadatanya sudah masuk
   // tetapi isinya belum, jadi ia menjadi ukuran kasar antrean yang belum tuntas.
+  // Hanya yang dalam cakupan: sisa lama di luar cakupan tidak akan pernah diisi dan tak boleh menahan sapuan.
   const tertunda = await ctx.db
-    .prepare(`SELECT COUNT(*) AS n FROM laws WHERE jumlah_pasal = 0`)
+    .prepare(`SELECT COUNT(*) AS n FROM laws WHERE jumlah_pasal = 0 AND ${klausaCakupan(ctx.cakupan, "jenis")}`)
     .first<{ n: number }>();
 
   const BATAS_TERTUNDA = 400;
@@ -199,6 +221,9 @@ export async function jadwalkanSinkronisasi(
       const petaAda = new Map(sudahAda.map((r) => [r.frbr_uri, r]));
 
       for (const law of hasil.laws) {
+        // Filter `type` pasal.id yang salah nama diabaikan diam-diam (lihat lib/pasal.ts), jadi daftar yang
+        // diterima tetap diperiksa: satu peraturan di luar cakupan lolos sama dengan beban yang tak diinginkan.
+        if (!dalamCakupan(ctx.cakupan, law.jenis)) continue;
         const ada = petaAda.get(law.frbr_uri);
         // Ambil ulang bila belum ada, statusnya berubah, atau isinya kosong
         // (mis. ingest sebelumnya gagal di tengah jalan).
@@ -208,6 +233,7 @@ export async function jadwalkanSinkronisasi(
             frbr_uri: law.frbr_uri,
             alasan: ada ? "perubahan" : "baru",
             pasal_id: hasil.idNumerik.get(law.frbr_uri),
+            jenis: law.jenis,
           });
           diantrekan++;
         }
@@ -222,7 +248,7 @@ export async function jadwalkanSinkronisasi(
   }
 
   // Satu putaran penuh selesai tanpa kena batas laju: mulai dari awal lagi.
-  if (putar) kursorBaru.set("jenis_awal", JENIS_PRIORITAS[0]);
+  if (putar) kursorBaru.set("jenis_awal", jenisCron[0]);
   await kirimAntrean();
   await simpanKursor();
 
@@ -326,7 +352,8 @@ export async function indeksVektor(ctx: KonteksIngest, frbrUri: string): Promise
     .prepare(`SELECT jenis, nomor, tahun, judul, status FROM laws WHERE frbr_uri = ?`)
     .bind(frbrUri)
     .first<{ jenis: string; nomor: string; tahun: number; judul: string; status: string }>();
-  if (!law) return 0;
+  // Peraturan di luar cakupan tidak diindeks: panggilan embedding Workers AI dan vektor tersimpan adalah beban terbesar.
+  if (!law || !dalamCakupan(ctx.cakupan, law.jenis)) return 0;
 
   const { results: articles } = await ctx.db
     .prepare(`SELECT id, nomor_pasal, ayat, isi FROM articles WHERE frbr_uri = ? ORDER BY urutan`)
@@ -438,6 +465,9 @@ export async function ekstrakPdf(
   r2Key: string,
 ): Promise<number> {
   const mulai = Date.now();
+  // Peraturan di luar cakupan tidak diekstrak (konversi PDF memakai Workers AI).
+  const baris = await ctx.db.prepare(`SELECT jenis FROM laws WHERE frbr_uri = ?`).bind(frbrUri).first<{ jenis: string }>();
+  if (baris && !dalamCakupan(ctx.cakupan, baris.jenis)) return 0;
   const objek = await ctx.docs.get(r2Key);
   if (!objek) throw new Error(`Berkas ${r2Key} tidak ada di R2`);
 
@@ -559,7 +589,7 @@ export async function buatRingkasan(ctx: KonteksIngest, frbrUri: string): Promis
     .prepare(`SELECT judul, jenis, nomor, tahun, r2_text_key FROM laws WHERE frbr_uri = ?`)
     .bind(frbrUri)
     .first<{ judul: string; jenis: string; nomor: string; tahun: number; r2_text_key: string | null }>();
-  if (!law) return false;
+  if (!law || !dalamCakupan(ctx.cakupan, law.jenis)) return false;
 
   // Sumber teks: arsip R2 bila ada, kalau tidak rangkai dari pasal di D1.
   let teks = "";
@@ -613,6 +643,20 @@ export async function prosesPesanIngest(
   ctx: KonteksIngest,
   pesan: PesanIngest,
 ): Promise<void> {
+  // Pesan lama yang masih tertinggal di antrean untuk peraturan yang jelas di luar cakupan dibuang tanpa menyentuh
+  // pasal.id (jatah 60 permintaan per menitnya dipakai bersama daftar dan detail) maupun Workers AI. Jenis yang
+  // segmen URI-nya tak baku (POJK, PERMEN) tidak bisa dinilai dari URI: pesan `peraturan` dari Cron membawa kode
+  // jenisnya, dan sisanya dinilai oleh baris D1 (indeksVektor, buatRingkasan, ekstrakPdf) atau setelah detailnya
+  // diambil. Sengaja tidak dicatat ke sync_log: ribuan baris "dilewati" menutupi catatan sinkronisasi yang berarti.
+  const luarCakupan =
+    pesan.tipe === "peraturan" && pesan.jenis !== undefined
+      ? !dalamCakupan(ctx.cakupan, pesan.jenis)
+      : uriJelasDiLuarCakupan(ctx.cakupan, pesan.frbr_uri);
+  if (luarCakupan) {
+    console.log("Lexa: pesan ingest dilewati, di luar cakupan:", pesan.tipe, pesan.frbr_uri);
+    return;
+  }
+
   if (pesan.tipe === "indeks_vektor") {
     await indeksVektor(ctx, pesan.frbr_uri);
     return;
@@ -629,6 +673,11 @@ export async function prosesPesanIngest(
   }
 
   const { law, articles, relations } = await ctx.pasal.getLaw(pesan.frbr_uri);
+  // URI dan jenis yang dilaporkan pasal.id seharusnya sejalan; bila tidak, yang menentukan adalah jenisnya.
+  if (!dalamCakupan(ctx.cakupan, law.jenis)) {
+    console.log("Lexa: peraturan tidak disimpan, di luar cakupan:", law.jenis, law.frbr_uri);
+    return;
+  }
   await simpanPeraturan(ctx.db, law, articles, relations);
 
   // Arsipkan teks lengkap ke R2 supaya tetap punya salinan bila sumber hilang.

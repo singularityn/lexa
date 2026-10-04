@@ -67,6 +67,9 @@ async function siapkan(): Promise<Lingkungan> {
   l.aset.gantiCangkang = (html) => html.replace("</body>", `${PITA}</body>`);
   // Kunci tiruan agar tombol "Masuk dengan Google" tampil; alurnya dialihkan ke /__dev/masuk (lihat bawah).
   Object.assign(l.env, { GOOGLE_CLIENT_ID: "pratinjau-lokal", GOOGLE_CLIENT_SECRET: "pratinjau-lokal" });
+  // Cakupan peraturan sama dengan produksi (bawaan di src/shared/cakupan.ts). CAKUPAN_JENIS melebarkannya, mis. untuk
+  // melihat salinan data produksi yang memuat Perpres atau POJK: CAKUPAN_JENIS=UU,PERPPU,PP,PERPRES npm run dev:node.
+  if (process.env.CAKUPAN_JENIS) l.env.CAKUPAN_JENIS = process.env.CAKUPAN_JENIS;
   l.ai.jawaban = (masukan) => jawabanContoh(masukan.messages.at(-1)?.content ?? "");
   if (DATA_NYATA) {
     await indeksSemua(l, await muatDataNyata(l, DATA_NYATA));

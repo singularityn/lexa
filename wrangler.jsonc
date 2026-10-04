@@ -26,6 +26,15 @@
   // oleh deploy.
   "keep_vars": true,
 
+  // Cakupan peraturan (src/shared/cakupan.ts): kode jenis seperti kolom laws.jenis, dipisah koma.
+  // Untuk saat ini hanya UUD dan setara (Tap MPR), UU termasuk Perppu, dan PP, supaya beban aplikasi tetap
+  // ringan. Jenis lain tidak disinkronkan, diimpor, dicari, maupun ditampilkan; barisnya yang sudah ada hanya
+  // disembunyikan, bukan dihapus. Melebarkan cakupan: tambahkan kodenya di sini (mis. "...,PP,PERPRES"), sebarkan,
+  // lalu jalankan sinkronisasi. Nilai kosong atau tak sah dibaca sebagai daftar bawaan di kode.
+  "vars": {
+    "CAKUPAN_JENIS": "UUD,TAP_MPR,UU,PERPPU,PP"
+  },
+
   // --- Resource yang sudah ada di akun Cloudflare ---
   "d1_databases": [
     {

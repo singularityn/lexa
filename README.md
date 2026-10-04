@@ -11,8 +11,11 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
 
 ## Yang dilakukan
 
+- **Cakupan terbatas**: untuk saat ini hanya UUD dan setara (Tap MPR), undang-undang termasuk Perppu, dan
+  peraturan pemerintah, supaya beban aplikasi tetap ringan. Peraturan di bawahnya (Perpres, Permen, POJK,
+  Perda, ...) tidak disinkronkan, diimpor, dicari, maupun ditampilkan. Lihat [Cakupan peraturan](#cakupan-peraturan).
 - **Pencarian hybrid** untuk peraturan dan pasal: jalur sitasi ("UU 13/2003", "Peraturan Pemerintah
-  Republik Indonesia Nomor 35 Tahun 2021", "POJK 48/POJK.04/2016"), kata kunci (FTS5 dengan
+  Republik Indonesia Nomor 35 Tahun 2021", "Perppu 2/2022"), kata kunci (FTS5 dengan
   stemmer dan sinonim bahasa Indonesia), dan makna (Vectorize + embedding Workers AI), digabung dengan
   Reciprocal Rank Fusion, di-cache di KV. Tiga mode: Gabungan, Kata kunci, Makna.
 - **Telusur** dengan filter dan facet: jenis, tahun, status, instansi, bidang.
@@ -155,13 +158,49 @@ cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignor
 | `BPK_BASE` | variabel | basis URL peraturan.bpk.go.id untuk tautan sumber |
 | `PASAL_API_BASE` | variabel | basis URL API pasal.id |
 | `SEARCH_CACHE_TTL` | variabel | TTL cache pencarian dalam detik (bawaan 3600) |
+| `CAKUPAN_JENIS` | variabel (di `wrangler.jsonc`) | kode jenis peraturan yang dicakup, dipisah koma; bawaan `UUD,TAP_MPR,UU,PERPPU,PP` (lihat [Cakupan peraturan](#cakupan-peraturan)) |
 | `ADMIN_TOKEN` | secret | token untuk `/api/admin/*` dan `/api/impor/*` |
 | `PASAL_API_TOKEN` | secret | token API pasal.id; tanpa ini sinkronisasi terjadwal dilewati |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | secret | login Google; tanpa ini aplikasi berjalan sebagai tamu |
 
 Secret dipasang dengan `npx wrangler secret put NAMA` (jangan lewat pipa, newline ikut tersimpan) atau
-lewat dashboard. Nilainya tidak pernah masuk Git. Variabel teks saat ini dipertahankan dari dashboard
-(`keep_vars` di `wrangler.jsonc`).
+lewat dashboard. Nilainya tidak pernah masuk Git. Variabel teks lain saat ini dipertahankan dari dashboard
+(`keep_vars` di `wrangler.jsonc`); `CAKUPAN_JENIS` ditetapkan di `wrangler.jsonc` dan ikut setiap deploy.
+
+## Cakupan peraturan
+
+Atas keputusan pemilik, cakupan Lexa dibatasi pada **UUD (dan yang setara: Ketetapan MPR), undang-undang
+(termasuk Perppu), dan peraturan pemerintah**. Alasannya beban: ukuran D1 dan indeks FTS, jumlah vektor di
+Vectorize, pemanggilan Workers AI, dan terutama antrean ingest yang dibatasi laju pasal.id (360 detail per jam)
+yang sebelumnya terkuras oleh PERPRES dan jenis lain sehingga PP tertinggal. Satu daftar (`CAKUPAN_JENIS`, bawaan
+di `src/shared/cakupan.ts`) dipakai di semua tempat:
+
+| Pintu | Perilaku untuk jenis di luar cakupan |
+|---|---|
+| Cron sinkronisasi | hanya menyapu UU, PERPPU, dan PP (irisan cakupan dengan kode filter `type` pasal.id yang terbukti); daftar yang ikut jenis lain dibuang; sisa peraturan kosong di luar cakupan tidak menahan sapuan |
+| Konsumer antrean | pesan lama untuk URI di luar cakupan di-ack tanpa menyentuh pasal.id, AI, Vectorize, R2, atau D1; peraturan yang jenisnya dilaporkan pasal.id di luar cakupan tidak disimpan |
+| `POST /api/admin/sync` | `jenis` di luar cakupan ditolak (400 `di_luar_cakupan`); `uri`, `ringkas_kosong`, dan `perbaiki_celah` hanya menyentuh yang dalam cakupan |
+| Impor BPK | dokumen di luar cakupan dimasukkan ke `ditolak` dengan alasannya (skrip panen cukup membaca daftar itu); PDF untuk baris lama di luar cakupan ditolak (422) |
+| Pencarian (kata, sitasi, makna) | kata kunci dan sitasi disaring di SQL, hasil makna saat hidrasi (kandidat vektor lama tak bisa disaring di Vectorize; hidrasi mengambil 2x `limit` agar halaman tetap penuh); sitasi seperti "Perpres 12/2020" tidak dicari tetapi dijelaskan (`di_luar_cakupan` pada jawaban) |
+| Telusur, facet, saran, bidang, statistik, sitemap, pratinjau tautan, peta relasi, berkas dokumen | hanya yang dalam cakupan; relasi ke peraturan di luar cakupan disembunyikan |
+| `GET /api/laws/detail`, `/api/relasi/graf` | 404 dengan `error: "di_luar_cakupan"` dan daftar cakupan; antarmuka menampilkan penjelasannya |
+
+Penentu cakupan adalah kolom `laws.jenis`. Segmen FRBR URI hanya jalan pintas untuk yang jelas di luar cakupan
+(`perpres`, `keppres`, ...): POJK memakai segmen `peraturan-ojk` dan 204 PERMEN tersebar pada puluhan segmen
+(`permenkeu`, `mk`, `pkpu`, ...), sehingga URI yang tak dikenal dinilai "belum jelas" dan diserahkan ke barisnya. Pesan
+Cron membawa kode jenis untuk alasan yang sama.
+
+Baris peraturan yang sudah tersimpan di D1 (di produksi pada 4 Okt 2026: 2.131 dari 5.673; PERPRES 1.380, POJK 547,
+PERMEN 204) **hanya disembunyikan, tidak dihapus**, sehingga melebarkan cakupan kelak langsung menampakkannya
+kembali tanpa menarik ulang. Menghapusnya (opsional; mengurangi D1, FTS5, Vectorize, dan R2) tidak dilakukan
+otomatis; langkahnya ada di [docs/hubungkan-github-cloudflare.md](docs/hubungkan-github-cloudflare.md#cakupan-peraturan).
+
+Melebarkan cakupan: tambahkan kodenya ke `vars.CAKUPAN_JENIS` di `wrangler.jsonc` (mis.
+`"UUD,TAP_MPR,UU,PERPPU,PP,PERPRES"`), sebarkan, lalu jalankan sinkronisasi. Jenis yang disapu Cron hanyalah yang
+kode filternya dikenal pasal.id (`UU`, `PERPPU`, `PP`, `PERPRES`, `PERMEN`, `POJK`, `PBI`); `UUD` dan `TAP_MPR` masuk lewat
+impor BPK, atau dicoba dengan `POST /api/admin/sync {"jenis":["UUD"]}`. Nilai kosong atau tak sah dibaca sebagai
+bawaan, bukan sebagai "semua" maupun "tidak ada". Pratinjau lokal memakai bawaan yang sama
+(`CAKUPAN_JENIS=UU,PP,PERPRES npm run dev:node` untuk melebarkannya).
 
 ## Migrasi D1
 
@@ -227,10 +266,15 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 
 ## Isu yang diketahui
 
-- Cakupan data produksi (diperiksa 3 Okt 2026): 5.634 peraturan dan 71.481 baris pasal; 5.451 peraturan (97%) punya
-  teks pasal, 183 hanya metadata (halaman bacanya menampilkan "Teks pasal belum tersedia" dan tautan ke naskah
-  resmi), dan 1.578 punya PDF yang diarsipkan. Sinkronisasi Cron harian berhenti karena batas laju pasal.id pada
-  PERPRES (lihat `sync_log` dan langkah pemulihan di docs/hubungkan-github-cloudflare.md).
+- Cakupan data produksi (diperiksa 4 Okt 2026): 5.673 peraturan tersimpan dan 71.627 baris pasal. Yang dalam cakupan
+  (disajikan): 3.542 peraturan (UU 1.950, PP 1.422, Perppu 168, Tap MPR 2) dengan 56.170 baris pasal; 3.420 di antaranya
+  punya teks pasal dan 122 hanya metadata (halaman bacanya menampilkan "Teks pasal belum tersedia" dan tautan ke naskah
+  resmi). Sisanya, 2.131 peraturan di luar cakupan, tersimpan tetapi disembunyikan. Belum ada UUD 1945 di D1: ia masuk
+  lewat impor BPK (jenis `UUD` diterima) atau bila pasal.id menyediakannya.
+- Kursor sinkronisasi `offset:PP` = 4400, jauh di atas 1.422 PP yang tersimpan: sapuan lama membuang halaman saat kena
+  batas laju (sudah diperbaiki), dan kursor menandakan pasal.id memuat sedikitnya ±4.400 PP. Setelah cakupan dibatasi,
+  PERPRES tak lagi menghabiskan jatah laju, sehingga PP terisi bertahap (≤200 per hari, ditahan bila lebih dari 400
+  peraturan menunggu isinya). Bila hendak dipercepat atau ditahan, lihat pemulihan di docs/hubungkan-github-cloudflare.md.
 - Teks hasil ekstraksi versi lama masih memuat sisa: 401 peraturan punya baris pasal ber-id `~n` (umumnya bagian
   Penjelasan yang memakai ulang nomor pasal; UU 13/2003 punya 72 baris seperti itu dan UU 11/2020 744) dan 289
   memuat teks "PENJELASAN" di dalam baris pasalnya. Parser saat ini berhenti di judul "PENJELASAN"; antarmuka
@@ -245,7 +289,8 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 - Stemmer belum melucuti awalan "be-" ("bekerja" tidak menghasilkan "kerja"; `it.todo`).
 - Sitasi bernama kementerian dikenali sebagai Peraturan Menteri umum: basis data tidak menyimpan kementerian
   pada judul PERMEN, jadi "Peraturan Menteri Kesehatan Nomor 29 Tahun 2025" menampilkan semua PERMEN 29/2025.
-  Penomoran resmi selain POJK (mis. "91/PMK.05/2024") belum dikenali.
+  Penomoran resmi selain POJK (mis. "91/PMK.05/2024") belum dikenali. (Keduanya di luar cakupan saat ini; logikanya
+  tetap dijaga tes dengan cakupan dilebarkan.)
 - Ambang relevansi Tanya Lexa berbasis peringkat RRF, bukan kemiripan mutlak: enam hasil vektor teratas
   selalu lolos untuk kueri apa pun. Perlindungan utamanya prompt yang tegas; ambang sesungguhnya butuh skor
   kosinus dari Vectorize.
@@ -255,7 +300,7 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
   tertinggal; lihat langkah pemulihan di docs/hubungkan-github-cloudflare.md).
 - D1 dan R2 berada di Amerika Timur dengan read replication nonaktif, sehingga latensi dari Indonesia tinggi.
 - Pembatas laju `/api/tanya` berbasis KV (tidak atomik); sitemap satu berkas (batas protokol 50.000
-  URL; produksi memuat 5.634) dan memakai URL berparameter.
+  URL; produksi memuat 3.542 dalam cakupan) dan memakai URL berparameter.
 - Pratinjau tautan hanya ada untuk halaman peraturan (`/peraturan?uri=…`), dengan gambar merek yang sama untuk
   semuanya; halaman lain (mis. hasil pencarian) memakai pratinjau umum situs. WhatsApp dan Telegram menyimpan
   pratinjau per tautan, jadi tautan yang pernah dibagikan sebelum fitur ini ada bisa tetap tampil lama.

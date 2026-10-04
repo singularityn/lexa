@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, istilahDariKueri, jangkarDariId,
+  angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, daftarCakupan, istilahDariKueri, jangkarDariId,
   hitungPasal, judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, namaPasal, nomorTahun, pisahJudul,
   bacaIsiPasal, pecahRujukan, peraturanPerubahan, pisahPenjelasanTertanam, pratinjauPeraturan, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
 } from "../public/js/format.js";
@@ -23,6 +23,14 @@ describe("pelabelan", () => {
     expect(sitasiPasal(uu, "82", "1")).toBe("UU 13/2003 Pasal 82 ayat (1)");
     expect(sitasiPasal(uu, "156")).toBe("UU 13/2003 Pasal 156");
     expect(sitasiPasal(uu, null)).toBe("UU 13/2003");
+  });
+
+  it("cakupan ditulis sebagai bagian kalimat dari kode jenis", () => {
+    expect(daftarCakupan(["UUD", "TAP_MPR", "UU", "PERPPU", "PP"])).toBe("UUD, TAP MPR, UU, PERPPU, dan PP");
+    expect(daftarCakupan(["UU", "PP", "PERDA_PROV"])).toBe("UU, PP, dan PERDA");
+    expect(daftarCakupan(["UU", "PP"])).toBe("UU dan PP");
+    expect(daftarCakupan(["UU"])).toBe("UU");
+    expect(daftarCakupan([])).toBe("");
   });
 
   it("POJK lama bernomor slug ditulis dengan penomoran resminya", () => {

@@ -1,7 +1,7 @@
 // @ts-check
 import { h, isi } from "../dom.js";
 import { api, dibatalkan } from "../api.js";
-import { angka, judulRingkas, kodeJenis, labelJenis, sitasi, urlPeraturan } from "../format.js";
+import { angka, daftarCakupan, judulRingkas, kodeJenis, labelJenis, sitasi, urlPeraturan } from "../format.js";
 import { kerangka, kotakGalat } from "../komponen/umum.js";
 
 const NAMA_PEKERJAAN = /** @type {Record<string, string>} */ ({
@@ -33,7 +33,8 @@ export default async function status(ctx) {
     isi(
       ctx.akar,
       h("h1", null, "Status data"),
-      h("p", { class: "redup" }, "Keadaan indeks Lexa saat ini. Data berasal dari sinkronisasi terjadwal dan impor manual, sehingga belum tentu mencakup semua peraturan."),
+      h("p", { class: "redup" }, "Keadaan indeks Lexa saat ini. Data berasal dari sinkronisasi terjadwal dan impor manual, sehingga belum tentu mencakup semua peraturan yang termasuk cakupan."),
+      s.cakupan?.length ? h("p", { class: "redup" }, `Cakupan Lexa saat ini: ${daftarCakupan(s.cakupan)}. Peraturan jenis lain tidak dimuat.`) : null,
       h(
         "section",
         { class: "statistik", "aria-label": "Ringkasan" },

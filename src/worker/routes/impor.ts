@@ -13,6 +13,7 @@ import { tokenSah } from "../lib/auth";
 import { pilihDalam } from "../lib/d1";
 import { headerCors as corsUntuk } from "../lib/cors";
 import type { PesanIngest } from "../lib/ingest";
+import { bacaCakupan, dalamCakupan } from "../../shared/cakupan";
 
 type Bindings = Env;
 
@@ -56,6 +57,7 @@ impor.post("/manifest", async (c) => {
     );
   }
 
+  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
   const statements: D1PreparedStatement[] = [];
   const diterima: string[] = [];
   const ditolak: Array<{ bpk_id: string; alasan: string }> = [];
@@ -67,6 +69,12 @@ impor.post("/manifest", async (c) => {
       continue;
     }
     const { law, relasi } = hasil;
+    // Skrip panen tidak perlu tahu cakupan: ia mengirim apa adanya dan membaca `ditolak` untuk tahu mana yang
+    // tak dipakai (dan tak perlu diunggah PDF-nya).
+    if (!dalamCakupan(cakupan, law.jenis)) {
+      ditolak.push({ bpk_id: doc.bpk_id, alasan: `di luar cakupan (${law.jenis}); cakupan: ${cakupan.join(", ")}` });
+      continue;
+    }
 
     statements.push(
       c.env.DB.prepare(
@@ -147,12 +155,21 @@ impor.put("/pdf", async (c) => {
     );
   }
 
-  const law = await c.env.DB.prepare(`SELECT frbr_uri FROM laws WHERE frbr_uri = ?`)
-    .bind(uri).first<{ frbr_uri: string }>();
+  const law = await c.env.DB.prepare(`SELECT frbr_uri, jenis FROM laws WHERE frbr_uri = ?`)
+    .bind(uri).first<{ frbr_uri: string; jenis: string }>();
   if (!law) {
     return c.json(
       { error: "tidak_dikenal", message: `Kirim manifest untuk ${uri} lebih dulu.` },
       409,
+      headerCors(c),
+    );
+  }
+  // Baris lama di luar cakupan masih ada di D1 (disembunyikan, bukan dihapus); PDF-nya tidak boleh menambah R2.
+  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
+  if (!dalamCakupan(cakupan, law.jenis)) {
+    return c.json(
+      { error: "di_luar_cakupan", message: `${uri} (${law.jenis}) di luar cakupan Lexa: ${cakupan.join(", ")}.` },
+      422,
       headerCors(c),
     );
   }

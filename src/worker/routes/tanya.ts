@@ -16,6 +16,7 @@ import { cari, type KonteksPencarian } from "../lib/search";
 import { bacaSesi } from "../lib/sesi";
 import type { SearchHit } from "../../shared/types";
 import { labelSitasi, rapikanNomorPasal } from "../../shared/label";
+import { bacaCakupan } from "../../shared/cakupan";
 
 type Bindings = Env;
 
@@ -97,6 +98,7 @@ tanya.post("/", async (c) => {
     cache: c.env.CACHE,
     embeddingModel: c.env.EMBEDDING_MODEL,
     cacheTtl: Number(c.env.SEARCH_CACHE_TTL) || 3600,
+    cakupan: bacaCakupan(c.env.CAKUPAN_JENIS),
   };
 
   const hasil = await cari(ctxCari, { query: pertanyaan, mode: "hybrid", limit: 12 });

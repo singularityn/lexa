@@ -21,7 +21,7 @@ export default function tentang(ctx) {
         h("li", null, h("strong", null, "Bukan nasihat hukum. "), "Lexa alat bantu riset. Untuk keputusan penting, rujuk naskah resmi dan konsultasikan dengan ahli hukum."),
         h("li", null, h("strong", null, "Data bisa tertinggal atau keliru. "), "Status “berlaku/dicabut/diubah” dan isi pasal bersumber dari data pihak lain dan hasil konversi PDF otomatis. Perubahan terbaru mungkin belum tercermin. Gunakan tombol ", h("em", null, "Laporkan kesalahan"), " bila menemukan yang janggal."),
         h("li", null, h("strong", null, "AI bisa salah. "), "Ringkasan peraturan dan jawaban Tanya Lexa disusun model bahasa. Lexa membatasinya pada pasal yang ditemukan dan menampilkan sumbernya, tetapi tetap periksa pasal yang dikutip."),
-        h("li", null, h("strong", null, "Cakupan belum lengkap. "), "Halaman ", h("a", { href: "/status" }, "Status data"), " menunjukkan jumlah peraturan yang saat ini terindeks."),
+        h("li", null, h("strong", null, "Cakupan dibatasi. "), "Untuk saat ini Lexa hanya memuat undang-undang dasar dan ketetapan MPR, undang-undang (termasuk Perppu), dan peraturan pemerintah. Peraturan di bawahnya (Perpres, peraturan menteri, POJK, Perda, dan seterusnya) belum dimuat supaya aplikasi tetap ringan. Halaman ", h("a", { href: "/status" }, "Status data"), " menunjukkan jumlah peraturan yang saat ini terindeks."),
       ),
 
       h("h2", null, "Dari mana datanya"),

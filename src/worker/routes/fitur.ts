@@ -10,6 +10,7 @@ import { selesaikanUri, varianUri } from "../lib/uri";
 import { gabungkanBidang, type RingkasBidang } from "../lib/bidang";
 import type { JenisRelasi, StatusPeraturan } from "../../shared/types";
 import { labelSitasi } from "../../shared/label";
+import { bacaCakupan, dalamCakupan, klausaCakupan, uriJelasDiLuarCakupan } from "../../shared/cakupan";
 
 type Bindings = Env;
 
@@ -27,7 +28,7 @@ fitur.get("/bidang", async (c) => {
             SUM(CASE WHEN status = 'berlaku' THEN 1 ELSE 0 END) AS berlaku,
             MAX(tahun) AS tahun_terbaru
        FROM laws
-      WHERE bidang IS NOT NULL AND TRIM(bidang) != ''
+      WHERE bidang IS NOT NULL AND TRIM(bidang) != '' AND ${klausaCakupan(bacaCakupan(c.env.CAKUPAN_JENIS), "jenis")}
       GROUP BY bidang`,
   ).all<RingkasBidang>();
 
@@ -64,6 +65,31 @@ fitur.get("/relasi/graf", async (c) => {
   if (!uriMinta) return c.json({ error: "uri_kosong", message: "Parameter `uri` wajib diisi." }, 400);
   // Peraturan yang sama bisa punya dua ejaan URI (lihat lib/uri.ts); pakai yang ada di indeks.
   const uri = (await selesaikanUri(c.env.DB, [uriMinta])).get(uriMinta) ?? uriMinta;
+
+  // Cakupan (shared/cakupan.ts). Jenis tiap simpul dibaca dari tabel `laws` bila barisnya ada (penentu: segmen URI
+  // POJK dan PERMEN tak baku); simpul yang belum ter-ingest hanya disingkirkan bila URI-nya jelas milik jenis di luar cakupan.
+  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
+  const jenisDb = new Map<string, string | null>();
+  const siapkanJenis = async (uris: string[]) => {
+    const baru = [...new Set(uris)].filter((u) => !jenisDb.has(u));
+    if (!baru.length) return;
+    const baris = await pilihDalam<{ frbr_uri: string; jenis: string }>(
+      c.env.DB,
+      baru,
+      (t) => `SELECT frbr_uri, jenis FROM laws WHERE frbr_uri IN (${t})`,
+    );
+    for (const u of baru) jenisDb.set(u, null);
+    for (const b of baris) jenisDb.set(b.frbr_uri, b.jenis);
+  };
+  const boleh = (u: string) => {
+    const j = jenisDb.get(u);
+    return j ? dalamCakupan(cakupan, j) : !uriJelasDiLuarCakupan(cakupan, u);
+  };
+
+  await siapkanJenis([uri]);
+  if (!boleh(uri)) {
+    return c.json({ error: "di_luar_cakupan", message: `Di luar cakupan Lexa saat ini: ${cakupan.join(", ")}.`, cakupan }, 404);
+  }
 
   // Kedalaman dibatasi 2: pada peraturan yang banyak diubah, kedalaman 3 sudah
   // menghasilkan ratusan simpul yang tidak terbaca lagi sebagai gambar.
@@ -107,9 +133,12 @@ fitur.get("/relasi/graf", async (c) => {
       { ulang: 2 },
     );
     const kanon = await selesaikanUri(c.env.DB, mentah.flatMap((r) => [r.from_uri, r.to_uri]));
-    const hasil = mentah
+    const seragam = mentah
       .map((r) => ({ ...r, from_uri: kanon.get(r.from_uri) ?? r.from_uri, to_uri: kanon.get(r.to_uri) ?? r.to_uri }))
       .filter((r) => r.from_uri !== r.to_uri);
+    // Sisi ke peraturan di luar cakupan tidak digambar dan simpulnya tidak ditelusuri lebih jauh.
+    await siapkanJenis(seragam.flatMap((r) => [r.from_uri, r.to_uri]));
+    const hasil = seragam.filter((r) => boleh(r.from_uri) && boleh(r.to_uri));
 
     const berikut: string[] = [];
     for (const r of hasil) {

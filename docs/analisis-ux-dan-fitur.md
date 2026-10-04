@@ -27,6 +27,11 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
   uji otomatis. Daftar periksa untuk perangkat asli ada di [bagian 8](#8-menambahkan-ke-layar-utama-dan-memeriksanya-di-perangkat-asli).
 - **Claude Design bisa dipakai**, sebagai alat merancang tampilan (mockup), bukan sebagai pengganti kode. Alurnya
   di [bagian 7](#7-memakai-claude-design).
+- **Cakupan peraturan dibatasi** atas keputusan pemilik: UUD (dan setara: Tap MPR), undang-undang termasuk Perppu,
+  dan peraturan pemerintah saja, supaya beban aplikasi tidak berat. Peraturan lain (Perpres, Permen, POJK, Perda, ...)
+  tidak lagi disinkronkan, diimpor, dicari, atau ditampilkan; yang sudah tersimpan (2.131 dari 5.673 pada 4 Okt 2026)
+  hanya disembunyikan. Rinciannya di [README](../README.md#cakupan-peraturan); angka-angka di bawah yang
+  menyebut 5.634 peraturan adalah pengukuran 3 Okt 2026 sebelum pembatasan.
 
 ## 2. Cara menilai
 
@@ -87,7 +92,9 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
 - **Cakupan teks sudah luas.** Pada 3 Okt 2026, produksi memuat 5.634 peraturan (4.358 berlaku, 1.042 dicabut, 234
   diubah) dan 71.481 baris pasal. 5.451 peraturan (97%) punya teks pasal; 183 hanya metadata, sehingga halaman
   bacanya menampilkan "Teks pasal belum tersedia" dengan tautan ke naskah resmi. Yang menurunkan mutu baca bukan
-  ketiadaan teks, melainkan sisa ekstraksi lama (butir berikutnya).
+  ketiadaan teks, melainkan sisa ekstraksi lama (butir berikutnya). Sesudah cakupan dibatasi (4 Okt 2026), yang
+  disajikan 3.542 peraturan (UU 1.950, PP 1.422, Perppu 168, Tap MPR 2) dengan 56.170 baris pasal; 3.420 punya teks
+  pasal dan 122 hanya metadata.
 - **Teks yang ada berasal dari ekstraksi PDF yang memuat penanda halaman dan penjelasan.** Di produksi, 401
   peraturan punya baris pasal ber-id `~n` (4.815 baris, umumnya Penjelasan yang memakai ulang nomor pasal) dan 289
   memuat teks "PENJELASAN" di dalam baris pasalnya. Parser sekarang berhenti di "PENJELASAN"/"PASAL DEMI PASAL"
@@ -107,9 +114,9 @@ Urutan berdasarkan dampak bagi pembaca dibanding usaha. Belum dikerjakan kecuali
 
 **P1: berikutnya**
 1. **Ekstrak ulang peraturan lama dengan parser saat ini** (terutama ~400 peraturan yang Penjelasannya tercampur
-   dengan pasal), dan lengkapi 183 peraturan yang belum punya teks pasal. Sinkronisasi Cron harian berhenti di tengah jalan karena
-   batas laju pasal.id pada PERPRES (254 sampai 369 peraturan diantrekan per hari); pemulihan kursornya menunggu
-   persetujuan Anda (bagian 9).
+   dengan pasal), dan lengkapi 122 peraturan dalam cakupan yang belum punya teks pasal. Sinkronisasi Cron harian
+   berhenti di tengah jalan karena batas laju pasal.id pada PERPRES (254 sampai 369 peraturan diantrekan per hari);
+   sesudah cakupan dibatasi Cron tak lagi menyapu PERPRES, sehingga jatah lajunya dipakai UU, Perppu, dan PP.
 2. **Sorot dan catatan pada kalimat**, bukan hanya pada pasal.
 3. **Pratinjau tautan yang lebih kaya**: gambar per peraturan (sitasi dan topik di dalam gambar), dan pratinjau
    untuk hasil pencarian. Pratinjau dasar per peraturan sudah ada (bagian 4).
@@ -192,8 +199,15 @@ Daftar periksa (belum bisa saya jalankan di perangkat asli):
    UPDATE laws SET instansi = NULL WHERE instansi LIKE '%[object Object]%';
    ```
    Tampilan sudah menganggap nilai itu kosong, jadi perbaikan ini tidak mengubah apa yang dilihat pembaca.
-3. **Kursor Cron** melampaui isi basis data (lihat [hubungkan-github-cloudflare.md](hubungkan-github-cloudflare.md)):
-   `UPDATE sync_state SET value = '0' WHERE key LIKE 'offset:%';` supaya sinkronisasi mulai dari awal.
+3. **Kursor Cron** melampaui isi basis data (`offset:PP` = 4400 sedangkan 1.422 PP tersimpan; lihat
+   [hubungkan-github-cloudflare.md](hubungkan-github-cloudflare.md)). Sesudah cakupan dibatasi, PP bergerak sendiri
+   setiap hari, jadi pengaturan ulang hanya mempercepat dan opsional (`UPDATE sync_state SET value = '0' WHERE key IN
+   ('offset:UU','offset:PERPPU','offset:PP');`). Perhatikan bebannya: itu berarti ±3.000 PP tambahan yang masuk
+   cakupan (peraturan, pasal, vektor, dan ringkasan AI).
+3a. **Data di luar cakupan** (2.131 peraturan, ±15.500 baris pasal): disembunyikan, belum dihapus. Menghapusnya
+   mengecilkan D1 dan FTS5 tetapi tidak bisa dibatalkan kecuali lewat Time Travel D1, dan melebarkan cakupan
+   kelak berarti menarik ulang. Langkah dan peringatannya ada di
+   [hubungkan-github-cloudflare.md](hubungkan-github-cloudflare.md#cakupan-peraturan); tidak dijalankan tanpa persetujuan Anda.
 4. **Matikan Preview Builds** di Workers Builds bila belum: tanpa blok `previews` di `wrangler.jsonc` build pratinjau tidak didukung.
 5. **Periksa di perangkat asli** memakai daftar di bagian 8 dan laporkan yang janggal.
 6. **Coba pratinjau tautan**: bagikan satu tautan peraturan (mis. UU 13/2003) ke diri sendiri di WhatsApp atau

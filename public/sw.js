@@ -18,7 +18,7 @@
  */
 
 // <<DAFTAR-CANGKANG (dibuat oleh scripts/perbarui-sw.mjs; jangan disunting tangan)
-const VERSI = "2e6e2fc85c1a";
+const VERSI = "a038928a3430";
 const CANGKANG = [
   "/css/app.css",
   "/favicon.svg",

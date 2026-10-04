@@ -18,6 +18,7 @@ import type { DatabaseSync } from "node:sqlite";
 import worker from "../../src/worker/index";
 import { indeksVektor, type KonteksIngest } from "../../src/worker/lib/ingest";
 import { PasalClient } from "../../src/worker/lib/pasal";
+import { bacaCakupan } from "../../src/shared/cakupan";
 
 // --- SQLite -----------------------------------------------------------------
 
@@ -607,6 +608,7 @@ export function konteksIngestUji(l: Lingkungan): KonteksIngest {
     pasal: new PasalClient({ base: l.env.PASAL_API_BASE, token: l.env.PASAL_API_TOKEN }),
     embeddingModel: l.env.EMBEDDING_MODEL,
     summaryModel: l.env.SUMMARY_MODEL,
+    cakupan: bacaCakupan(l.env.CAKUPAN_JENIS),
   };
 }
 

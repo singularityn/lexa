@@ -2,7 +2,7 @@
 import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
-  angka, bacaIsiPasal, bersihkanArtefak, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, labelJenis, labelRelasi,
+  angka, bacaIsiPasal, bersihkanArtefak, daftarCakupan, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, labelJenis, labelRelasi,
   hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, peraturanPerubahan, pratinjauPeraturan, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
 import { bacaPref, HURUF, simpanPref, terapkanPref, UKURAN } from "../bacaan.js";
@@ -90,14 +90,32 @@ export default async function peraturan(ctx) {
     data = await api.detail(uri, ctx.sinyal);
   } catch (e) {
     if (dibatalkan(e)) return;
-    ctx.setJudul(e instanceof GalatApi && e.status === 404 ? "Peraturan tidak ditemukan" : "Gagal memuat peraturan");
+    const luarCakupan = e instanceof GalatApi && e.kode === "di_luar_cakupan";
+    ctx.setJudul(luarCakupan ? "Peraturan di luar cakupan" : e instanceof GalatApi && e.status === 404 ? "Peraturan tidak ditemukan" : "Gagal memuat peraturan");
     isi(
       ctx.akar,
-      e instanceof GalatApi && e.status === 404 ? tidakAda(uri) : kotakGalat(e, () => peraturan(ctx)),
+      luarCakupan ? diLuarCakupan(e.data?.cakupan ?? []) : e instanceof GalatApi && e.status === 404 ? tidakAda(uri) : kotakGalat(e, () => peraturan(ctx)),
     );
     return;
   }
   tampilkan(ctx, data, q);
+}
+
+/**
+ * Peraturan yang ada di D1 tetapi jenisnya tidak dimuat Lexa (tautan lama, atau hasil penelusuran sebelum cakupan dibatasi).
+ * @param {string[]} cakupan
+ */
+function diLuarCakupan(cakupan) {
+  return halamanKosong(
+    "Peraturan ini di luar cakupan Lexa",
+    h("p", null, cakupan.length ? `Untuk saat ini Lexa hanya memuat ${daftarCakupan(cakupan)}. Naskah peraturan ini dapat dibuka di situs BPK.` : "Naskah peraturan ini dapat dibuka di situs BPK."),
+    h(
+      "div",
+      { class: "contoh" },
+      h("a", { class: "chip", href: "/telusuri" }, "Telusuri peraturan"),
+      h("a", { class: "chip", href: "https://peraturan.bpk.go.id", target: "_blank", rel: "noopener noreferrer" }, "peraturan.bpk.go.id"),
+    ),
+  );
 }
 
 /** @param {string} uri */

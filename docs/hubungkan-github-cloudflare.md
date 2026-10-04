@@ -96,13 +96,15 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Versi aktif | Deployments | versi baru bersumber GitHub, aktif |
 | Antarmuka | buka URL dasar | beranda Lexa tampil dengan statistik; `/tentang` dibuka langsung tanpa 404 |
 | Binding | Settings > Bindings | `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` utuh |
-| Variabel | Settings > Variables and secrets | kelima variabel teks dan keempat secret masih ada |
+| Variabel | Settings > Variables and secrets | kelima variabel teks dashboard dan keempat secret masih ada, ditambah `CAKUPAN_JENIS` (dari `wrangler.jsonc`) |
 | Cron | Settings > Trigger events | `0 19 * * *` |
 | Konsumer antrean | Queues > lexa-ingest | masih terhubung ke `lexa`, DLQ dan retry seperti sebelumnya |
 | API | `/api/stats`, `/api/search?q=pesangon`, `/robots.txt`, `/sitemap.xml` | 200 dengan data |
 | Pencarian kata bertanda hubung | `/cari?q=perundang-undangan&mode=keyword` | ada hasil (bug lama: nihil) |
 | Sitasi nama panjang | `/cari?q=Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022` | Perppu 2/2022 di urutan pertama berlabel "Sitasi" (bukan UU 2/2022) |
-| Sitasi POJK | `/cari?q=POJK 1 Tahun 2019` dan `/cari?q=POJK 48/POJK.04/2016` | POJK bernomor slug ditemukan; label "POJK 48/POJK.04/2016" |
+| Cakupan | `/api/stats` | `cakupan: ["UUD","TAP_MPR","UU","PERPPU","PP"]`; `total_peraturan` hanya yang dalam cakupan (3.5xx, bukan 5.6xx) |
+| Peraturan di luar cakupan | `/peraturan?uri=/akn/id/act/perpres/2022/1` (Perpres apa pun yang tersimpan) dan `/cari?q=Perpres 22/2015` | halaman "Peraturan ini di luar cakupan Lexa"; hasil pencarian dengan catatan "Lexa belum memuat peraturan jenis PERPRES" |
+| Sitemap | `/sitemap.xml` | hanya URL UU, PP, Perppu, dan Tap MPR |
 | Relasi ke Perppu | `/peraturan?uri=/akn/id/act/uu/1998/10`, tab Relasi | "PERPU No. 2 Tahun 2022" berupa tautan aktif ke halaman Perppu 2/2022 (dulu teks mati) |
 | Pratinjau tautan | `curl -s -A 'WhatsApp/2' 'URL/peraturan?uri=/akn/id/act/uu/2003/13' \| grep -E 'og:(title\|image)'` (tanpa `-A`, seperti pembaca biasa, jawabannya cangkang umum) | `og:title` "UU 13/2003 …" dan `og:image` berupa alamat mutlak ke `/og/lexa.png`; untuk peraturan yang tidak ada, pratinjau umum situs ("Lexa: cari peraturan perundang-undangan Indonesia") |
 | Gambar pratinjau | `/og/lexa.png` | 200, `image/png` |
@@ -110,26 +112,73 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Login Google (bila diaktifkan) | `/akun` > Masuk dengan Google | kembali ke Lexa dalam keadaan masuk |
 | Cron berjalan | D1: `SELECT * FROM sync_log ORDER BY id DESC LIMIT 5;` | entri `jadwal_sinkronisasi` baru sekitar 19:00 UTC |
 
-Setelah beberapa hari, lihat `sync_log` dan `/status`: jenis PERMEN, POJK, dan PBI seharusnya mulai bergerak
-(perbaikan pembuangan pesan saat kena batas laju pasal.id, dan urutan jenis kini diputar).
+Setelah beberapa hari, lihat `sync_log` dan `/status`: entri `jadwal_sinkronisasi` hanya menyebut `UU,PERPPU,PP`
+(tidak ada lagi PERPRES, PERMEN, POJK, dan PBI), dan "rate limit pada PERPRES" tidak muncul lagi. Pesan lama untuk
+jenis di luar cakupan yang masih ada di antrean dibuang konsumer tanpa menyentuh pasal.id.
 
-### Pemulihan data sinkronisasi (sekali, SETELAH deploy ini aktif)
+### Pemulihan data sinkronisasi (opsional, SETELAH deploy ini aktif)
 
 Kode v0.1 membuang pesan yang sudah terkumpul setiap kali Cron kena batas laju, padahal kursor offset sudah
-maju. Di produksi (2 Okt 2026) kursor sudah jauh melampaui isi database: `offset:PP` = 4300 sedangkan hanya
-1.383 PP yang tersimpan, `offset:PERMEN` = 2100 sedangkan hanya 204 PERMEN. Kursor tidak mundur sendiri, jadi
-halaman yang terlewat baru terjangkau setelah kursor berputar penuh (berminggu-minggu). Untuk memindai ulang
-dari awal, jalankan di D1 (dashboard > D1 > `lexa-db` > Console, atau `npx wrangler d1 execute lexa-db --remote`):
+maju. Di produksi (4 Okt 2026) kursor melampaui isi database: `offset:PP` = 4400 sedangkan hanya 1.422 PP yang
+tersimpan (pasal.id sedikitnya memuat ±4.400 PP). Kursor tidak mundur sendiri, jadi halaman yang terlewat baru
+terjangkau setelah kursor berputar penuh. Sesudah cakupan dibatasi, PERPRES tak lagi menghabiskan jatah laju
+sehingga PP bergerak setiap hari dan putarannya selesai dalam hitungan hari; mengulang dari awal tidak lagi
+perlu, hanya mempercepat. Perhatikan bebannya: itu berarti ±3.000 PP tambahan (peraturan, pasal, vektor, dan
+ringkasan AI), yang tetap dalam cakupan. Bila ingin memindai ulang sekarang, jalankan di D1 (dashboard > D1 >
+`lexa-db` > Console, atau `npx wrangler d1 execute lexa-db --remote`):
 
 ```sql
-UPDATE sync_state SET value = '0' WHERE key LIKE 'offset:%';
+UPDATE sync_state SET value = '0' WHERE key IN ('offset:UU', 'offset:PERPPU', 'offset:PP');
 DELETE FROM sync_state WHERE key = 'jenis_awal';
 ```
 
 Aman diulang: sapuan hanya mengantrekan peraturan yang belum ada, berubah status, atau masih kosong. Antrean
-diproses ≤60 permintaan/menit dan Cron berhenti mengantrekan bila lebih dari 400 peraturan menunggu isinya,
-jadi pemulihan berjalan bertahap selama beberapa hari. Pantau lewat `/status` (jumlah peraturan naik) dan
-`SELECT COUNT(*) FROM laws;`.
+diproses ≤60 permintaan/menit dan Cron berhenti mengantrekan bila lebih dari 400 peraturan dalam cakupan menunggu
+isinya, jadi pemulihan berjalan bertahap selama beberapa hari. Pantau lewat `/status` (jumlah peraturan naik) dan
+`SELECT COUNT(*) FROM laws WHERE jenis IN ('UUD','TAP_MPR','UU','PERPPU','PP');`.
+
+### Cakupan peraturan
+
+Lexa hanya memuat UUD dan setara (Tap MPR), undang-undang termasuk Perppu, dan peraturan pemerintah; daftarnya di
+`vars.CAKUPAN_JENIS` pada `wrangler.jsonc` (bawaan di `src/shared/cakupan.ts`, dijaga sama oleh tes). Cara kerjanya ada di
+[README](../README.md#cakupan-peraturan). Dua operasi yang perlu langkah sadar:
+
+**Melebarkan cakupan** (mis. menambah Perpres): tambahkan kodenya di `CAKUPAN_JENIS`, deploy, lalu jalankan
+sinkronisasi (Cron akan menyapunya bila kodenya dikenal pasal.id: `UU`, `PERPPU`, `PP`, `PERPRES`, `PERMEN`, `POJK`, `PBI`).
+Baris yang sudah tersimpan langsung tampil lagi. Hasil pencarian lama di KV tidak ikut terpakai karena cakupan menjadi
+bagian kunci cache. Kursor sapuan jenis tambahan (`offset:PERPRES`, dst.) masih menyimpan nilai lamanya; setel ke 0 bila
+ingin memindai dari awal.
+
+**Menghapus data di luar cakupan** (opsional, TIDAK dilakukan otomatis, tidak bisa dibatalkan kecuali lewat D1 Time
+Travel): baris-barisnya hanya disembunyikan. Menghapusnya mengecilkan D1 dan indeks FTS5 (±22% baris pasal pada
+4 Okt 2026), tetapi melebarkan cakupan kelak berarti menarik ulang dari pasal.id (≤360 peraturan per jam). Urutannya:
+
+1. Catat bookmark Time Travel: `npx wrangler d1 time-travel info lexa-db`.
+2. Lihat dulu yang akan dihapus (hanya baca):
+
+   ```sql
+   SELECT jenis, COUNT(*) AS peraturan, SUM(jumlah_pasal) AS pasal FROM laws
+    WHERE jenis NOT IN ('UUD','TAP_MPR','UU','PERPPU','PP') GROUP BY jenis;
+   ```
+
+3. Hapus dari D1, anak lebih dulu, dalam potongan agar tiap pernyataan tidak terlalu berat (pemicu FTS5 ikut
+   menghapus entri indeks). Ulangi pasangan pertama sampai `changes` 0, lalu jalankan sisanya:
+
+   ```sql
+   DELETE FROM articles WHERE rowid IN (
+     SELECT rowid FROM articles WHERE frbr_uri IN
+       (SELECT frbr_uri FROM laws WHERE jenis NOT IN ('UUD','TAP_MPR','UU','PERPPU','PP')) LIMIT 2000);
+   DELETE FROM relations WHERE from_uri IN (SELECT frbr_uri FROM laws WHERE jenis NOT IN ('UUD','TAP_MPR','UU','PERPPU','PP'));
+   DELETE FROM ekstraksi_log WHERE frbr_uri IN (SELECT frbr_uri FROM laws WHERE jenis NOT IN ('UUD','TAP_MPR','UU','PERPPU','PP'));
+   DELETE FROM laws WHERE jenis NOT IN ('UUD','TAP_MPR','UU','PERPPU','PP');
+   ```
+
+4. Berkas R2 (`teks/akn/id/act/<jenis>/…` dan, bila ada, `pdf/…`) dan vektor di Vectorize (id vektor =
+   `frbr_uri` atau `frbr_uri#pasal-…`, potongan lanjutan berakhiran `~n`) tidak ikut terhapus oleh langkah D1. Keduanya
+   tidak terlihat pengguna (pencarian menyaring kandidat vektor di luar cakupan) dan murah disimpan; hapus hanya bila
+   perlu: berkas R2 dengan `npx wrangler r2 object delete lexa-pdfs/<kunci>` (kuncinya ada di kolom `r2_text_key` dan
+   `r2_pdf_key`, simpan daftarnya sebelum langkah 3), vektor lewat `deleteByIds` pada binding `VECTORIZE` atau API REST
+   Vectorize (`wrangler vectorize list-vectors lexa-index` membantu mendaftar id). Minta bantuan menyusun skripnya bila perlu.
 
 ### Rollback
 

@@ -1,13 +1,12 @@
 // @ts-check
 import { h, isi } from "../dom.js";
 import { api, dibatalkan } from "../api.js";
-import { angka, bacaFilter, queryString } from "../format.js";
+import { angka, bacaFilter, daftarCakupan, kodeJenis, queryString } from "../format.js";
 import { kotakCari } from "../komponen/kotakCari.js";
 import { modeTersimpan } from "../komponen/pilihMode.js";
 import { buatPanelFilter } from "../komponen/panelFilter.js";
 import { kartuHasil } from "../komponen/kartuHasil.js";
-import { ikon } from "../komponen/ikon.js";
-import { keadaanKosong, kerangkaHasil, kotakGalat } from "../komponen/umum.js";
+import { catatanHasil, keadaanKosong, kerangkaHasil, kotakGalat } from "../komponen/umum.js";
 import { riwayat } from "../riwayat.js";
 
 const BATAS_AWAL = 20;
@@ -112,13 +111,14 @@ export default async function cari(ctx) {
       panel.setTombolSelesai(r.hits.length ? `Tampilkan ${angka(r.hits.length)} hasil` : "Tutup");
 
       if (!r.hits.length) {
-        isi(hasil, kosong(r));
+        isi(hasil, r.di_luar_cakupan ? catatanLuarCakupan(r.di_luar_cakupan, false) : null, kosong(r));
         return;
       }
       riwayat.catatPencarian(r.query);
       const lebih = r.hits.length >= keadaan.limit && keadaan.limit < BATAS_MAKS;
       isi(
         hasil,
+        r.di_luar_cakupan ? catatanLuarCakupan(r.di_luar_cakupan, true) : null,
         r.longgar ? catatanLonggar(r.longgar.penuh) : null,
         h("ul", { class: "daftar-hasil" }, r.hits.map((hit) => kartuHasil(hit, { q: r.query }))),
         lebih
@@ -154,17 +154,26 @@ export default async function cari(ctx) {
    * @param {number} penuh jumlah hasil yang memuat semua kata
    */
   function catatanLonggar(penuh) {
-    return h(
-      "div",
-      { class: "catatan-hasil", role: "note" },
-      ikon("info"),
-      h(
-        "p",
-        null,
-        penuh === 0
-          ? "Tidak ada pasal yang memuat semua kata Anda. Yang tampil memuat sebagian kata; periksa sebelum dipakai."
-          : `Hanya ${angka(penuh)} hasil yang memuat semua kata Anda. Sisanya memuat sebagian kata.`,
-      ),
+    return catatanHasil(
+      penuh === 0
+        ? "Tidak ada pasal yang memuat semua kata Anda. Yang tampil memuat sebagian kata; periksa sebelum dipakai."
+        : `Hanya ${angka(penuh)} hasil yang memuat semua kata Anda. Sisanya memuat sebagian kata.`,
+    );
+  }
+
+  /**
+   * Kueri berbentuk sitasi ke jenis yang tidak dimuat Lexa ("Perpres 12/2020"): dinyatakan terus terang,
+   * supaya pembaca tidak mengira peraturannya ada tetapi tak ketemu.
+   * @param {{ jenis: string, cakupan: string[] }} luar
+   * @param {boolean} adaHasil hasil di bawahnya berasal dari kata-kata kueri, bukan dari sitasinya
+   */
+  function catatanLuarCakupan(luar, adaHasil) {
+    return catatanHasil(
+      `Lexa belum memuat peraturan jenis ${kodeJenis(luar.jenis)}; untuk saat ini cakupannya ${daftarCakupan(luar.cakupan)}. `,
+      adaHasil ? "Yang tampil di bawah adalah peraturan dalam cakupan yang memuat kata-kata Anda. " : "",
+      "Naskah resminya dapat dicari di ",
+      h("a", { href: "https://peraturan.bpk.go.id", target: "_blank", rel: "noopener noreferrer" }, "peraturan.bpk.go.id"),
+      ".",
     );
   }
 

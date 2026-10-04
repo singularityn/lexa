@@ -15,7 +15,7 @@
  * @typedef {{ jenis: string, n: number }} JumlahJenis
  * @typedef {{ frbr_uri: string, jenis: string, nomor: string, tahun: number, judul: string }} RingkasPeraturan
  * @typedef {{ job: string, status: string, jumlah: number, detail: string | null, created_at: string }} CatatanSinkron
- * @typedef {{ total_peraturan: number, total_pasal: number, terindeks_vektor: number, per_jenis: JumlahJenis[], terbaru: RingkasPeraturan[], sinkronisasi_terakhir: CatatanSinkron[] }} Statistik
+ * @typedef {{ cakupan: string[], total_peraturan: number, total_pasal: number, terindeks_vektor: number, per_jenis: JumlahJenis[], terbaru: RingkasPeraturan[], sinkronisasi_terakhir: CatatanSinkron[] }} Statistik
  * @typedef {{ nama: string, jumlah: number, berlaku: number, tahun_terbaru: number }} Bidang
  * @typedef {{ tipe: "peraturan" | "kueri", teks: string, uri: string | null }} Saran
  * @typedef {{ uri: string, label: string, jenis: string | null, tahun: number | null, status: string | null, ada_di_indeks: boolean, jarak: number }} SimpulGraf

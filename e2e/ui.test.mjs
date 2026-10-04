@@ -193,42 +193,6 @@ describe("pencarian", () => {
     expect(await page.locator("#h-dilihat").count()).toBe(0);
   });
 
-  it("POJK lama (nomor slug) tampil dengan penomoran resmi dan ditemukan lewat penomoran itu", async () => {
-    await reset();
-    const pojk = (bpk_id, sektor) => ({
-      bpk_id,
-      meta: { Judul: `Peraturan OJK Nomor 48/POJK.${sektor}/2016 tentang Tata Cara Contoh`, "Bentuk Singkat": "POJK", Nomor: `48-pojk-${sektor}-2016`, Tahun: "2016", Status: "Berlaku" },
-      relasi: [],
-    });
-    const res = await fetch(`${BASE}/api/impor/manifest`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-admin-token": "token-admin-uji" },
-      body: JSON.stringify({ versi: 1, dokumen: [pojk("9601", "03"), pojk("9602", "04")] }),
-    });
-    expect(res.status).toBe(200);
-
-    // Penomoran resmi menemukan tepat satu sektor, dengan label resmi (bukan "48-pojk-04-2016/2016").
-    await page.goto(BASE + "/cari?q=" + encodeURIComponent("POJK 48/POJK.04/2016") + "&mode=keyword", { waitUntil: "networkidle" });
-    await page.waitForSelector(".daftar-hasil .hasil");
-    const pertama = page.locator(".hasil").first();
-    expect(await pertama.locator(".hasil-sitasi").textContent()).toBe("POJK 48/POJK.04/2016");
-    expect(await pertama.locator(".sumber-chip").allTextContents()).toContain("Sitasi");
-    expect(await page.locator(".hasil .sumber-chip", { hasText: "Sitasi" }).count()).toBe(1);
-
-    // Tanpa sektor: kedua POJK bernomor 48 tahun 2016 ditemukan sebagai sitasi.
-    await page.goto(BASE + "/cari?q=" + encodeURIComponent("Peraturan OJK Nomor 48 Tahun 2016") + "&mode=keyword", { waitUntil: "networkidle" });
-    await page.waitForSelector(".daftar-hasil .hasil");
-    const label = await page.locator(".hasil", { has: page.locator(".sumber-chip", { hasText: "Sitasi" }) }).locator(".hasil-sitasi").allTextContents();
-    expect(label.sort()).toEqual(["POJK 48/POJK.03/2016", "POJK 48/POJK.04/2016"]);
-
-    // Halaman detail memakai label yang sama pada tombol salin sitasi dan judul halaman.
-    await page.goto(BASE + urlUU("/akn/id/act/pojk/2016/48-pojk-04-2016"), { waitUntil: "networkidle" });
-    await page.waitForSelector("main h1");
-    expect(await page.textContent("main")).toContain("POJK 48/POJK.04/2016");
-    expect(await page.textContent("main")).not.toContain("48-pojk-04-2016");
-    await reset();
-  });
-
   it("mengganti mode dan filter memperbarui URL dan hasil", async () => {
     await page.goto(BASE + "/cari?q=" + encodeURIComponent("cipta kerja") + "&mode=keyword", { waitUntil: "networkidle" });
     await page.waitForSelector(".daftar-hasil .hasil");
@@ -296,14 +260,15 @@ describe("pencarian", () => {
   it("telusuri: filter jenis, urutan, dan tautan halaman bekerja", async () => {
     await page.goto(BASE + "/telusuri", { waitUntil: "networkidle" });
     await page.waitForSelector(".daftar-hasil .hasil");
-    expect(await page.textContent(".ringkas-hasil")).toBe("11 peraturan");
+    // 10 peraturan contoh dalam cakupan (sebelas tersimpan: satu Perpres sengaja di luar cakupan).
+    expect(await page.textContent(".ringkas-hasil")).toBe("10 peraturan");
     await page.check("input[name=jenis][value=PP]");
     await page.waitForFunction(() => document.querySelectorAll(".daftar-hasil .hasil").length === 1);
     expect(page.url()).toContain("jenis=PP");
     await page.uncheck("input[name=jenis][value=PP]");
     await page.selectOption("select[aria-label=Urutkan]", "tahun_asc");
     await page.waitForFunction(() => location.search.includes("urut=tahun_asc"));
-    await page.waitForFunction(() => document.querySelectorAll(".daftar-hasil .hasil").length === 11);
+    await page.waitForFunction(() => document.querySelectorAll(".daftar-hasil .hasil").length === 10);
     expect(await page.locator(".daftar-hasil .hasil-sitasi").first().textContent()).toBe("UU 1/1974");
   });
 });
@@ -318,9 +283,11 @@ describe("telusur dengan banyak data", () => {
 
   it("paginasi memakai tautan nyata, menandai halaman aktif, dan bisa dibuka langsung", async () => {
     await reset();
-    const dokumen = Array.from({ length: 30 }, (_, i) => ({
+    // 31 Perppu: bersama 10 peraturan contoh dalam cakupan menjadi 41 (tiga halaman: 20, 20, 1). Peraturan contoh
+    // ke-11 (Perpres) di luar cakupan dan tidak ikut terhitung.
+    const dokumen = Array.from({ length: 31 }, (_, i) => ({
       bpk_id: String(9000 + i),
-      meta: { Judul: `Peraturan Contoh ${i + 1}`, "Bentuk Singkat": "PERMEN", Nomor: String(i + 1), Tahun: "2024", Status: "Berlaku" },
+      meta: { Judul: `Peraturan Contoh ${i + 1}`, "Bentuk Singkat": "PERPPU", Nomor: String(i + 1), Tahun: "2024", Status: "Berlaku" },
       relasi: [],
     }));
     expect((await impor(dokumen)).status).toBe(200);
@@ -343,8 +310,8 @@ describe("telusur dengan banyak data", () => {
     expect(await page.locator("nav.paginasi a[rel=next]").count()).toBe(0);
 
     // Mengubah filter kembali ke halaman pertama.
-    await page.check("input[name=jenis][value=PERMEN]");
-    await page.waitForFunction(() => document.querySelector(".ringkas-hasil")?.textContent === "30 peraturan");
+    await page.check("input[name=jenis][value=PERPPU]");
+    await page.waitForFunction(() => document.querySelector(".ringkas-hasil")?.textContent === "31 peraturan");
     expect(page.url()).not.toContain("page=");
     expect(await page.locator(".daftar-hasil .hasil").count()).toBe(20);
     await reset();
@@ -770,5 +737,113 @@ describe("tampilan dan aksesibilitas", () => {
         expect(hasil).toEqual([]);
       });
     }
+  });
+});
+
+describe("cakupan peraturan (UUD, Tap MPR, UU, Perppu, PP)", () => {
+  // Server pratinjau menyimpan satu Perpres contoh (metadata saja) yang sengaja di luar cakupan, seperti
+  // baris Perpres, Permen, dan POJK di produksi: ada di D1, tidak tampil di mana pun.
+  const URI_PERPRES = "/akn/id/act/perpres/2018/16";
+  const JUDUL_PERPRES = "Pengadaan Barang/Jasa Pemerintah";
+  const CAKUPAN = "UUD, TAP MPR, UU, PERPPU, dan PP";
+
+  it("beranda, telusur, status, dan tentang menyebutkan cakupannya", async () => {
+    await page.goto(BASE + "/", { waitUntil: "networkidle" });
+    await page.waitForFunction(() => document.querySelector(".info-indeks")?.textContent);
+    expect(await page.textContent(".info-indeks")).toContain(`Cakupan saat ini: ${CAKUPAN}.`);
+
+    await page.goto(BASE + "/telusuri", { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    expect(await page.textContent("main")).toContain(`Cakupan saat ini: ${CAKUPAN}.`);
+
+    await page.goto(BASE + "/status", { waitUntil: "networkidle" });
+    await page.waitForSelector(".statistik");
+    expect(await page.textContent("main")).toContain(`Cakupan Lexa saat ini: ${CAKUPAN}.`);
+
+    await page.goto(BASE + "/tentang", { waitUntil: "networkidle" });
+    expect(await page.textContent("main")).toContain("Cakupan dibatasi.");
+  });
+
+  it("peraturan di luar cakupan tidak ada di telusur: bukan di daftar, bukan di facet, bukan di jumlah", async () => {
+    await page.goto(BASE + "/telusuri", { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    expect(await page.textContent(".ringkas-hasil")).toBe("10 peraturan");
+    expect(await page.locator(".daftar-hasil").textContent()).not.toContain(JUDUL_PERPRES);
+    const jenis = await page.locator("input[name=jenis]").evaluateAll((els) => els.map((e) => e.value).sort());
+    expect(jenis).toEqual(["PP", "UU"]);
+    // Statistik di beranda dan status pun tidak menghitungnya.
+    await page.goto(BASE + "/", { waitUntil: "networkidle" });
+    await page.waitForFunction(() => document.querySelector(".info-indeks")?.textContent);
+    expect(await page.textContent(".info-indeks")).toMatch(/^10 peraturan /);
+  });
+
+  it("pencarian tidak menemukannya, dan sitasi ke jenisnya dijelaskan terus terang", async () => {
+    await page.goto(BASE + "/cari?q=" + encodeURIComponent(JUDUL_PERPRES) + "&mode=keyword", { waitUntil: "networkidle" });
+    await page.waitForSelector(".ringkas-hasil");
+    // Hasil pencarian kata bisa memuat peraturan lain yang mirip; yang tak boleh ada adalah tautan ke Perpres itu.
+    expect(await page.locator(`.daftar-hasil a[href*="perpres"]`).count()).toBe(0);
+
+    await page.goto(BASE + "/cari?q=" + encodeURIComponent("Perpres 16/2018") + "&mode=keyword", { waitUntil: "networkidle" });
+    await page.waitForSelector(".catatan-hasil");
+    const catatan = await page.textContent(".catatan-hasil");
+    expect(catatan).toContain("Lexa belum memuat peraturan jenis PERPRES");
+    expect(catatan).toContain(CAKUPAN);
+    expect(await page.locator(".hasil .sumber-chip", { hasText: "Sitasi" }).count()).toBe(0);
+    expect(await page.locator(`.daftar-hasil a[href*="perpres"]`).count()).toBe(0);
+
+    // Sitasi ke jenis yang dimuat tidak diberi catatan itu.
+    await page.goto(BASE + "/cari?q=" + encodeURIComponent("UU 13/2003") + "&mode=keyword", { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    expect(await page.locator(".catatan-hasil", { hasText: "belum memuat" }).count()).toBe(0);
+  });
+
+  it("tautan langsung ke peraturan di luar cakupan menjelaskan cakupan, bukan 'belum ada di indeks'", async () => {
+    await page.goto(BASE + urlUU(URI_PERPRES), { waitUntil: "networkidle" });
+    await page.waitForSelector("main h1");
+    expect(await page.textContent("main h1")).toBe("Peraturan ini di luar cakupan Lexa");
+    const isi = await page.textContent("main");
+    expect(isi).toContain(`Untuk saat ini Lexa hanya memuat ${CAKUPAN}.`);
+    expect(isi).not.toContain("belum ada di indeks");
+    expect(await page.title()).toContain("Peraturan di luar cakupan");
+    expect(await page.locator("main a[href='https://peraturan.bpk.go.id']").count()).toBe(1);
+    // Tidak pernah mencatatnya sebagai peraturan yang dilihat.
+    await page.goto(BASE + "/", { waitUntil: "networkidle" });
+    expect(await page.locator("#h-dilihat").count()).toBe(0);
+  });
+
+  it("tautan telusur lama dengan jenis di luar cakupan dijelaskan, bukan sekadar kosong", async () => {
+    await page.goto(BASE + "/telusuri?jenis=PERPRES", { waitUntil: "networkidle" });
+    await page.waitForSelector(".kosong h2");
+    expect(await page.textContent(".kosong h2")).toBe("Jenis PERPRES belum dimuat Lexa");
+    expect(await page.textContent(".kosong")).toContain(`Untuk saat ini Lexa hanya memuat ${CAKUPAN}.`);
+  });
+
+  it("peta sitemap dan pratinjau tautan tidak menyinggung peraturan di luar cakupan", async () => {
+    const xml = await (await fetch(`${BASE}/sitemap.xml`)).text();
+    expect(xml).toContain(encodeURIComponent(UU13));
+    expect(xml).not.toContain(encodeURIComponent(URI_PERPRES));
+
+    const html = await (await fetch(`${BASE}${urlUU(URI_PERPRES)}`, { headers: { "user-agent": "WhatsApp/2.24.20.85 A" } })).text();
+    expect(html).not.toContain(JUDUL_PERPRES);
+    expect(html).not.toContain('property="og:image"');
+  });
+
+  it("impor BPK menolak jenis di luar cakupan dan menyebutkan alasannya", async () => {
+    await reset();
+    const res = await fetch(`${BASE}/api/impor/manifest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": "token-admin-uji" },
+      body: JSON.stringify({
+        versi: 1,
+        dokumen: [
+          { bpk_id: "9701", meta: { Judul: "Peraturan Menteri Contoh", "Bentuk Singkat": "PERMEN", Nomor: "1", Tahun: "2024", Status: "Berlaku" }, relasi: [] },
+          { bpk_id: "9702", meta: { Judul: "Peraturan Pemerintah Contoh", "Bentuk Singkat": "PP", Nomor: "1", Tahun: "2024", Status: "Berlaku" }, relasi: [] },
+        ],
+      }),
+    });
+    const b = await res.json();
+    expect(b.diterima).toBe(1);
+    expect(b.ditolak).toEqual([{ bpk_id: "9701", alasan: expect.stringContaining("di luar cakupan (PERMEN)") }]);
+    await reset();
   });
 });
