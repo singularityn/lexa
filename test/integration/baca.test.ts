@@ -475,6 +475,18 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
     });
   });
 
+  describe("sitemap untuk korpus besar", () => {
+    it("memuat semua peraturan, bukan hanya 5.000 pertama (produksi memuat 5.634)", async () => {
+      l.sqlite.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5200)
+        INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, status, jumlah_pasal)
+        SELECT '/akn/id/act/pp/1990/' || i, 'PP', CAST(i AS TEXT), 1990, 'Contoh ' || i, 'berlaku', 0 FROM n`);
+      const xml = await (await panggil(l, "/sitemap.xml")).text();
+      expect([...xml.matchAll(/<loc>/g)]).toHaveLength(5204);
+      // Yang terlama (tahun terkecil) pun ikut.
+      expect(xml).toContain(encodeURIComponent("/akn/id/act/pp/1990/5200"));
+    });
+  });
+
   describe("lintas-rute", () => {
     it("semua respons memuat header keamanan dasar", async () => {
       for (const path of ["/api/stats", "/robots.txt", "/api/tidak-ada"]) {

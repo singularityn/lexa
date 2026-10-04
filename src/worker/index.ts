@@ -59,9 +59,10 @@ app.get("/robots.txt", (c) => {
 
 app.get("/sitemap.xml", async (c) => {
   const asal = new URL(c.req.url).origin;
-  // Batas 5.000 URL per sitemap agar ukuran respons tetap wajar.
+  // Batas protokol sitemap: 50.000 URL per berkas (produksi memuat 5.634 peraturan pada 3 Okt 2026). Bila peraturan
+  // melampauinya, ganti dengan indeks sitemap.
   const { results } = await c.env.DB.prepare(
-    `SELECT frbr_uri, updated_at FROM laws ORDER BY tahun DESC LIMIT 5000`,
+    `SELECT frbr_uri, updated_at FROM laws ORDER BY tahun DESC LIMIT 50000`,
   ).all<{ frbr_uri: string; updated_at: string }>();
 
   const entri = results
