@@ -3,7 +3,7 @@ import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
   angka, bacaIsiPasal, bersihkanArtefak, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, labelJenis, labelRelasi,
-  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, pratinjauPeraturan, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
+  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, peraturanPerubahan, pratinjauPeraturan, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
 import { bacaPref, HURUF, simpanPref, terapkanPref, UKURAN } from "../bacaan.js";
 import { buatDaftarIsi } from "../komponen/daftarIsi.js";
@@ -478,7 +478,8 @@ function panelIsi(ctx, d, q, kelompok) {
 
   const daftar = h("div", { class: "isi-peraturan" });
   terapkanPref(daftar);
-  const peta = petaRujukan(kelompok);
+  // Peraturan perubahan mengutip pasal peraturan lain; tautan ke pasal bernomor sama di sini akan menyesatkan.
+  const peta = peraturanPerubahan(l.judul) ? { pasal: new Map(), ayat: new Set() } : petaRujukan(kelompok);
   /** @type {Array<{ el: HTMLElement, teks: string, jangkar: string, nama: string }>} */
   const indeks = [];
 

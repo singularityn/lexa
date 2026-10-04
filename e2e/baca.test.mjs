@@ -399,6 +399,17 @@ describe("ponsel: halaman baca", () => {
     expect(await p.evaluate(() => window.__tanda), "tautan jangkar tidak memuat ulang halaman").toBe("spa");
   });
 
+  it("peraturan perubahan tidak menautkan rujukan: 'Pasal N' di dalamnya menunjuk pasal peraturan yang diubah", async () => {
+    const p = await halaman({ hp: true });
+    await ubahDetail(p, (json) => {
+      json.law.judul = "Undang-Undang Republik Indonesia Nomor 13 Tahun 2003 tentang Perubahan Atas Undang-Undang Nomor 7 Tahun 1992 tentang Perbankan";
+      json.articles.find((a) => a.nomor_pasal === "79").isi = "Ketentuan Pasal 82 ayat (1) dan Pasal 156 diubah sehingga berbunyi sebagai berikut.";
+    });
+    await bukaPeraturan(p);
+    expect(await p.locator("#pasal-79 .ayat .isi").textContent()).toContain("Ketentuan Pasal 82 ayat (1) dan Pasal 156 diubah");
+    expect(await p.locator(".isi-baca a.rujukan").count()).toBe(0);
+  });
+
   for (const tema of ["terang", "gelap"]) {
     it(`axe: tautan rujukan di dalam teks dapat dibedakan tanpa warna (tema ${tema})`, async () => {
       const p = await halaman({ hp: true, tema: tema === "gelap" ? "dark" : "light", bypassCSP: true });

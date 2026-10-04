@@ -33,10 +33,12 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
 1. Contoh baris produksi (181 dari 5.634 peraturan, dengan 1.126 baris pasal dan 513 relasi) dimuat ke pratinjau
    lokal (`LEXA_DATA_NYATA=.dev/data-nyata.json npm run dev:node`; berkas itu sengaja tidak masuk Git). Teks pasal
    hanya disertakan untuk empat peraturan (UU 13/2003, 7/2014, 8/1999, 11/2008) agar berkasnya kecil, jadi di
-   situlah kualitas baca diukur. Untuk melihat variasi data yang sebenarnya, 130 peraturan acak dari produksi
-   (UU, PP, Perpres, POJK, Permen, Perppu; 2.316 baris pasal) disapu lewat penyusun teks halaman baca dengan kueri
-   baca-saja ke D1: tidak ada galat, tidak ada penanda halaman tersisa, setiap peraturan diproses di bawah 250 ms.
-   Temuannya menjadi perbaikan nomor pasal OCR dan catatan di bagian 5.
+   situlah kualitas baca diukur. Untuk melihat variasi data yang sebenarnya, dua kali 120-an peraturan acak dari
+   produksi (UU, PP, Perpres, POJK, Permen, Perppu; total 249 peraturan dan 6.551 baris pasal) disapu lewat penyusun
+   teks halaman baca dengan kueri baca-saja ke D1, dan semua judul produksi (5.634) diperiksa lewat pengurai judul
+   dan sitasi. Hasilnya: tidak ada galat, tidak ada penanda halaman tersisa, setiap peraturan diproses di bawah
+   250 ms, dan tiap judul menghasilkan topik. Temuannya menjadi tiga perbaikan (nomor pasal OCR, tautan rujukan di
+   peraturan perubahan, judul yang menempel pada kepala halaman) dan catatan di bagian 5.
 2. Tiap layar diambil gambarnya di 390×844 (ponsel, sentuh), 1024×768 (tablet), dan 1280×900 (desktop), terang dan
    gelap, lalu dinilai satu per satu. Setiap perbaikan diverifikasi ulang dengan gambar, bukan hanya dengan tes.
 3. Perilaku dijaga tes: unit (`npm test`), e2e Chromium (`npm run e2e`) termasuk emulasi sentuh dan jaringan yang
@@ -55,7 +57,7 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
 | Filter | Panel samping memakan layar ponsel | Lembar modal dari bawah (`<dialog>`, fokus terperangkap, Esc menutup), filter aktif tampil sebagai chip yang bisa dilepas satu per satu |
 | Tanya Lexa | Kotak tulis tidak menempel; mengetuk tombol kirim di ponsel kehilangan ketukan karena fokus lepas dan bilah bawah muncul lagi | Tata letak obrolan (kotak tulis menempel di atas bilah bawah, contoh pertanyaan di atasnya); fokus dijaga saat tombol kirim ditekan |
 | Halaman peraturan | Header memakan lebih dari satu layar ponsel; enam tombol aksi; tab tidak menempel; teks tanpa tipografi; tidak ada daftar isi | Header ringkas (tab dan awal teks terlihat tanpa menggulir di 390×844); tiga aksi utama, sisanya di lembar "Lainnya"; tab menempel di bawah header; daftar isi; teks berhuruf berkaki dengan panjang baris dibatasi 72ch |
-| Teks hasil ekstraksi PDF | Baris patah di tengah kalimat, kepala halaman ("PRESIDEN REPUBLIK INDONESIA- 18 -") dan "### Page 80" ikut tampil, daftar butir menyatu menjadi satu paragraf | Penyusunan ulang teks (`bacaIsiPasal`): butir 1./a. dengan indentasi menggantung, baris yang dipatahkan lebar kolom disambung, artefak halaman dibuang |
+| Teks hasil ekstraksi PDF | Baris patah di tengah kalimat, kepala halaman ("PRESIDEN REPUBLIK INDONESIA- 18 -") dan "### Page 80" ikut tampil, daftar butir menyatu menjadi satu paragraf | Penyusunan ulang teks (`bacaIsiPasal`): butir 1./a. dengan indentasi menggantung, baris yang dipatahkan lebar kolom disambung, artefak halaman dibuang (judul yang menempel pada kepala halaman, mis. "…- 5 -Pasal 7", tetap berawal di baris baru, tidak tersambung ke "Cukup jelas" sebelumnya) |
 | Nomor pasal salah baca OCR | Angka nol terbaca huruf O: "Pasal 1O" untuk 10, "12O" untuk 120 (154 baris di 42 peraturan produksi, termasuk KUHP, Cipta Kerja, Pelindungan Data Pribadi); daftar isi, "Lompat ke pasal", dan tautan rujukan tidak menemukannya | Nomor dirapikan saat dibaca di API (detail, hasil pencarian, Tanya Lexa) dan di antarmuka (termasuk jawaban lama yang tersimpan di perangkat); parser ingest memperbaikinya sejak awal. Data di D1 tidak diubah |
 | Penjelasan | UU 13/2003 menampilkan "390 pasal": penjelasan pasal demi pasal memakai ulang nomor pasal, dan penjelasan umum menempel di Pasal 193 (8.630 karakter) | Penjelasan dikenali (penjelasan umum yang terbawa, penomoran yang kembali ke awal, atau id berakhiran ~n), diberi judul sendiri, dihitung terpisah, dan punya kelompok sendiri di daftar isi: "193 pasal dan penjelasannya" |
 | Daftar isi | Tidak ada | Lembar dari bawah (kolom lengket di samping teks di layar ≥1100 px): BAB dengan rentang pasalnya, "Lompat ke pasal" ("156", "Pasal 5A"), tombol mengambang |
@@ -71,7 +73,7 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
 | Baca luring otomatis | Otomatis | Peraturan yang pernah dibuka tetap terbaca tanpa jaringan (80 jawaban terakhir) |
 | **Simpan untuk dibaca luring** | Lembar "Lainnya" di peraturan; daftar di Akun | Tidak ikut terbuang oleh batas di atas, diperbarui otomatis saat daring, maksimal 30 peraturan, dengan ukurannya |
 | Daftar isi dan lompat ke pasal | Tombol "Daftar isi" di peraturan | Kolom di samping teks di layar lebar |
-| Rujukan antarpasal | Di dalam teks pasal | "Pasal 156 ayat (2)" membuka pasalnya; pasal milik peraturan lain tidak ditautkan |
+| Rujukan antarpasal | Di dalam teks pasal | "Pasal 156 ayat (2)" membuka pasalnya; pasal milik peraturan lain tidak ditautkan. Tidak dibuat pada peraturan perubahan ("tentang Perubahan Atas …"): "Pasal 41" di sana menunjuk pasal peraturan yang diubah, bukan pasal bernomor sama di peraturan itu sendiri |
 | Lanjutkan membaca | Peraturan dan beranda | Posisi disimpan di perangkat ini saja |
 | Tandai pasal | Ikon penanda di judul tiap pasal | Disimpan ke Koleksi (tamu: di perangkat; masuk: tersinkron), lengkap dengan catatan |
 | Tampilan teks | Tombol "Tampilan teks" | Lima ukuran huruf, berkaki atau tanpa kaki |

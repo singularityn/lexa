@@ -234,6 +234,16 @@ export function judulRingkas(judul) {
   return rapikanHuruf(pisahJudul(judul).topik);
 }
 
+/**
+ * Peraturan perubahan ("... tentang Perubahan Atas ...", "Perubahan Kedua ..."). Isinya mengutip dan mengubah pasal
+ * peraturan LAIN ("Ketentuan Pasal 41 diubah ..."), jadi "Pasal N" di dalamnya hampir selalu menunjuk pasal peraturan
+ * yang diubah dan bukan pasalnya sendiri; menautkannya ke pasal bernomor sama di peraturan ini menyesatkan.
+ * @param {string | null | undefined} judul
+ */
+export function peraturanPerubahan(judul) {
+  return /^perubahan\b/i.test(pisahJudul(judul).topik);
+}
+
 /** Batas panjang deskripsi halaman (meta description, pratinjau tautan). */
 const PANJANG_DESKRIPSI = 180;
 
@@ -381,12 +391,22 @@ const RE_PENANDA_HALAMAN = /\s*#{1,6}\s*Page\s+\d+(?:\s+[A-Z][A-Z .,/&()-]*?\s*-
 const RE_KEPALA_HALAMAN = /[ \t]*\b(?:(?:PRESIDEN|MENTERI(?:[ \t]+[A-Z]{3,}){0,4}|GUBERNUR(?:[ \t]+[A-Z]{3,}){0,3}|BUPATI(?:[ \t]+[A-Z]{3,}){0,3}|WALI[ \t]+KOTA(?:[ \t]+[A-Z]{3,}){0,3})\s+)?REPUBLIK\s+INDONESIA\s*-\s*\d{1,4}\s*-[ \t]*/g;
 /** Nomor halaman yang berdiri sendiri pada satu baris: "- 12 -". */
 const RE_NOMOR_HALAMAN = /^[ \t]*-\s*\d{1,4}\s*-[ \t]*$/gm;
+/**
+ * Penanda struktur yang menempel tepat sesudah kepala halaman ("...REPUBLIK INDONESIA- 5 -Pasal 7"). Judul itu berawal
+ * di baris baru pada lembar cetak, jadi di tempat kepala halaman dibuang ia diberi baris baru, bukan spasi; kalau tidak,
+ * "Cukup jelas" dan "Pasal 7" tersambung menjadi satu kalimat.
+ */
+const AWAL_STRUKTUR = String.raw`(?=(?:Pasal|PASAL|Ayat|Huruf|Angka|Butir|BAB|Bagian|Paragraf)\b)`;
+const RE_PENANDA_HALAMAN_STRUKTUR = new RegExp(RE_PENANDA_HALAMAN.source + AWAL_STRUKTUR, "g");
+const RE_KEPALA_HALAMAN_STRUKTUR = new RegExp(RE_KEPALA_HALAMAN.source + AWAL_STRUKTUR, "g");
 
 /** @param {string | null | undefined} teks */
 export function bersihkanArtefak(teks) {
   if (!teks) return "";
   return teks
+    .replace(RE_PENANDA_HALAMAN_STRUKTUR, "\n")
     .replace(RE_PENANDA_HALAMAN, " ")
+    .replace(RE_KEPALA_HALAMAN_STRUKTUR, "\n")
     .replace(RE_KEPALA_HALAMAN, " ")
     .replace(RE_NOMOR_HALAMAN, "")
     .replace(/[ \t]+\n/g, "\n")

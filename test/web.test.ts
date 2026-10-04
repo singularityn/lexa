@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, istilahDariKueri, jangkarDariId,
   hitungPasal, judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, namaPasal, nomorTahun, pisahJudul,
-  bacaIsiPasal, pecahRujukan, pisahPenjelasanTertanam, pratinjauPeraturan, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
+  bacaIsiPasal, pecahRujukan, peraturanPerubahan, pisahPenjelasanTertanam, pratinjauPeraturan, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
 } from "../public/js/format.js";
 import { labelSitasi, nomorTahun as nomorTahunServer, rapikanNomorPasal as rapikanNomorPasalServer } from "../src/shared/label";
 
@@ -449,6 +449,32 @@ describe("bersihkanArtefak (penanda halaman hasil konversi PDF)", () => {
   });
 
   it.each([
+    // Judul yang menempel pada kepala halaman berawal di baris baru, bukan menyambung ke kalimat sebelumnya.
+    ["Cukup jelas\n\n\n### Page 37\nPRESIDEN\nREPUBLIK INDONESIA- 5 -Pasal 7\nHuruf c", "Cukup jelas\nPasal 7\nHuruf c"],
+    ["kalimat ### Page 98 PRESIDEN REPUBLIK INDONESIA- 19 -Ayat (1) Cukup jelas", "kalimat\nAyat (1) Cukup jelas"],
+    ["Cukup jelas PRESIDEN REPUBLIK INDONESIA- 4 -Huruf b Yang dimaksud", "Cukup jelas\nHuruf b Yang dimaksud"],
+    ["selesai. MENTERI KEUANGAN REPUBLIK INDONESIA - 12 - BAB III HAK", "selesai.\nBAB III HAK"], // juga bila dipisah spasi
+  ])("penanda struktur sesudah kepala halaman: %j", (masukan, harapan) => {
+    expect(bersihkanArtefak(masukan)).toBe(harapan);
+  });
+
+  it("bacaIsiPasal: 'Cukup jelas' dan judul pasal berikutnya yang terpisah kepala halaman tidak tersambung", () => {
+    const blok = bacaIsiPasal("Angka 4\nCukup jelas\n\n\n\n### Page 37\nPRESIDEN\nREPUBLIK INDONESIA- 5 -Pasal 7\nHuruf c\nPokok-pokok ketentuan yang ditetapkan.");
+    expect(blok.map((b) => [b.tipe, b.teks])).toEqual([
+      ["label", "Angka 4"],
+      ["p", "Cukup jelas"],
+      ["p", "Pasal 7"],
+      ["label", "Huruf c"],
+      ["p", "Pokok-pokok ketentuan yang ditetapkan."],
+    ]);
+  });
+
+  it("bacaIsiPasal: kalimat yang menyambung melewati kepala halaman tetap tersambung walau halaman berikutnya berawal 'Pasal'", () => {
+    const blok = bacaIsiPasal("Pidana dijatuhkan sebagaimana dimaksud dalam\n### Page 9\nPRESIDEN\nREPUBLIK INDONESIA- 3 -Pasal 7 ayat (1) tanpa pengurangan.");
+    expect(blok.map((b) => b.teks)).toEqual(["Pidana dijatuhkan sebagaimana dimaksud dalam Pasal 7 ayat (1) tanpa pengurangan."]);
+  });
+
+  it.each([
     ["milik sendiri; PRESIDEN\nREPUBLIK INDONESIA- 3 -\nb. orang perseorangan", "milik sendiri;\nb. orang perseorangan"],
     ["yang berada di PRESIDEN REPUBLIK INDONESIA - 12 -\nIndonesia mewakili", "yang berada di\nIndonesia mewakili"],
     ["ketentuan MENTERI KEUANGAN REPUBLIK INDONESIA - 7 - lanjutan", "ketentuan lanjutan"],
@@ -535,6 +561,30 @@ describe("pisahJudul / judulRingkas", () => {
     expect(judulRingkas("Peraturan Pemerintah Nomor 85 Tahun 2013 tentang TATA CARA HUBUNGAN ANTAR LEMBAGA")).toBe("Tata Cara Hubungan Antar Lembaga");
     expect(judulRingkas("Peraturan Presiden Nomor 22 Tahun 2015 tentang Pemberian Uang Bagi Ketua Dan Anggota")).toBe("Pemberian Uang bagi Ketua dan Anggota");
     expect(judulRingkas("Ketenagakerjaan")).toBe("Ketenagakerjaan");
+  });
+});
+
+describe("peraturanPerubahan (rujukan 'Pasal N' di dalamnya menunjuk peraturan yang diubah)", () => {
+  it.each([
+    "Undang-Undang Nomor 10 Tahun 1998 tentang Perubahan Atas Undang-Undang Nomor 7 Tahun 1992 tentang Perbankan",
+    "Peraturan Presiden Nomor 117 Tahun 2015 tentang Perubahan Kedua Atas Peraturan Presiden Nomor 28 Tahun 2015",
+    "Peraturan Pemerintah Nomor 20 Tahun 2009 tentang PERUBAHAN KELIMA PP 2 TAHUN 1996",
+    "Undang-undang (UU) Nomor 13 Tahun 2000 tentang Perubahan atas Undang-Undang Nomor 12 Tahun 1985",
+    "Perubahan Atas Peraturan Menteri Keuangan", // tanpa kepala
+  ])("mengenali: %s", (judul) => {
+    expect(peraturanPerubahan(judul)).toBe(true);
+  });
+
+  it.each([
+    "Undang-Undang Republik Indonesia Nomor 13 Tahun 2003 tentang Ketenagakerjaan",
+    "Penetapan Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022 tentang Cipta Kerja menjadi Undang-Undang",
+    "Peraturan Presiden Nomor 8 Tahun 2020 tentang Pengesahan Persetujuan tentang Perubahan Iklim", // "perubahan" di tengah
+    "Ketentuan Perubahan Peralihan", // bukan di awal
+    "",
+    null,
+    undefined,
+  ])("tidak mengenali: %s", (judul) => {
+    expect(peraturanPerubahan(judul)).toBe(false);
   });
 });
 
