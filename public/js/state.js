@@ -11,13 +11,13 @@ import { api, GalatApi } from "./api.js";
 
 const bus = new EventTarget();
 
-/** @param {"sesi" | "koleksi" | "tema" | "luring"} nama @param {unknown} [detail] */
+/** @param {"sesi" | "koleksi" | "tema" | "luring" | "riwayat"} nama @param {unknown} [detail] */
 export function siarkan(nama, detail) {
   bus.dispatchEvent(new CustomEvent(nama, { detail }));
 }
 
 /**
- * @param {"sesi" | "koleksi" | "tema" | "luring"} nama
+ * @param {"sesi" | "koleksi" | "tema" | "luring" | "riwayat"} nama
  * @param {(detail: any) => void} fn
  * @returns {() => void} fungsi berhenti memantau
  */

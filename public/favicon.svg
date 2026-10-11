@@ -1,5 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Lexa">
-  <rect width="64" height="64" rx="14" fill="#1b4b82"/>
-  <path d="M22 14h8v30h16v7H22z" fill="#fff"/>
-  <circle cx="46" cy="19" r="4" fill="#e8b53a"/>
+  <rect width="64" height="64" rx="14" fill="#14130f"/>
+  <text x="32" y="47" text-anchor="middle" font-family="Newsreader, 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif" font-size="46" font-weight="600" fill="#f4ecda">L</text>
 </svg>

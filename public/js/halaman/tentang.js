@@ -1,16 +1,35 @@
 // @ts-check
 import { h, isi } from "../dom.js";
 
+const WARNA = ["p-koral-kuat", "p-biru", "p-ungu", "p-kuning", "p-hijau", "p-kaca"];
+
+/**
+ * Bagi isi artikel menjadi kartu per bagian (satu h2 beserta isinya), tanpa mengubah satu kata pun.
+ * @param {HTMLElement} artikel
+ */
+function kelompokkan(artikel) {
+  const kepala = h("header", { class: "tentang-kepala" });
+  const kisi = h("div", { class: "tentang-kisi" });
+  /** @type {HTMLElement | null} */
+  let kartu = null;
+  for (const el of [...artikel.children]) {
+    if (el.tagName === "H2") {
+      kartu = h("section", { class: ["kartu-pastel", WARNA[kisi.children.length % WARNA.length]] });
+      kisi.appendChild(kartu);
+    }
+    (kartu ?? kepala).appendChild(el);
+  }
+  artikel.replaceChildren(kepala, kisi);
+}
+
 /** @param {import("../router.js").Konteks} ctx */
 export default function tentang(ctx) {
   ctx.setJudul("Tentang Lexa", "Apa itu Lexa, dari mana datanya, bagaimana pencarian dan tanya jawab bekerja, dan apa batasannya.");
   const luar = (/** @type {string} */ href, /** @type {string} */ teks) => h("a", { href, target: "_blank", rel: "noopener noreferrer" }, teks);
 
-  isi(
-    ctx.akar,
-    h(
+  const artikel = h(
       "article",
-      { class: "prosa" },
+      { class: "prosa tentang" },
       h("h1", null, "Tentang Lexa"),
       h("p", { class: "lead redup" }, "Lexa membantu menemukan dan membaca peraturan perundang-undangan Indonesia, dan setiap jawabannya bisa ditelusuri sampai ke pasal."),
 
@@ -59,6 +78,7 @@ export default function tentang(ctx) {
 
       h("h2", null, "Kode sumber"),
       h("p", null, "Lexa berjalan di Cloudflare Workers (D1, KV, R2, Queues, Vectorize, Workers AI). Kode dan dokumentasinya ada di ", luar("https://github.com/singularityn/lexa", "GitHub"), "."),
-    ),
-  );
+    );
+  kelompokkan(artikel);
+  isi(ctx.akar, artikel);
 }

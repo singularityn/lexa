@@ -12,6 +12,8 @@ import { ikon } from "./komponen/ikon.js";
 import { kotakCari } from "./komponen/kotakCari.js";
 import { bangunNavBawah } from "./komponen/navBawah.js";
 import { bangunPitaLuring } from "./komponen/pitaLuring.js";
+import { bangunProgresBaca } from "./komponen/progresBaca.js";
+import { bangunSisiDilihat } from "./komponen/sisiDilihat.js";
 import { buatAreaToast, toast } from "./komponen/toast.js";
 import { modeMandiri, mulaiPwa } from "./pwa.js";
 import { queryString } from "./format.js";
@@ -36,20 +38,21 @@ const tidakDitemukan = { halaman: "tidak-ditemukan", muat: () => import("./halam
 /** Halaman puncak tiap tab; selainnya (hasil, detail, dst.) dapat "kembali". */
 const HALAMAN_AKAR = new Set(["/", "/telusuri", "/tanya", "/koleksi", "/akun"]);
 
+/** Tujuan di sidebar (layar lebar): alamat, label, dan nama ikon. Di ponsel navigasi memakai bilah bawah. */
 const NAV = [
-  ["/telusuri", "Telusuri"],
-  ["/tanya", "Tanya Lexa"],
-  ["/koleksi", "Koleksi"],
-  ["/tentang", "Tentang"],
+  ["/", "Beranda", "beranda"],
+  ["/telusuri", "Telusuri", "papan"],
+  ["/tanya", "Tanya Lexa", "tanya"],
+  ["/koleksi", "Koleksi", "tandai"],
+  ["/tentang", "Tentang", "info"],
 ];
 
 function bangunHeader() {
   const lencanaKoleksi = h("span", { class: "lencana-jumlah sembunyi", "aria-label": "jumlah koleksi" });
-  const tautanKoleksi = h("a", { href: "/koleksi", "data-nav": "/koleksi" }, "Koleksi", lencanaKoleksi);
   const nav = h(
     "nav",
     { class: "nav", id: "nav-utama", "aria-label": "Utama" },
-    NAV.map(([href, label]) => (href === "/koleksi" ? tautanKoleksi : h("a", { href, "data-nav": href }, label))),
+    NAV.map(([href, label, ik]) => h("a", { href, "data-nav": href }, ikon(ik), h("span", { class: "nav-teks" }, label), href === "/koleksi" ? lencanaKoleksi : null)),
   );
 
   const tombolMenu = h(
@@ -103,7 +106,7 @@ function bangunHeader() {
 
   const akun = h("a", { class: "nav-akun", href: "/akun", "data-nav": "/akun" });
   const gambarAkun = () => {
-    const { masuk, pengguna } = sesi.data;
+    const { masuk, pengguna, login_tersedia: tersedia } = sesi.data;
     if (masuk && pengguna) {
       const nama = pengguna.nama || pengguna.email;
       akun.setAttribute("aria-label", `Akun ${nama}`);
@@ -112,11 +115,15 @@ function bangunHeader() {
         pengguna.foto_url
           ? h("img", { class: "avatar", src: pengguna.foto_url, alt: "", referrerpolicy: "no-referrer" })
           : h("span", { class: "avatar-huruf", "aria-hidden": "true" }, nama.slice(0, 1).toUpperCase()),
+        h("span", { class: "akun-teks" }, h("strong", null, nama), h("small", null, "Koleksi tersinkron")),
       );
     } else {
       akun.removeAttribute("aria-label");
       akun.title = "";
-      akun.replaceChildren("Masuk");
+      akun.replaceChildren(
+        h("span", { class: "avatar-huruf", "aria-hidden": "true" }, ikon("akun")),
+        h("span", { class: "akun-teks" }, h("strong", null, "Masuk"), h("small", null, tersedia ? "Sinkronkan koleksi" : "Mode tamu")),
+      );
     }
   };
   gambarAkun();
@@ -135,10 +142,11 @@ function bangunHeader() {
       "div",
       { class: "bungkus header-isi" },
       tombolKembali,
-      h("a", { class: "merek", href: "/", "aria-label": "Lexa, ke beranda" }, h("img", { src: "/favicon.svg", alt: "", width: "30", height: "30" }), h("span", { class: "merek-teks" }, "Lexa")),
+      h("a", { class: "merek", href: "/", "aria-label": "Lexa, ke beranda" }, "Lexa"),
       tombolMenu,
       nav,
       bungkusCari,
+      bangunSisiDilihat(),
       h("div", { class: "header-aksi" }, tombolTema, akun),
     ),
     bangunPitaLuring(),
@@ -147,7 +155,8 @@ function bangunHeader() {
   /** @param {string} path */
   function tandaiAktif(path) {
     for (const a of header.querySelectorAll("[data-nav]")) {
-      const aktif = a.getAttribute("data-nav") === path || (path === "/peraturan" && a.getAttribute("data-nav") === "/telusuri");
+      const tujuan = a.getAttribute("data-nav");
+      const aktif = tujuan === path || (path === "/peraturan" && tujuan === "/telusuri") || (path === "/cari" && tujuan === "/");
       if (aktif) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     }
@@ -187,11 +196,15 @@ async function mulai() {
   const navBawah = bangunNavBawah();
   const konten = h("main", { id: "konten", tabindex: "-1", class: "bungkus" });
   const pengumuman = h("div", { class: "sr-only", role: "status", "aria-live": "polite" });
-  isi(app, header, konten, bangunFooter(), navBawah.nav, buatAreaToast(), pengumuman);
+  const progres = bangunProgresBaca();
+  isi(app, header, konten, bangunFooter(), navBawah.nav, buatAreaToast(), pengumuman, progres.el);
 
   // Tinggi header (berubah saat pita luring muncul) dipakai CSS untuk elemen lengket di bawahnya (tab, daftar isi).
-  const catatTinggi = () => document.documentElement.style.setProperty("--tinggi-header", `${header.offsetHeight}px`);
+  // Di layar lebar header menjadi sidebar di samping konten, sehingga tidak ada yang perlu dihindari di atas.
+  const layarLebar = matchMedia("(min-width: 861px)");
+  const catatTinggi = () => document.documentElement.style.setProperty("--tinggi-header", layarLebar.matches ? "0px" : `${header.offsetHeight}px`);
   new ResizeObserver(catatTinggi).observe(header);
+  layarLebar.addEventListener("change", catatTinggi);
   catatTinggi();
 
   const router = buatRouter({
@@ -202,6 +215,7 @@ async function mulai() {
     saatBerubah: (path) => {
       tandaiAktif(path);
       navBawah.tandaiAktif(path);
+      progres.atur(path === "/peraturan");
       document.body.dataset.halaman = (rute[path] ?? tidakDitemukan).halaman;
     },
   });

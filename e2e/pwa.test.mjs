@@ -112,9 +112,9 @@ describe("dapat dipasang", () => {
     await dengan({ colorScheme: "light" }, async (_ctx, page) => {
       await page.goto(BASE + "/", { waitUntil: "networkidle" });
       const warna = () => page.evaluate(() => document.head.querySelector('meta[name="theme-color"][data-dinamis]')?.getAttribute("content"));
-      expect(await warna()).toBe("#f7f5ef");
+      expect(await warna()).toBe("#f4ecda");
       await page.click("button[aria-label*='tema gelap']");
-      expect(await warna()).toBe("#11141b");
+      expect(await warna()).toBe("#14130f");
       // Meta dinamis harus yang pertama agar dipakai peramban.
       expect(await page.evaluate(() => document.head.querySelector('meta[name="theme-color"]')?.hasAttribute("data-dinamis"))).toBe(true);
     });
@@ -332,13 +332,14 @@ describe("ajakan memasang ke layar utama", () => {
 });
 
 describe("tampilan ponsel", () => {
-  it("bilah navigasi bawah menempel di dasar layar, menandai halaman aktif, dan hamburger tidak ada", async () => {
+  it("bilah navigasi bawah melayang tepat di atas dasar layar, menandai halaman aktif, dan hamburger tidak ada", async () => {
     await dengan(PONSEL, async (_ctx, page) => {
       await page.goto(BASE + "/", { waitUntil: "networkidle" });
       const nav = page.locator(".nav-bawah");
       await nav.waitFor();
       const kotak = await nav.boundingBox();
-      expect(Math.round(kotak.y + kotak.height)).toBe(844);
+      // Kapsul mengambang: tepinya 14 px di atas dasar layar (ditambah area aman, nol di peramban ini).
+      expect(Math.round(kotak.y + kotak.height)).toBe(844 - 14);
       expect(await page.locator(".tombol-menu").isVisible()).toBe(false);
       expect(await nav.locator("a[aria-current=page]").textContent()).toContain("Cari");
 

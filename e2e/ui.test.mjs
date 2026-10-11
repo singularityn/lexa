@@ -170,7 +170,7 @@ describe("pencarian", () => {
 
   it("riwayat: kata yang dicari dan peraturan yang dibuka muncul di beranda, dan hanya di perangkat ini", async () => {
     await page.goto(BASE + "/", { waitUntil: "networkidle" });
-    expect(await page.locator(".contoh .redup").textContent()).toBe("Coba:");
+    expect(await page.locator(".contoh").count(), "tanpa baris Coba/Terakhir").toBe(0);
     expect(await page.locator("#h-dilihat").count()).toBe(0);
 
     await page.goto(BASE + "/cari?q=pesangon", { waitUntil: "networkidle" });
@@ -180,8 +180,11 @@ describe("pencarian", () => {
     await page.waitForSelector("h1.judul-peraturan");
 
     await page.goto(BASE + "/", { waitUntil: "networkidle" });
-    expect(await page.locator(".contoh .redup").textContent()).toBe("Terakhir:");
-    expect(await page.locator(".contoh .chip").allTextContents()).toEqual(["pesangon"]);
+    // Pencarian terakhir tidak lagi berupa baris chip di beranda: ia muncul di daftar saran saat kotak cari difokuskan.
+    expect(await page.locator(".contoh").count()).toBe(0);
+    await page.focus("main input[type=search]");
+    await page.waitForSelector("main .saran:not(.sembunyi) li[role=option]");
+    expect(await page.locator("main .saran li[role=option]").allTextContents()).toEqual(["pesangon", "Hapus semua riwayat pencarian"]);
     expect(await page.locator("#h-dilihat").textContent()).toBe("Terakhir dilihat");
     expect(await page.locator(".bagian:has(#h-dilihat) .sitasi").first().textContent()).toBe(dibuka);
 
@@ -189,8 +192,10 @@ describe("pencarian", () => {
     await page.goto(BASE + "/akun", { waitUntil: "networkidle" });
     await page.click("button:has-text('Hapus riwayat di perangkat ini')");
     await page.goto(BASE + "/", { waitUntil: "networkidle" });
-    expect(await page.locator(".contoh .redup").textContent()).toBe("Coba:");
+    expect(await page.locator(".contoh").count()).toBe(0);
     expect(await page.locator("#h-dilihat").count()).toBe(0);
+    await page.focus("main input[type=search]");
+    expect(await page.locator("main .saran li").count()).toBe(0);
   });
 
   it("mengganti mode dan filter memperbarui URL dan hasil", async () => {
@@ -518,7 +523,7 @@ describe("koleksi dan akun", () => {
       jawab = rusak;
       await page.goto(BASE + "/", { waitUntil: "networkidle" });
       await page.waitForSelector("h1");
-      expect(await page.locator(".nav-akun").textContent(), `header untuk badan ${JSON.stringify(rusak.body)}`).toBe("Masuk");
+      expect(await page.locator(".nav-akun").textContent(), `header untuk badan ${JSON.stringify(rusak.body)}`).toContain("Masuk");
       await page.goto(BASE + "/akun", { waitUntil: "networkidle" });
       await page.waitForFunction(() => document.querySelector("main")?.textContent?.includes("sebagai tamu"));
       await page.goto(BASE + "/koleksi", { waitUntil: "networkidle" });
@@ -632,7 +637,7 @@ describe("tampilan dan aksesibilitas", () => {
     expect(await page.evaluate(() => document.documentElement.dataset.tema)).toBe("gelap");
     await page.reload({ waitUntil: "networkidle" });
     expect(await page.evaluate(() => document.documentElement.dataset.tema)).toBe("gelap");
-    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(17, 20, 27)");
+    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(20, 19, 15)");
   });
 
   it("pintasan '/' memfokuskan kotak cari; tautan 'Lewati ke konten' ada", async () => {

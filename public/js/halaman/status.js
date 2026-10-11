@@ -50,7 +50,7 @@ export default async function status(ctx) {
           { class: "kartu" },
           h("h2", { class: "kartu-judul" }, "Menurut jenis"),
           s.per_jenis.length
-            ? h("div", { class: "tabel-gulir" }, h("table", { class: "tabel" }, h("thead", null, h("tr", null, h("th", null, "Jenis"), h("th", null, "Jumlah"))), h("tbody", null, s.per_jenis.map((j) => h("tr", null, h("td", null, h("a", { href: `/telusuri?jenis=${encodeURIComponent(j.jenis)}` }, `${kodeJenis(j.jenis)} · ${labelJenis(j.jenis)}`)), h("td", null, angka(j.n)))))))
+            ? h("div", { class: "tabel-gulir", tabindex: "0", role: "region", "aria-label": "Tabel jenis peraturan, dapat digulir" }, h("table", { class: "tabel" }, h("thead", null, h("tr", null, h("th", null, "Jenis"), h("th", null, "Jumlah"))), h("tbody", null, s.per_jenis.map((j) => h("tr", null, h("td", null, h("a", { href: `/telusuri?jenis=${encodeURIComponent(j.jenis)}` }, `${kodeJenis(j.jenis)} · ${labelJenis(j.jenis)}`)), h("td", null, angka(j.n)))))))
             : h("p", { class: "redup" }, "Belum ada data."),
         ),
         h(
@@ -69,7 +69,7 @@ export default async function status(ctx) {
         s.sinkronisasi_terakhir.length
           ? h(
               "div",
-              { class: "tabel-gulir kartu" },
+              { class: "tabel-gulir kartu", tabindex: "0", role: "region", "aria-label": "Riwayat pekerjaan data, dapat digulir" },
               h(
                 "table",
                 { class: "tabel" },

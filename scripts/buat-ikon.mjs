@@ -1,35 +1,37 @@
 /**
- * Membuat ikon PNG aplikasi (PWA, layar utama iOS/Android, favicon) dari logo SVG.
+ * Membuat ikon PNG aplikasi (PWA, layar utama iOS/Android, favicon) dari nama merek Lexa.
  *
  *   node scripts/buat-ikon.mjs          # menulis ke public/ikon/
  *
- * Memakai Chromium lewat playwright-core (sudah menjadi dependensi pengembangan untuk tes e2e),
- * sehingga tidak perlu pustaka gambar tambahan. Hasilnya di-commit; jalankan ulang hanya bila
- * logo berubah.
+ * Mereknya hanya teks, tanpa lambang: ikon besar memuat kata "Lexa" dalam huruf yang sama dengan nama di
+ * antarmuka (Newsreader 600, dari public/fonts/), dan favicon yang terlalu kecil untuk empat huruf memuat huruf
+ * pertamanya. Berkas huruf disematkan sebagai data URI supaya hasilnya sama di mesin mana pun.
  *
- * Ikon "maskable" sengaja berbeda: latar penuh tanpa sudut membulat, dan lambang dikecilkan ke
- * zona aman (40% jari-jari dari tengah) supaya tidak terpotong oleh bentuk topeng Android.
+ * Memakai Chromium lewat playwright-core (sudah menjadi dependensi pengembangan untuk tes e2e), sehingga tidak
+ * perlu pustaka gambar tambahan. Hasilnya di-commit; jalankan ulang hanya bila merek berubah.
+ *
+ * Ikon "maskable" sengaja berbeda: latar penuh tanpa sudut membulat, dan teks dikecilkan ke zona aman (lingkaran
+ * berjari-jari 40% dari tengah) supaya tidak terpotong oleh bentuk topeng Android.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 
-const BIRU = "#1b4b82";
-const AMBER = "#e8b53a";
-const LAMBANG = `<path d="M22 14h8v30h16v7H22z" fill="#fff"/><circle cx="46" cy="19" r="4" fill="${AMBER}"/>`;
+const TINTA = "#14130f";
+const KERTAS = "#f4ecda";
 
-/** Lambang L berpusat di (32, 32) dengan skala `s` (aslinya berpusat di 36, 32.5). */
-const lambang = (s) => `<g transform="translate(32 32) scale(${s}) translate(-36 -32.5)">${LAMBANG}</g>`;
+const huruf = (await readFile(join(process.cwd(), "public", "fonts", "newsreader-latin-600-normal.woff2"))).toString("base64");
 
 const VARIAN = [
   // Bentuk biasa: kotak membulat dengan sudut transparan.
-  { berkas: "ikon-192.png", ukuran: 192, svg: `<rect width="64" height="64" rx="14" fill="${BIRU}"/>${LAMBANG}`, transparan: true },
-  { berkas: "ikon-512.png", ukuran: 512, svg: `<rect width="64" height="64" rx="14" fill="${BIRU}"/>${LAMBANG}`, transparan: true },
-  // Maskable: latar penuh, lambang di zona aman.
-  { berkas: "ikon-maskable-512.png", ukuran: 512, svg: `<rect width="64" height="64" fill="${BIRU}"/>${lambang(0.82)}`, transparan: false },
+  { berkas: "ikon-192.png", ukuran: 192, kata: "Lexa", teks: 30, sudut: 22, transparan: true },
+  { berkas: "ikon-512.png", ukuran: 512, kata: "Lexa", teks: 30, sudut: 22, transparan: true },
+  // Maskable: latar penuh, teks di zona aman.
+  { berkas: "ikon-maskable-512.png", ukuran: 512, kata: "Lexa", teks: 23, sudut: 0, transparan: false },
   // iOS membulatkan sudutnya sendiri dan menolak transparansi.
-  { berkas: "apple-touch-icon.png", ukuran: 180, svg: `<rect width="64" height="64" fill="${BIRU}"/>${lambang(0.92)}`, transparan: false },
-  { berkas: "favicon-32.png", ukuran: 32, svg: `<rect width="64" height="64" rx="12" fill="${BIRU}"/>${LAMBANG}`, transparan: true },
+  { berkas: "apple-touch-icon.png", ukuran: 180, kata: "Lexa", teks: 30, sudut: 0, transparan: false },
+  // Favicon: empat huruf tak terbaca pada 32 px, jadi huruf pertama saja.
+  { berkas: "favicon-32.png", ukuran: 32, kata: "L", teks: 78, sudut: 22, transparan: true },
 ];
 
 const tujuan = join(process.cwd(), "public", "ikon");
@@ -42,10 +44,17 @@ try {
   for (const v of VARIAN) {
     await page.setViewportSize({ width: v.ukuran, height: v.ukuran });
     await page.setContent(
-      `<!doctype html><html><body style="margin:0;background:transparent">` +
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="${v.ukuran}" height="${v.ukuran}" style="display:block">${v.svg}</svg>` +
-        `</body></html>`,
+      `<!doctype html><html><head><meta charset="utf-8"><style>
+        @font-face { font-family: "Newsreader"; font-weight: 600; src: url(data:font/woff2;base64,${huruf}) format("woff2"); }
+        html, body { margin: 0; background: transparent; }
+        .tile { width: ${v.ukuran}px; height: ${v.ukuran}px; background: ${TINTA}; border-radius: ${(v.sudut / 100) * v.ukuran}px;
+          display: grid; place-items: center; overflow: hidden; }
+        /* Ukuran huruf sebagai persen sisi ikon; sedikit naik supaya tampak berpusat secara optik. */
+        .t { color: ${KERTAS}; font-family: "Newsreader", serif; font-weight: 600; line-height: 1; letter-spacing: -0.02em;
+          font-size: ${(v.teks / 100) * v.ukuran}px; transform: translateY(-3%); }
+      </style></head><body><div class="tile"><div class="t">${v.kata}</div></div></body></html>`,
     );
+    await page.evaluate(() => document.fonts.ready);
     const png = await page.screenshot({ omitBackground: v.transparan, clip: { x: 0, y: 0, width: v.ukuran, height: v.ukuran } });
     await writeFile(join(tujuan, v.berkas), png);
     console.log(`${v.berkas}  ${v.ukuran}x${v.ukuran}  ${png.length} bita`);

@@ -1,6 +1,7 @@
 // @ts-check
 import { cuplikan, h, tandaiIstilah } from "../dom.js";
 import { bersihkanArtefak, istilahDariKueri, jangkarDariId, judulRingkas, labelJenis, sitasi, urlPeraturan } from "../format.js";
+import { kelasJenis } from "./jenis.js";
 import { lencanaStatus } from "./umum.js";
 import { tombolTandai } from "./tombolTandai.js";
 
@@ -69,7 +70,7 @@ export function kartuHasil(hit, opsi = {}) {
 
   return h(
     "li",
-    { class: ["hasil", label ? "hasil-pasal-tipe" : ""] },
+    { class: ["hasil", label ? "hasil-pasal-tipe" : "", kelasJenis(hit.jenis)] },
     h(
       "div",
       { class: "hasil-kepala" },
@@ -91,7 +92,7 @@ export function kartuPeraturan(l, opsi = {}) {
   const ringkasan = l.ringkasan ? bersihkanArtefak(l.ringkasan) : "";
   return h(
     "li",
-    { class: "hasil" },
+    { class: ["hasil", kelasJenis(l.jenis)] },
     h(
       "div",
       { class: "hasil-kepala" },

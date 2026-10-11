@@ -4,21 +4,22 @@ import { api } from "../api.js";
 import { angka, daftarBidang, daftarCakupan, judulRingkas, queryString, sitasi, urlPeraturan } from "../format.js";
 import { ajakanPasang } from "../komponen/ajakanPasang.js";
 import { ikon } from "../komponen/ikon.js";
+import { jenisDariSitasi, kelasJenis } from "../komponen/jenis.js";
 import { kotakCari } from "../komponen/kotakCari.js";
 import { modeTersimpan, pilihMode } from "../komponen/pilihMode.js";
 import { riwayat } from "../riwayat.js";
 
-const CONTOH = ["UU 13/2003", "pesangon PHK", "cuti melahirkan", "perlindungan data pribadi", "pajak penghasilan", "hak cipta"];
 const MAKS_BIDANG = 10;
+const MAKS_DILIHAT = 3;
 
 /**
- * Baris peraturan ringkas: sitasi dan topiknya.
+ * Baris peraturan ringkas: sitasi (berwarna menurut jenis) dan topiknya.
  * @param {{ frbr_uri: string, jenis: string, nomor: string, tahun: number, judul: string }} p
  */
 function barisPeraturan(p) {
   return h(
     "li",
-    null,
+    { class: kelasJenis(p.jenis) },
     h("a", { href: urlPeraturan(p.frbr_uri) }, h("span", { class: "sitasi" }, sitasi(p)), h("span", { class: "judul" }, judulRingkas(p.judul))),
   );
 }
@@ -30,10 +31,10 @@ export default async function beranda(ctx) {
   let mode = modeTersimpan();
   /** @param {string} q */
   const cari = (q) => ctx.pergi(`/cari${queryString({ q, mode: mode === "hybrid" ? null : mode })}`);
+  // Pencarian terakhir tidak lagi berupa baris chip di beranda: muncul di daftar saran saat kotak cari difokuskan.
   const kotak = kotakCari({ ukuran: "besar", saatKirim: cari });
 
-  const terakhirDicari = riwayat.pencarian().slice(0, 6);
-  const dilihat = riwayat.dilihat().slice(0, 4);
+  const dilihat = riwayat.dilihat().slice(0, MAKS_DILIHAT);
 
   const terbaru = h("section", { class: "bagian sembunyi", "aria-labelledby": "h-terbaru" });
   const bidang = h("section", { class: "bagian sembunyi", "aria-labelledby": "h-bidang" });
@@ -42,55 +43,61 @@ export default async function beranda(ctx) {
   isi(
     ctx.akar,
     h(
-      "section",
-      { class: "hero" },
-      h("h1", null, "Cari peraturan Indonesia"),
-      h("p", { class: "lead" }, "Ketik kata kunci, nomor peraturan, atau pertanyaan sehari-hari. Hasilnya selalu bisa ditelusuri ke pasalnya."),
-      kotak,
-      h("div", { class: "opsi-cari" }, h("span", { class: "redup" }, "Cara mencari"), pilihMode(mode, (m) => (mode = m), "mode-beranda")),
+      "div",
+      { class: "beranda" },
       h(
         "div",
-        { class: "contoh gulir-chip" },
-        h("span", { class: "redup" }, terakhirDicari.length ? "Terakhir:" : "Coba:"),
-        (terakhirDicari.length ? terakhirDicari.map((r) => r.q) : CONTOH).map((c) => h("a", { class: "chip", href: `/cari${queryString({ q: c })}` }, c)),
-      ),
-    ),
-    ajakanPasang(),
-    h(
-      "a",
-      { class: "teaser-tanya", href: "/tanya" },
-      h("span", { class: "teaser-ikon", "aria-hidden": "true" }, ikon("tanya")),
-      h("span", { class: "teaser-teks" }, h("strong", null, "Punya pertanyaan hukum?"), h("span", null, "Tanya Lexa. Jawabannya hanya dari pasal yang ada di indeks, lengkap dengan sumbernya.")),
-      ikon("kirim"),
-    ),
-    dilihat.length
-      ? h(
+        { class: "hero-tata" },
+        h(
           "section",
-          { class: "bagian", "aria-labelledby": "h-dilihat" },
-          h("h2", { id: "h-dilihat" }, "Terakhir dilihat"),
+          { class: "hero" },
+          h("h1", null, "Cari peraturan Indonesia"),
+          h("p", { class: "lead" }, "Ketik kata kunci, nomor peraturan, atau pertanyaan sehari-hari. Hasilnya selalu bisa ditelusuri ke pasalnya."),
+          kotak,
+          h("div", { class: "opsi-cari" }, h("span", { class: "redup" }, "Cara mencari"), pilihMode(mode, (m) => (mode = m), "mode-beranda")),
+        ),
+        h(
+          "div",
+          { class: "hero-samping" },
+          ajakanPasang(),
           h(
-            "ul",
-            { class: "daftar-ringkas" },
-            dilihat.map((d) => {
-              // Peraturan yang sudah dibaca cukup jauh dibuka langsung di pasal terakhir yang dibaca.
-              const posisi = riwayat.posisi(d.uri);
-              return h(
-                "li",
-                null,
-                h(
-                  "a",
-                  { href: urlPeraturan(d.uri, { jangkar: posisi?.jangkar }) },
-                  h("span", { class: "sitasi" }, d.sitasi),
-                  h("span", { class: "judul" }, judulRingkas(d.judul), posisi?.nama ? h("span", { class: "lanjut-di" }, ` · lanjut di ${posisi.nama}`) : null),
-                ),
-              );
-            }),
+            "a",
+            { class: "kartu-tanya", href: "/tanya" },
+            h("span", { class: "kt-ikon", "aria-hidden": "true" }, ikon("tanya")),
+            h("span", { class: "kt-teks" }, h("strong", null, "Punya pertanyaan hukum?"), h("span", null, "Tanya Lexa. Jawabannya hanya dari pasal yang ada di indeks, lengkap dengan sumbernya.")),
+            h("span", { class: "kt-aksi" }, "Tanya Lexa", ikon("kirim")),
           ),
-        )
-      : null,
-    terbaru,
-    bidang,
-    info,
+        ),
+      ),
+      dilihat.length
+        ? h(
+            "section",
+            { class: "bagian", "aria-labelledby": "h-dilihat" },
+            h("h2", { id: "h-dilihat" }, "Terakhir dilihat"),
+            h(
+              "ul",
+              { class: "daftar-ringkas kisi-lanjut" },
+              dilihat.map((d) => {
+                // Peraturan yang sudah dibaca cukup jauh dibuka langsung di pasal terakhir yang dibaca.
+                const posisi = riwayat.posisi(d.uri);
+                return h(
+                  "li",
+                  { class: kelasJenis(jenisDariSitasi(d.sitasi)) },
+                  h(
+                    "a",
+                    { href: urlPeraturan(d.uri, { jangkar: posisi?.jangkar }) },
+                    h("span", { class: "sitasi" }, d.sitasi),
+                    h("span", { class: "judul" }, judulRingkas(d.judul)),
+                    posisi?.nama ? h("span", { class: "lanjut-di" }, ikon("kanan"), `lanjut di ${posisi.nama}`) : null,
+                  ),
+                );
+              }),
+            ),
+          )
+        : null,
+      h("div", { class: "dua-bagian" }, terbaru, bidang),
+      info,
+    ),
   );
 
   const [stat, bid] = await Promise.allSettled([api.statistik(), api.bidang()]);

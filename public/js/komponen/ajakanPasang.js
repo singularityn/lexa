@@ -78,7 +78,7 @@ export function ajakanPasang(opsi = {}) {
  * cara memasang sesuai perangkatnya.
  */
 export function kartuPasang() {
-  const akar = h("div", { class: "kartu" });
+  const akar = h("div", { class: "kartu kartu-pastel p-biru" });
 
   const gambar = () => {
     const ios = !pasangTersedia() && perangkatIos();

@@ -4,6 +4,7 @@ import { api, dibatalkan } from "../api.js";
 import { angka, bacaFilter, daftarCakupan, kodeJenis, queryString } from "../format.js";
 import { buatPanelFilter } from "../komponen/panelFilter.js";
 import { kartuPeraturan } from "../komponen/kartuHasil.js";
+import { bilahTampilan, hierarkiJenis, papanJenis, statistikTelusuri, tampilanDariUrl } from "../komponen/papanJenis.js";
 import { keadaanKosong, kerangkaHasil, kotakGalat, paginasi } from "../komponen/umum.js";
 
 const PER_HALAMAN = 20;
@@ -28,6 +29,7 @@ export default async function telusuri(ctx) {
   const keadaan = {
     urut: ["tahun_asc", "judul"].includes(ctx.params.get("urut") ?? "") ? /** @type {string} */ (ctx.params.get("urut")) : "",
     halaman: Math.max(Number(ctx.params.get("page")) || 1, 1),
+    tampil: tampilanDariUrl(ctx.params.get("tampil")),
   };
 
   let nomor = 0;
@@ -63,18 +65,38 @@ export default async function telusuri(ctx) {
     )
   );
 
+  const daftarTampil = h(
+    "div",
+    { class: "dua-kolom" },
+    panel.el,
+    h("div", { class: "area-atas bilah-alat" }, panel.tombol, h("span", { class: "rentang" }), urut),
+    h("section", { class: "area-hasil", "aria-label": "Daftar peraturan" }, panel.chipAktif, h("div", { class: "bilah-hasil" }, ringkas), hasil),
+  );
+  // Tiga tampilan atas data yang sama: Daftar (dengan filter), Papan per jenis, dan Hierarki peraturan.
+  const papan = papanJenis(ctx.sinyal);
+  const hierarki = hierarkiJenis(ctx.sinyal);
+  /** @param {import("../komponen/papanJenis.js").Tampilan} t @param {boolean} ubahUrl */
+  const terapkan = (t, ubahUrl) => {
+    keadaan.tampil = t;
+    daftarTampil.classList.toggle("sembunyi", t !== "daftar");
+    papan.el.classList.toggle("sembunyi", t !== "papan");
+    hierarki.el.classList.toggle("sembunyi", t !== "hierarki");
+    if (t === "papan") void papan.muat();
+    if (t === "hierarki") void hierarki.muat();
+    if (ubahUrl) ctx.perbaruiUrl(urlHalaman(keadaan.halaman));
+  };
+
   isi(
     ctx.akar,
     h("h1", null, "Telusuri peraturan"),
     cakupanInfo,
-    h(
-      "div",
-      { class: "dua-kolom" },
-      panel.el,
-      h("div", { class: "area-atas bilah-alat" }, panel.tombol, h("span", { class: "rentang" }), urut),
-      h("section", { class: "area-hasil", "aria-label": "Daftar peraturan" }, panel.chipAktif, h("div", { class: "bilah-hasil" }, ringkas), hasil),
-    ),
+    statistikTelusuri(ctx.sinyal),
+    bilahTampilan(keadaan.tampil, (t) => terapkan(t, true)),
+    daftarTampil,
+    papan.el,
+    hierarki.el,
   );
+  terapkan(keadaan.tampil, false);
   panel.perbaruiFacet({});
   api.bidang().then((b) => !ctx.sinyal.aborted && panel.isiBidang(b.bidang)).catch(() => {});
 
@@ -87,6 +109,7 @@ export default async function telusuri(ctx) {
       tahun_max: filter.tahun_max,
       bidang: filter.bidang,
       urut: keadaan.urut,
+      tampil: keadaan.tampil === "daftar" ? null : keadaan.tampil,
       page: halaman > 1 ? halaman : null,
     })}`;
 

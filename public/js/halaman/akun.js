@@ -35,7 +35,7 @@ function kartuRiwayat() {
     toast("Riwayat dihapus.");
   });
   gambar();
-  return h("div", { class: "kartu", style: { marginTop: "16px" } }, h("h2", { class: "kartu-judul" }, "Riwayat"), ringkas, tombol);
+  return h("div", { class: "kartu" }, h("h2", { class: "kartu-judul" }, "Riwayat"), ringkas, tombol);
 }
 
 /** Peraturan yang disimpan untuk dibaca tanpa jaringan: daftar, ukuran, dan tombol hapus. */
@@ -80,14 +80,14 @@ function kartuLuring() {
     await gambar();
   });
   void gambar();
-  return h("div", { class: "kartu", style: { marginTop: "16px" } }, h("h2", { class: "kartu-judul" }, "Simpanan luring"), ringkas, daftar, hapusSemua);
+  return h("div", { class: "kartu" }, h("h2", { class: "kartu-judul" }, "Simpanan luring"), ringkas, daftar, hapusSemua);
 }
 
 /** Tautan yang di layar lebar ada di header/footer, tetapi tidak di bilah navigasi bawah ponsel. */
 function kartuInformasi() {
   return h(
     "div",
-    { class: "kartu", style: { marginTop: "16px" } },
+    { class: "kartu" },
     h("h2", { class: "kartu-judul" }, "Informasi"),
     h(
       "ul",
@@ -114,10 +114,10 @@ export default async function akun(ctx) {
   if (!masuk || !pengguna) {
     isi(
       ctx.akar,
-      h("div", { class: "prosa" },
+      h("div", { class: "prosa akun-tata" },
         h("h1", null, "Akun"),
         pesanGalat,
-        h("div", { class: "kartu" },
+        h("div", { class: "kartu kartu-pastel p-ungu" },
           h("h2", { class: "kartu-judul" }, "Anda memakai Lexa sebagai tamu"),
           h("p", null, "Semua fitur, termasuk pencarian, membaca pasal, tanya jawab, dan koleksi, berfungsi tanpa akun. Akun hanya menambah satu hal: koleksi dan riwayat tanya jawab Anda tersinkron antarperangkat."),
           tersedia
@@ -128,7 +128,7 @@ export default async function akun(ctx) {
             : h("p", { class: "redup" }, "Masuk dengan Google belum diaktifkan di instalasi ini. Mode tamu tetap berfungsi penuh."),
           koleksi.jumlah ? h("p", { class: "bantu" }, `${koleksi.jumlah} peraturan di koleksi perangkat ini akan dibawa ke akun saat Anda masuk.`) : null,
         ),
-        h("div", { style: { marginTop: "16px" } }, kartuPasang()),
+        kartuPasang(),
         kartuLuring(),
         kartuRiwayat(),
         kartuInformasi(),
@@ -144,7 +144,7 @@ export default async function akun(ctx) {
 
   isi(
     ctx.akar,
-    h("div", { class: "prosa" },
+    h("div", { class: "prosa akun-tata" },
       h("h1", null, "Akun"),
       pesanGalat,
       h("div", { class: "kartu" },
@@ -173,7 +173,7 @@ export default async function akun(ctx) {
           h("div", { class: "baris" }, simpan),
         ),
       ),
-      h("div", { class: "kartu", style: { marginTop: "16px" } },
+      h("div", { class: "kartu" },
         h("h2", { class: "kartu-judul" }, "Keluar"),
         h("p", { class: "redup" }, "Sesi di perangkat ini diakhiri. Koleksi Anda tetap aman di akun."),
         h("button", {
@@ -186,7 +186,7 @@ export default async function akun(ctx) {
           },
         }, "Keluar"),
       ),
-      h("div", { style: { marginTop: "16px" } }, kartuPasang()),
+      kartuPasang(),
       kartuLuring(),
       kartuRiwayat(),
       kartuInformasi(),

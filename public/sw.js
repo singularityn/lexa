@@ -18,10 +18,17 @@
  */
 
 // <<DAFTAR-CANGKANG (dibuat oleh scripts/perbarui-sw.mjs; jangan disunting tangan)
-const VERSI = "a038928a3430";
+const VERSI = "f4a075d49af2";
 const CANGKANG = [
   "/css/app.css",
   "/favicon.svg",
+  "/fonts/newsreader-latin-400-italic.woff2",
+  "/fonts/newsreader-latin-400-normal.woff2",
+  "/fonts/newsreader-latin-600-normal.woff2",
+  "/fonts/plus-jakarta-sans-latin-400-normal.woff2",
+  "/fonts/plus-jakarta-sans-latin-500-normal.woff2",
+  "/fonts/plus-jakarta-sans-latin-600-normal.woff2",
+  "/fonts/plus-jakarta-sans-latin-700-normal.woff2",
   "/ikon/apple-touch-icon.png",
   "/ikon/favicon-32.png",
   "/ikon/ikon-192.png",
@@ -47,13 +54,17 @@ const CANGKANG = [
   "/js/komponen/dialogLaporan.js",
   "/js/komponen/grafik.js",
   "/js/komponen/ikon.js",
+  "/js/komponen/jenis.js",
   "/js/komponen/kartuHasil.js",
   "/js/komponen/kotakCari.js",
   "/js/komponen/lembar.js",
   "/js/komponen/navBawah.js",
   "/js/komponen/panelFilter.js",
+  "/js/komponen/papanJenis.js",
   "/js/komponen/pilihMode.js",
   "/js/komponen/pitaLuring.js",
+  "/js/komponen/progresBaca.js",
+  "/js/komponen/sisiDilihat.js",
   "/js/komponen/toast.js",
   "/js/komponen/tombolTandai.js",
   "/js/komponen/umum.js",

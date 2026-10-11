@@ -14,7 +14,7 @@ import { toast } from "./toast.js";
  */
 export function tombolTandai(peraturan, opsi = {}) {
   const tombol = /** @type {HTMLButtonElement} */ (
-    h("button", { type: "button", class: ["tombol", opsi.denganTeks ? "" : "tombol-kecil tombol-hantu"].filter(Boolean).join(" ") })
+    h("button", { type: "button", class: ["tombol", opsi.denganTeks ? "" : "tombol-kecil tombol-hantu tombol-tanda"].filter(Boolean).join(" ") })
   );
 
   function gambar() {
@@ -33,8 +33,11 @@ export function tombolTandai(peraturan, opsi = {}) {
     tombol.disabled = true;
     try {
       if (koleksi.ada(peraturan.uri)) {
+        const catatan = koleksi.peta.get(peraturan.uri)?.catatan ?? null;
         await koleksi.hapus(peraturan.uri);
-        toast("Dilepas dari koleksi.");
+        toast("Dilepas dari koleksi.", {
+          aksi: { label: "Urungkan", saat: () => void koleksi.simpan({ ...peraturan, catatan }).catch(() => toast("Koleksi gagal dipulihkan.", { galat: true })) },
+        });
       } else {
         await koleksi.simpan(peraturan);
         toast(sesi.data.masuk ? "Disimpan ke koleksi akun Anda." : "Disimpan di perangkat ini.");

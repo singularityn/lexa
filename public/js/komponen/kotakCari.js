@@ -3,12 +3,18 @@ import { h, tunda } from "../dom.js";
 import { api, dibatalkan } from "../api.js";
 import { pergi } from "../navigasi.js";
 import { urlPeraturan } from "../format.js";
+import { riwayat } from "../riwayat.js";
 import { ikon } from "./ikon.js";
+import { toast } from "./toast.js";
 
 let cacahId = 0;
 
+/** @typedef {{ tipe: "peraturan" | "kueri" | "riwayat" | "hapus", teks: string, uri: string | null }} ItemSaran */
+
 /**
- * Kotak pencarian dengan saran ketik (pola ARIA combobox).
+ * Kotak pencarian dengan saran ketik (pola ARIA combobox). Saat kotak kosong dan difokuskan, yang
+ * ditawarkan adalah pencarian terakhir di perangkat ini (bisa dihapus satu per satu atau sekaligus,
+ * dengan "Urungkan"); setelah mengetik, saran berupa judul peraturan.
  *
  * @param {{
  *   nilai?: string,
@@ -42,11 +48,13 @@ export function kotakCari(opsi) {
     })
   );
   const daftar = h("ul", { class: "saran sembunyi", id, role: "listbox", "aria-label": "Saran pencarian" });
-  /** @type {import("../api.js").Saran[]} */
+  /** @type {ItemSaran[]} */
   let saran = [];
   let terpilih = -1;
   /** @type {AbortController | null} */
   let pengendali = null;
+
+  const opsiEl = () => /** @type {HTMLElement[]} */ ([...daftar.querySelectorAll('[role="option"]')]);
 
   function tutup() {
     daftar.classList.add("sembunyi");
@@ -57,52 +65,108 @@ export function kotakCari(opsi) {
 
   function sorot(/** @type {number} */ i) {
     terpilih = i;
-    [...daftar.children].forEach((li, n) => li.setAttribute("aria-selected", String(n === i)));
+    opsiEl().forEach((li, n) => li.setAttribute("aria-selected", String(n === i)));
     if (i >= 0) input.setAttribute("aria-activedescendant", `${id}-${i}`);
     else input.removeAttribute("aria-activedescendant");
   }
 
   function gambar() {
-    daftar.replaceChildren(
-      ...saran.map((sa, i) =>
+    /** @type {HTMLElement[]} */
+    const anak = [];
+    if (saran.length && saran[0].tipe === "riwayat") {
+      anak.push(h("li", { class: "saran-kepala", role: "presentation" }, h("span", { class: "saran-judul" }, "Pencarian terakhir")));
+    }
+    saran.forEach((sa, i) => {
+      const riwayatItem = sa.tipe === "riwayat";
+      anak.push(
         h(
           "li",
           {
             id: `${id}-${i}`,
             role: "option",
             "aria-selected": "false",
+            class: riwayatItem ? "saran-riwayat" : sa.tipe === "hapus" ? "saran-riwayat saran-hapus" : null,
             // mousedown (bukan click) agar terjadi sebelum input kehilangan fokus.
             onmousedown: (/** @type {MouseEvent} */ e) => {
               e.preventDefault();
               pilih(i);
             },
           },
-          h("span", { class: "tipe" }, sa.tipe === "peraturan" ? "Peraturan" : "Pencarian"),
+          riwayatItem || sa.tipe === "hapus" ? ikon(riwayatItem ? "jam" : "sampah") : h("span", { class: "tipe" }, sa.tipe === "peraturan" ? "Peraturan" : "Pencarian"),
           h("span", null, sa.teks),
+          // Hanya penanda visual untuk penunjuk tetikus; lewat papan ketik: tombol Delete pada saran yang disorot.
+          riwayatItem
+            ? h(
+                "button",
+                {
+                  type: "button",
+                  class: "saran-x",
+                  tabindex: "-1",
+                  "aria-hidden": "true",
+                  onmousedown: (/** @type {MouseEvent} */ e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    riwayat.hapusPencarian(sa.teks);
+                    tampilkanRiwayat();
+                  },
+                },
+                ikon("tutup"),
+              )
+            : null,
         ),
-      ),
-    );
+      );
+    });
+    daftar.replaceChildren(...anak);
     const ada = saran.length > 0;
     daftar.classList.toggle("sembunyi", !ada);
     input.setAttribute("aria-expanded", String(ada));
     terpilih = -1;
   }
 
+  function tampilkanRiwayat() {
+    const r = riwayat.pencarian().slice(0, 6);
+    saran = /** @type {ItemSaran[]} */ (
+      r.length ? [...r.map((e) => ({ tipe: "riwayat", teks: e.q, uri: null })), { tipe: "hapus", teks: "Hapus semua riwayat pencarian", uri: null }] : []
+    );
+    gambar();
+  }
+
+  function hapusSemuaRiwayat() {
+    const lama = riwayat.pencarian();
+    riwayat.hapusSemuaPencarian();
+    saran = [];
+    gambar();
+    toast("Riwayat pencarian dihapus.", { aksi: { label: "Urungkan", saat: () => riwayat.pulihkanPencarian(lama) } });
+  }
+
   /** @param {number} i */
   function pilih(i) {
     const sa = saran[i];
     if (!sa) return;
+    if (sa.tipe === "hapus") {
+      hapusSemuaRiwayat();
+      return;
+    }
     tutup();
     if (sa.tipe === "peraturan" && sa.uri) {
       pergi(urlPeraturan(sa.uri));
     } else {
       input.value = sa.teks;
+      perbaruiHapus();
       opsi.saatKirim(sa.teks);
     }
   }
 
   const ambilSaran = tunda(async () => {
     const q = input.value.trim();
+    if (q === "") {
+      if (document.activeElement === input) tampilkanRiwayat();
+      else {
+        saran = [];
+        gambar();
+      }
+      return;
+    }
     // Saran hanya untuk awalan judul; kalimat panjang tidak ada gunanya diminta (dan ditolak server).
     if (q.length < 2 || q.length > 40) {
       saran = [];
@@ -120,6 +184,9 @@ export function kotakCari(opsi) {
   }, 180);
 
   input.addEventListener("input", ambilSaran);
+  input.addEventListener("focus", () => {
+    if (input.value.trim() === "") tampilkanRiwayat();
+  });
   input.addEventListener("blur", () => setTimeout(tutup, 120));
   input.addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown" && saran.length) {
@@ -132,6 +199,10 @@ export function kotakCari(opsi) {
     } else if (e.key === "Enter" && terpilih >= 0) {
       e.preventDefault();
       pilih(terpilih);
+    } else if (e.key === "Delete" && terpilih >= 0 && saran[terpilih]?.tipe === "riwayat") {
+      e.preventDefault();
+      riwayat.hapusPencarian(saran[terpilih].teks);
+      tampilkanRiwayat();
     } else if (e.key === "Escape") {
       tutup();
     }

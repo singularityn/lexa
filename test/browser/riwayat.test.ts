@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MAKS_CARI, MAKS_DILIHAT, MAKS_POSISI, riwayat } from "../../public/js/riwayat.js";
-import { penyimpanan } from "../../public/js/state.js";
+import { pantau, penyimpanan } from "../../public/js/state.js";
 
 // Riwayat dijalankan di Node: localStorage tidak ada, jadi `penyimpanan` memakai cadangan di memori,
 // persis seperti peramban yang menolak akses penyimpanan (mode privat).
@@ -131,5 +131,56 @@ describe("riwayat: posisi baca", () => {
     expect(riwayat.posisi("x")).toBeNull();
     penyimpanan.tulis("lexa:riwayat:v1", "bukan json");
     expect(riwayat.posisi("ok")).toBeNull();
+  });
+});
+
+describe("riwayat: menghapus dan memulihkan pencarian", () => {
+  it("hapusPencarian membuang satu kata (huruf besar/kecil dan spasi diabaikan) dan memberi tahu pendengar hanya bila berubah", () => {
+    const dengar = vi.fn();
+    const berhenti = pantau("riwayat", dengar);
+    riwayat.catatPencarian("pesangon PHK");
+    riwayat.catatPencarian("cuti melahirkan");
+    dengar.mockClear();
+    riwayat.hapusPencarian("  PESANGON phk ");
+    expect(riwayat.pencarian().map((e) => e.q)).toEqual(["cuti melahirkan"]);
+    expect(dengar).toHaveBeenCalledTimes(1);
+    riwayat.hapusPencarian("tidak pernah dicari");
+    expect(dengar).toHaveBeenCalledTimes(1);
+    berhenti();
+  });
+
+  it("hapusSemuaPencarian mengosongkan pencarian tanpa menyentuh peraturan yang dilihat", () => {
+    riwayat.catatDilihat(p(1));
+    riwayat.catatPencarian("pesangon");
+    riwayat.catatPencarian("cuti melahirkan");
+    riwayat.hapusSemuaPencarian();
+    expect(riwayat.pencarian()).toEqual([]);
+    expect(riwayat.dilihat()).toHaveLength(1);
+  });
+
+  it("pulihkanPencarian mengembalikan yang dihapus, tanpa menggandakan dan tanpa menimpa yang lebih baru", () => {
+    riwayat.catatPencarian("pesangon");
+    riwayat.catatPencarian("cuti melahirkan");
+    const lama = riwayat.pencarian();
+    riwayat.hapusSemuaPencarian();
+    riwayat.catatPencarian("pajak penghasilan");
+    riwayat.pulihkanPencarian(lama);
+    expect(riwayat.pencarian().map((e) => e.q)).toEqual(["pajak penghasilan", "cuti melahirkan", "pesangon"]);
+    riwayat.pulihkanPencarian(lama);
+    expect(riwayat.pencarian()).toHaveLength(3);
+  });
+
+  it("mencatat peraturan dan pencarian menyiarkan peristiwa; posisi baca (sering berubah) tidak", () => {
+    const dengar = vi.fn();
+    const berhenti = pantau("riwayat", dengar);
+    riwayat.catatDilihat(p(1));
+    riwayat.catatPencarian("pesangon");
+    expect(dengar).toHaveBeenCalledTimes(2);
+    riwayat.catatPosisi(p(1).uri, { jangkar: "pasal-5", nama: "Pasal 5" });
+    riwayat.hapusPosisi(p(1).uri);
+    expect(dengar).toHaveBeenCalledTimes(2);
+    riwayat.hapusSemua();
+    expect(dengar).toHaveBeenCalledTimes(3);
+    berhenti();
   });
 });

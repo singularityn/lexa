@@ -7,7 +7,7 @@
  * bisa dihapus dari halaman Akun.
  */
 
-import { penyimpanan } from "./state.js";
+import { penyimpanan, siarkan } from "./state.js";
 
 const KUNCI = "lexa:riwayat:v1";
 export const MAKS_DILIHAT = 20;
@@ -46,9 +46,13 @@ function baca() {
   }
 }
 
-/** @param {{ dilihat: Dilihat[], cari: Dicari[], posisi: Posisi[] }} data */
-function tulis(data) {
+/**
+ * @param {{ dilihat: Dilihat[], cari: Dicari[], posisi: Posisi[] }} data
+ * @param {boolean} [kabari] beri tahu pendengar (sidebar, kotak cari); posisi baca sering berubah dan tidak perlu
+ */
+function tulis(data, kabari = true) {
   penyimpanan.tulis(KUNCI, JSON.stringify(data));
+  if (kabari) siarkan("riwayat");
 }
 
 export const riwayat = {
@@ -92,6 +96,36 @@ export const riwayat = {
   },
 
   /**
+   * Hapus satu kata dari riwayat pencarian (tanpa membedakan huruf besar/kecil).
+   * @param {string} q
+   */
+  hapusPencarian(q) {
+    const data = baca();
+    const sisa = data.cari.filter((e) => e.q.toLowerCase() !== q.trim().toLowerCase());
+    if (sisa.length === data.cari.length) return;
+    data.cari = sisa;
+    tulis(data);
+  },
+
+  hapusSemuaPencarian() {
+    const data = baca();
+    if (!data.cari.length) return;
+    data.cari = [];
+    tulis(data);
+  },
+
+  /**
+   * Kembalikan riwayat pencarian yang baru dihapus ("Urungkan"); pencarian yang lebih baru tetap di depan.
+   * @param {Dicari[]} daftar
+   */
+  pulihkanPencarian(daftar) {
+    const data = baca();
+    const ada = new Set(data.cari.map((e) => e.q.toLowerCase()));
+    data.cari = [...data.cari, ...daftar.filter((e) => !ada.has(e.q.toLowerCase()))].slice(0, MAKS_CARI);
+    tulis(data);
+  },
+
+  /**
    * Posisi baca terakhir pada sebuah peraturan: pasal yang berada di atas layar saat pembaca berhenti menggulir.
    * @param {string} uri
    * @returns {Posisi | null}
@@ -108,7 +142,7 @@ export const riwayat = {
     const data = baca();
     if (data.posisi[0]?.uri === uri && data.posisi[0].jangkar === p.jangkar) return; // tidak berubah: hindari menulis ulang tiap gulir
     data.posisi = [{ uri, jangkar: p.jangkar, nama: p.nama, waktu: Date.now() }, ...data.posisi.filter((e) => e.uri !== uri)].slice(0, MAKS_POSISI);
-    tulis(data);
+    tulis(data, false);
   },
 
   /** @param {string} uri */
@@ -116,10 +150,11 @@ export const riwayat = {
     const data = baca();
     if (!data.posisi.some((e) => e.uri === uri)) return;
     data.posisi = data.posisi.filter((e) => e.uri !== uri);
-    tulis(data);
+    tulis(data, false);
   },
 
   hapusSemua() {
     penyimpanan.hapus(KUNCI);
+    siarkan("riwayat");
   },
 };
