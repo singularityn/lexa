@@ -9,6 +9,9 @@
  *   kosong   : sumber menjawab tanpa pasal; dicoba lagi tiap bulan oleh pemeliharaan harian
  *   gagal    : galat berulang; dicoba lagi tiap beberapa hari
  *
+ * Jawaban pasal.id tanpa naskah karena pembatasan akses (lib/akses.ts) bukan peraturan 'kosong': peraturannya dibiarkan
+ * 'menunggu', jawabannya tidak diarsipkan, dan pengambilan detail dijeda sampai pemeriksaan berkala memutuskan lain.
+ *
  * Dua hal menjaga data yang sudah ada. Penyimpanan tidak pernah mengganti pasal yang tersimpan dengan hasil yang
  * lebih sedikit (respons kosong atau terpotong dari sumber tak boleh menghapus naskah yang baik). Dan respons detail
  * diarsipkan apa adanya di R2 sebelum diuraikan, jadi perbaikan pengurai cukup menguraikan ulang arsip tanpa
@@ -17,7 +20,13 @@
 
 import type { Article, Law } from "../../shared/types";
 import { dalamCakupan } from "../../shared/cakupan";
-import { PasalApiError, PasalRateLimitError, uraiDetail, type DetailPeraturan } from "./pasal";
+import {
+  adaSimpulPasal, catatanAksesTerbatas, PasalApiError, PasalRateLimitError, uraiDetail, type DetailPeraturan,
+} from "./pasal";
+import {
+  bacaAkses, periksaAkses, tandaiAksesPulih, tandaiAksesTerbatas, tundaPeriksaAkses, type KeadaanAkses,
+} from "./akses";
+import { catatDiagnosaIsi } from "./diagnosa";
 import type { KonteksIngest } from "./ingest";
 
 export const MAKS_PERCOBAAN = 5;
@@ -117,7 +126,13 @@ function idPotongan(id: string, panjang: number, mulai = 1): string[] {
  * Id vektor pasal yang lenyap karena penggantian dicatat ke daftar hapus (lib/hapus.ts), supaya vektor yatim tak
  * menumpuk di Vectorize.
  */
-export async function simpanIsi(db: D1Database, detail: DetailPeraturan, arsip: boolean): Promise<HasilSimpan> {
+export async function simpanIsi(
+  db: D1Database,
+  detail: DetailPeraturan,
+  arsip: boolean,
+  /** Catatan sumber untuk peraturan tanpa naskah (mis. `content_note` pasal.id), dilekatkan ke catatan hasil. */
+  catatanSumber: string | null = null,
+): Promise<HasilSimpan> {
   const { law, articles, relations } = detail;
   const ada = await db
     .prepare(`SELECT jumlah_pasal FROM laws WHERE frbr_uri = ?`)
@@ -130,8 +145,10 @@ export async function simpanIsi(db: D1Database, detail: DetailPeraturan, arsip: 
   const status: "lengkap" | "kosong" = jumlah > 0 ? "lengkap" : "kosong";
 
   let catatan: string | null = null;
-  if (baru === 0) catatan = lama > 0 ? `sumber tak memberi pasal; ${lama} pasal tersimpan dipertahankan (${detail.pohon})` : detail.pohon;
-  else if (!diganti) catatan = `sumber memberi ${baru} pasal, kurang dari ${lama} tersimpan; yang tersimpan dipertahankan (${detail.pohon})`;
+  if (baru === 0) {
+    catatan = lama > 0 ? `sumber tak memberi pasal; ${lama} pasal tersimpan dipertahankan (${detail.pohon})` : detail.pohon;
+    if (catatanSumber) catatan = `${catatan} [${catatanSumber}]`.slice(0, 600);
+  } else if (!diganti) catatan = `sumber memberi ${baru} pasal, kurang dari ${lama} tersimpan; yang tersimpan dipertahankan (${detail.pohon})`;
 
   const pernyataan: D1PreparedStatement[] = [
     db
@@ -269,6 +286,8 @@ export interface OpsiIsi {
   maksUrai: number;
   /** Batas waktu langkah ini; sesudahnya berhenti walau anggaran belum habis. */
   batasMs: number;
+  /** Waktu tik (ms); bawaannya sekarang. Menentukan kapan pemeriksaan akses isi berikut jatuh tempo. */
+  sekarang?: number;
 }
 
 export interface LaporanIsi {
@@ -282,6 +301,10 @@ export interface LaporanIsi {
   tundaMs?: number;
   /** 401/403: token ditolak; langkah berhenti dan tik menunda pasal.id lebih lama. */
   ditolak?: number;
+  /** pasal.id tidak memberi naskah (lib/akses.ts): catatannya. Pengambilan detail berhenti dan dijeda. */
+  aksesTerbatas?: string;
+  /** Pembatasan akses yang tercatat sebelumnya sudah lepas. */
+  aksesPulih?: boolean;
 }
 
 interface BarisAntre {
@@ -289,15 +312,15 @@ interface BarisAntre {
   jenis: string;
 }
 
-/** Uraikan, simpan, dan lanjutkan ke arsip teks dan pengindeksan satu peraturan. Melempar bila gagal. */
+/** Simpan hasil uraian satu peraturan, lalu lanjutkan ke arsip teks dan pengindeksan. Melempar bila gagal. */
 async function kerjakan(
   ctx: KonteksIngest,
   baris: BarisAntre,
-  mentah: unknown,
+  detail: DetailPeraturan,
   arsip: boolean,
   laporan: LaporanIsi,
+  catatanSumber: string | null = null,
 ): Promise<void> {
-  const detail = uraiDetail(mentah);
   if (detail.law.frbr_uri !== baris.frbr_uri) {
     // Selisih huruf besar/kecil atau garis miring di ujung bukan peraturan lain: kunci katalog yang dipakai, supaya baris
     // yang diminta itulah yang terisi dan keluar dari antrean. Selisih yang lain berarti sumber menjawab peraturan lain.
@@ -318,7 +341,7 @@ async function kerjakan(
     return;
   }
 
-  const hasil = await simpanIsi(ctx.db, detail, arsip);
+  const hasil = await simpanIsi(ctx.db, detail, arsip, catatanSumber);
   if (hasil.status === "kosong") laporan.kosong++;
   else if (hasil.diganti) laporan.lengkap++;
   else laporan.dipertahankan++;
@@ -328,10 +351,12 @@ async function kerjakan(
 /**
  * Kerjakan antrean isi: ambil detail yang belum ada dari pasal.id (paling banyak `maksAmbil`), lalu uraikan ulang
  * dari arsip (paling banyak `maksUrai`). Kegagalan satu peraturan hanya menggeser giliran peraturan itu; 429 dan
- * 401/403 menghentikan pengambilan dan dilaporkan ke tik, yang menyimpan jedanya.
+ * 401/403 menghentikan pengambilan dan dilaporkan ke tik, yang menyimpan jedanya. Jawaban tanpa naskah karena
+ * pembatasan akses (lib/akses.ts) juga menghentikan pengambilan, tanpa menyentuh peraturan yang diminta.
  */
 export async function langkahIsi(ctx: KonteksIngest, opsi: OpsiIsi): Promise<LaporanIsi> {
   const mulai = Date.now();
+  const sekarang = opsi.sekarang ?? mulai;
   const laporan: LaporanIsi = { diambil: 0, diurai: 0, lengkap: 0, kosong: 0, dipertahankan: 0, gagal: 0 };
   // Satu peraturan dicoba paling banyak sekali per tik: yang gagal tak boleh langsung dicoba lagi (peraturan yang
   // gilirannya sudah mundur tetap bisa jadi yang terdepan bila antreannya pendek), karena itu menghabiskan jatah
@@ -346,8 +371,43 @@ export async function langkahIsi(ctx: KonteksIngest, opsi: OpsiIsi): Promise<Lap
       )
       .bind(arsip, ...sudahDicoba)
       .first<BarisAntre>();
+  /** Galat pasal.id yang menghentikan pengambilan dan diteruskan ke tik; true bila galat ini salah satunya. */
+  const hentikan = (e: unknown): boolean => {
+    if (e instanceof PasalRateLimitError) {
+      laporan.tundaMs = e.retryAfterMs;
+      return true;
+    }
+    if (e instanceof PasalApiError && (e.status === 401 || e.status === 403)) {
+      laporan.ditolak = e.status;
+      return true;
+    }
+    return false;
+  };
 
-  for (let i = 0; i < opsi.maksAmbil && Date.now() - mulai < opsi.batasMs; i++) {
+  let anggaran = opsi.maksAmbil;
+  let akses: KeadaanAkses | null = anggaran > 0 ? await bacaAkses(ctx.db) : null;
+  if (akses && akses.periksa_lagi > new Date(sekarang).toISOString()) anggaran = 0; // masih dijeda
+  else if (akses) {
+    // Jeda habis: tanya pasal.id lagi lewat peraturan pembanding sebelum menyentuh antrean.
+    try {
+      const { putusan } = await periksaAkses(ctx.db, ctx.pasal);
+      if (putusan === "terbatas") {
+        laporan.aksesTerbatas = (await tandaiAksesTerbatas(ctx.db, akses.catatan, sekarang)).catatan;
+        anggaran = 0;
+      } else if (putusan === "baik") {
+        await tandaiAksesPulih(ctx.db);
+        laporan.aksesPulih = true;
+        akses = null;
+        anggaran--; // permintaan pembanding memakai jatah
+      }
+      // "tak_diketahui": tak ada pembanding; peraturan di depan antrean yang memutuskan.
+    } catch (e) {
+      anggaran = 0;
+      if (!hentikan(e)) await tundaPeriksaAkses(ctx.db, sekarang);
+    }
+  }
+
+  for (let i = 0; i < anggaran && Date.now() - mulai < opsi.batasMs; i++) {
     const baris = await berikut(0);
     if (!baris) break;
     sudahDicoba.push(baris.frbr_uri);
@@ -361,19 +421,43 @@ export async function langkahIsi(ctx: KonteksIngest, opsi: OpsiIsi): Promise<Lap
     }
     try {
       const mentah = await ctx.pasal.getLawMentah(baris.frbr_uri);
+      const tanpaNaskah = catatanAksesTerbatas(mentah);
+      if (tanpaNaskah !== null) {
+        // Pembatasan menyeluruh atau peraturan yang memang tanpa naskah? Pembanding yang naskahnya sudah tersimpan
+        // memutuskan. Tanpa kepastian, yang aman adalah menganggapnya pembatasan: peraturan ini tidak disentuh.
+        let putusan: Awaited<ReturnType<typeof periksaAkses>>["putusan"] = "tak_diketahui";
+        try {
+          putusan = (await periksaAkses(ctx.db, ctx.pasal)).putusan;
+        } catch (e) {
+          if (hentikan(e)) break;
+        }
+        if (putusan !== "baik") {
+          laporan.aksesTerbatas = (await tandaiAksesTerbatas(ctx.db, tanpaNaskah, sekarang)).catatan;
+          break;
+        }
+        if (akses) {
+          await tandaiAksesPulih(ctx.db);
+          laporan.aksesPulih = true;
+          akses = null;
+        }
+      }
       laporan.diambil++;
-      // Arsip lebih dulu dari penguraian: sesudah ini jatah pasal.id tak perlu dipakai lagi untuk peraturan ini.
-      const diarsipkan = await arsipkanMentah(ctx.docs, baris.frbr_uri, mentah).then(() => true, () => false);
-      await kerjakan(ctx, baris, mentah, diarsipkan, laporan);
+      const adaNaskah = adaSimpulPasal(mentah);
+      if (adaNaskah && akses) {
+        await tandaiAksesPulih(ctx.db);
+        laporan.aksesPulih = true;
+        akses = null;
+      }
+      // Arsip lebih dulu dari penguraian: sesudah ini jatah pasal.id tak perlu dipakai lagi untuk peraturan ini, dan
+      // jawaban yang belum terurai dengan benar tetap bisa diuraikan ulang oleh pengurai yang lebih baik. Jawaban
+      // tanpa simpul pasal tidak diarsipkan: tak ada yang bisa diuraikan ulang darinya.
+      const diarsipkan = adaNaskah
+        ? await arsipkanMentah(ctx.docs, baris.frbr_uri, mentah).then(() => true, () => false)
+        : false;
+      if (adaNaskah) await catatDiagnosaIsi(ctx.db, baris.frbr_uri, mentah).catch(() => {});
+      await kerjakan(ctx, baris, uraiDetail(mentah), diarsipkan, laporan, tanpaNaskah);
     } catch (e) {
-      if (e instanceof PasalRateLimitError) {
-        laporan.tundaMs = e.retryAfterMs;
-        break;
-      }
-      if (e instanceof PasalApiError && (e.status === 401 || e.status === 403)) {
-        laporan.ditolak = e.status;
-        break;
-      }
+      if (hentikan(e)) break;
       laporan.gagal++;
       console.error("Lexa: isi peraturan gagal diambil", baris.frbr_uri, e);
       await catatKegagalan(ctx.db, baris.frbr_uri, e);
@@ -392,7 +476,7 @@ export async function langkahIsi(ctx: KonteksIngest, opsi: OpsiIsi): Promise<Lap
         continue;
       }
       laporan.diurai++;
-      await kerjakan(ctx, baris, mentah, true, laporan);
+      await kerjakan(ctx, baris, uraiDetail(mentah), true, laporan);
     } catch (e) {
       laporan.gagal++;
       console.error("Lexa: arsip peraturan gagal diuraikan", baris.frbr_uri, e);

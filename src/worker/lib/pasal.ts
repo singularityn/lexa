@@ -709,6 +709,41 @@ export function uraiDetail(json: unknown): DetailPeraturan {
   };
 }
 
+/** Larik simpul pasal dalam respons detail (`articles`, atau `pasal`), tanpa memetakannya. */
+function simpulMentah(json: unknown): unknown {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) return undefined;
+  const o = json as Record<string, unknown>;
+  return o.articles ?? o.pasal ?? undefined;
+}
+
+/** Respons detail memuat sedikitnya satu simpul pasal (bab, pasal, ayat, ...). */
+export function adaSimpulPasal(json: unknown): boolean {
+  const simpul = simpulMentah(json);
+  return Array.isArray(simpul) && simpul.length > 0;
+}
+
+/**
+ * Catatan pasal.id bila respons detail sama sekali tak memuat naskah. Sejak Oktober 2026 pasal.id menjawab 200 dengan
+ * `{ work, content: "not_available_via_api", content_note }` tanpa `articles` bagi pemakai yang tak berhak atas teks
+ * lengkap (token tanpa akses atau kuota baca harian, 300 per akun, habis). Itu bukan peraturan tanpa pasal dan tak
+ * boleh disimpan sebagai 'kosong' maupun diarsipkan. Mengembalikan null bila respons membawa `articles` (walau kosong)
+ * atau tak menyiratkan pembatasan sama sekali.
+ */
+export function catatanAksesTerbatas(json: unknown): string | null {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) return null;
+  if (simpulMentah(json) !== undefined) return null;
+  const o = json as Record<string, unknown>;
+  // Hanya jawaban detail (membawa objek `work`): daftar `/laws` memuat content/content_note yang sama persis, dan
+  // jawaban daftar tak boleh dikira pembatasan.
+  const inti = o.work ?? o.data ?? o.law;
+  if (typeof inti !== "object" || inti === null || Array.isArray(inti)) return null;
+  const isi = typeof o.content === "string" ? o.content : null;
+  const catatan = typeof o.content_note === "string" ? o.content_note : null;
+  const akses = aksesKeTeks(o.detail_access);
+  if (isi === null && catatan === null && akses === null) return null;
+  return [isi, catatan, akses].filter((x): x is string => Boolean(x)).join(" — ").slice(0, 500);
+}
+
 /** Bangun URL sumber resmi di BPK — situsnya tidak di-scrape, hanya ditautkan. */
 export function urlBpk(base: string, bpkId: string | null): string | null {
   return bpkId ? `${base.replace(/\/$/, "")}/Details/${bpkId}` : null;

@@ -5,7 +5,8 @@ import { cariDenganCache, type KonteksPencarian } from "../lib/search";
 import { tokenSah, diagnosaToken } from "../lib/auth";
 import { headerCors } from "../lib/cors";
 import { klausaBidang } from "../lib/bidang";
-import { PasalClient, uraiDetail, urlBpk } from "../lib/pasal";
+import { PasalApiError, PasalClient, PasalRateLimitError, adaSimpulPasal, catatanAksesTerbatas, uraiDetail, urlBpk } from "../lib/pasal";
+import { uraiAkses } from "../lib/akses";
 import type { KonteksIngest } from "../lib/ingest";
 import { jalankanTik } from "../lib/tik";
 import { arsipkanMentah, arsipkanTeksDanIndeks, SQL_GILIRAN, simpanIsi } from "../lib/isi";
@@ -376,7 +377,7 @@ api.get("/stats", async (c) => {
     // Kemajuan katalog, jeda pasal.id, jejak pemicu, dan statistik hari ini: baris kecil di sync_state.
     c.env.DB.prepare(
       `SELECT key, value FROM sync_state
-        WHERE key LIKE 'katalog_%' OR key LIKE 'denyut:%' OR key = 'pasal_tunda_sampai' OR key = ?`,
+        WHERE key LIKE 'katalog_%' OR key LIKE 'denyut:%' OR key = 'pasal_tunda_sampai' OR key = 'akses_isi' OR key = ?`,
     ).bind(`statistik:${hari}`).all<{ key: string; value: string }>(),
   ]);
 
@@ -413,6 +414,7 @@ api.get("/stats", async (c) => {
     hariIni = {};
   }
   const jeda = kv.get("pasal_tunda_sampai");
+  const akses = uraiAkses(kv.get("akses_isi"));
 
   return c.json({
     cakupan,
@@ -428,6 +430,8 @@ api.get("/stats", async (c) => {
       per_jenis: isiPerJenis,
       katalog,
       pasal_dijeda_sampai: jeda && jeda > new Date().toISOString() ? jeda : null,
+      // pasal.id tak memberi naskah peraturan (token tanpa hak teks lengkap atau kuota baca habis); null bila akses baik.
+      akses: akses && { sejak: akses.sejak, terakhir: akses.terakhir, periksa_lagi: akses.periksa_lagi, catatan: akses.catatan.slice(0, 300) },
       hari_ini: hariIni,
       denyut: {
         menit: kv.get("denyut:* * * * *") ?? null,
@@ -490,10 +494,24 @@ api.post("/admin/sync", async (c) => {
 
     // Belum ada di D1 (katalog belum menjangkaunya): ambil sekarang. Satu permintaan, atas perintah admin.
     const ctx = konteksIngest(c.env);
-    const mentah = await ctx.pasal.getLawMentah(body.uri);
+    let mentah: unknown;
+    try {
+      mentah = await ctx.pasal.getLawMentah(body.uri);
+    } catch (e) {
+      if (e instanceof PasalRateLimitError) {
+        return c.json({ error: "pasal_batas_laju", message: "pasal.id meminta jeda.", coba_lagi_dalam_ms: e.retryAfterMs }, 429);
+      }
+      const status = e instanceof PasalApiError ? e.status : 0;
+      return c.json({ error: "pasal_galat", message: String(e).slice(0, 300), status_pasal: status || null }, status === 404 ? 404 : 502);
+    }
+    // Jawaban tanpa naskah karena pembatasan akses bukan peraturan tanpa pasal: tidak disimpan (lib/akses.ts).
+    const tanpaNaskah = catatanAksesTerbatas(mentah);
+    if (tanpaNaskah !== null) {
+      return c.json({ error: "akses_terbatas", message: "pasal.id tidak memberi naskah peraturan ini.", catatan: tanpaNaskah }, 503);
+    }
     const detail = uraiDetail(mentah);
     if (!dalamCakupan(cakupan, detail.law.jenis)) return luarCakupan({ uri: body.uri, jenis: detail.law.jenis });
-    const arsip = await arsipkanMentah(ctx.docs, detail.law.frbr_uri, mentah).then(() => true, () => false);
+    const arsip = adaSimpulPasal(mentah) && (await arsipkanMentah(ctx.docs, detail.law.frbr_uri, mentah).then(() => true, () => false));
     const hasil = await simpanIsi(ctx.db, detail, arsip);
     if (hasil.diganti) await arsipkanTeksDanIndeks(ctx, detail.law, detail.articles);
     return c.json({ status: "disimpan", uri: detail.law.frbr_uri, pasal: hasil.jumlah, isi_status: hasil.status });

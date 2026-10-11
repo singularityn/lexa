@@ -21,6 +21,11 @@ describe.skipIf(!sqliteAda)("katalog peraturan", () => {
     l = buatLingkungan();
     (PasalClient as unknown as { bentukDetail: string | null }).bentukDetail = null;
     await tanamSemuaDiagnosa(l);
+    // UUD dan Tap MPR disapu paling awal (satu permintaan masing-masing). Tes lain dianggap sudah melewatinya, supaya
+    // tiga permintaan per tik dipakai jenis yang diuji; tes yang menguji keduanya menghapus tandanya lebih dulu.
+    for (const j of ["UUD", "TAP_MPR"]) {
+      await l.db.prepare(`INSERT INTO sync_state (key, value) VALUES (?, ?)`).bind(`katalog_selesai:${j}`, new Date(WAKTU).toISOString()).run();
+    }
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -123,8 +128,26 @@ describe.skipIf(!sqliteAda)("katalog peraturan", () => {
       expect(pasal.panggilan).toEqual([]);
 
       const lagi = await tik(l, WAKTU + SIKLUS_HARI * HARI + 60_000);
-      expect(lagi.katalog?.[0]).toMatchObject({ jenis: "UU", selesai: true });
-      expect(pasal.daftarDiminta()[0]).toEqual({ jenis: "UU", offset: "0" });
+      expect(lagi.katalog?.map((k) => [k.jenis, k.selesai])).toEqual([["UUD", true], ["TAP_MPR", true], ["UU", true]]);
+      expect(pasal.daftarDiminta()).toEqual([
+        { jenis: "UUD", offset: "0" }, { jenis: "TAP_MPR", offset: "0" }, { jenis: "UU", offset: "0" },
+      ]);
+    });
+
+    it("UUD dan Tap MPR disapu lebih dulu dari UU, Perppu, dan PP (sedikit, satu permintaan masing-masing)", async () => {
+      pasal = pasangPasalPalsu({
+        daftar: {
+          UUD: [itemDaftar("UUD", 1945, 1, "Undang-Undang Dasar 1945", { verifikasi: true })],
+          UU: [itemDaftar("UU", 2003, 13, "Ketenagakerjaan")],
+          PP: [itemDaftar("PP", 2021, 35, "PKWT")],
+        },
+      });
+      await l.db.prepare(`DELETE FROM sync_state WHERE key IN ('katalog_selesai:UUD', 'katalog_selesai:TAP_MPR')`).run();
+      await tik(l, menit(0));
+      expect(pasal.daftarDiminta().map((d) => d.jenis)).toEqual(["UUD", "TAP_MPR", "UU"]);
+      await tik(l, menit(1));
+      expect(pasal.daftarDiminta().slice(3).map((d) => d.jenis)).toEqual(["PERPPU", "PP"]);
+      expect((await baris<{ jenis: string }>(l, `SELECT jenis FROM laws ORDER BY jenis`)).map((r) => r.jenis)).toEqual(["PP", "UU", "UUD"]);
     });
 
     it("jenisJatuhTempo: sapuan yang sedang berjalan didahulukan, dan jenis di luar cakupan tak pernah", () => {

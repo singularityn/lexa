@@ -10,7 +10,7 @@
  * perbaikan. Ringkasan sengaja tidak memuat teks peraturan: teks panjang diganti panjangnya.
  */
 
-import { keTeks, petakanSimpul, PasalRateLimitError, type PasalClient, type SimpulPasal } from "./pasal";
+import { catatanAksesTerbatas, keTeks, petakanSimpul, PasalRateLimitError, type PasalClient, type SimpulPasal } from "./pasal";
 
 type Objek = Record<string, unknown>;
 
@@ -91,6 +91,8 @@ export function ringkasDetail(json: unknown): Objek {
     kunci_atas: Object.keys(o),
     skalar_atas: skalarAtas(o),
     detail_access: bentukSingkat(o.detail_access),
+    // Catatan pembatasan akses dari pasal.id apa adanya (skalarAtas hanya memuat panjangnya).
+    catatan_akses: catatanAksesTerbatas(json),
     work: bentukSingkat(o.work ?? o.data ?? o.law),
   };
 
@@ -168,6 +170,7 @@ export function ringkasDaftar(json: unknown): Objek {
   return {
     kunci_atas: Object.keys(o),
     skalar_atas: skalarAtas(o),
+    catatan_konten: typeof o.content_note === "string" ? o.content_note.slice(0, 500) : null,
     pembungkus,
     jumlah: item.length,
     kunci_item: gabunganKunci(item),
@@ -190,11 +193,12 @@ interface Pemeriksaan {
 }
 
 /**
- * Daftar pemeriksaan, dikerjakan berurutan satu per menit. Pembanding yang utuh didahulukan (UU 13/2003 punya 193
- * pasal dan di produksi tersimpan lengkap), lalu yang tersimpan sebagian. Pemeriksaan daftar mencari kode `type`
- * yang benar untuk UUD dan Tap MPR (kode tak dikenal diabaikan diam-diam oleh pasal.id dan menghasilkan SEMUA
- * peraturan, jadi `total` yang sama dengan daftar tanpa filter berarti kodenya salah), dan sebaran jenis nyata
- * pada beberapa posisi daftar tanpa filter.
+ * Daftar pemeriksaan, dikerjakan berurutan satu per tik. Hanya yang masih menjawab pertanyaan terbuka: bentuk daftar
+ * tanpa filter (batas `limit`, total, sebaran jenis) dan lima detail pembanding, satu utuh (UU 13/2003 punya 193 pasal
+ * dan di produksi tersimpan lengkap) dan yang tersimpan sebagian. Hasilnya (11 Okt 2026): `limit` dibatasi 50, dan
+ * setiap detail dijawab tanpa naskah (lib/akses.ts). Pemeriksaan jenis (UUD, Tap MPR, Perppu) tak perlu lagi: sapuan
+ * katalog memeriksa halaman pertama tiap jenis dan mencatat `katalog_dukungan:*`. Jatah permintaan pasal.id terlalu
+ * sedikit untuk pemeriksaan yang jawabannya sudah diketahui.
  */
 export const PEMERIKSAAN: readonly Pemeriksaan[] = [
   { kunci: "daftar:semua:0", jalur: "/laws", params: { limit: 100, offset: 0 }, ringkas: "daftar" },
@@ -202,14 +206,6 @@ export const PEMERIKSAAN: readonly Pemeriksaan[] = [
   { kunci: "detail:uu/2023/17", jalur: "/laws/akn/id/act/uu/2023/17", ringkas: "detail" },
   { kunci: "detail:uu/2009/27", jalur: "/laws/akn/id/act/uu/2009/27", ringkas: "detail" },
   { kunci: "detail:uu/1981/8", jalur: "/laws/akn/id/act/uu/1981/8", ringkas: "detail" },
-  { kunci: "detail:pp/2009/56", jalur: "/laws/akn/id/act/pp/2009/56", ringkas: "detail" },
-  { kunci: "daftar:UUD", jalur: "/laws", params: { type: "UUD", limit: 100 }, ringkas: "daftar" },
-  { kunci: "daftar:TAP_MPR", jalur: "/laws", params: { type: "TAP_MPR", limit: 100 }, ringkas: "daftar" },
-  { kunci: "daftar:PERPPU", jalur: "/laws", params: { type: "PERPPU", limit: 100 }, ringkas: "daftar" },
-  { kunci: "daftar:semua:3000", jalur: "/laws", params: { limit: 100, offset: 3000 }, ringkas: "daftar" },
-  { kunci: "daftar:semua:9000", jalur: "/laws", params: { limit: 100, offset: 9000 }, ringkas: "daftar" },
-  { kunci: "daftar:semua:20000", jalur: "/laws", params: { limit: 100, offset: 20000 }, ringkas: "daftar" },
-  { kunci: "daftar:semua:35000", jalur: "/laws", params: { limit: 100, offset: 35000 }, ringkas: "daftar" },
 ];
 
 export const KUNCI_DIAG = "diag:";
@@ -255,4 +251,27 @@ export async function jalankanDiagnosa(db: D1Database, pasal: PasalClient): Prom
     .bind(KUNCI_DIAG + berikut.kunci, JSON.stringify(catatan).slice(0, 12000))
     .run();
   return { kunci: berikut.kunci };
+}
+
+/** Awalan kunci ringkasan respons nyata (tanpa titik dua setelah "diag", supaya tak terhitung sebagai pemeriksaan). */
+export const KUNCI_DIAG_ISI = "diagisi:";
+const MAKS_DIAG_ISI = 8;
+
+/**
+ * Simpan ringkasan struktur respons detail yang benar-benar berisi naskah, untuk delapan peraturan pertama yang
+ * diambil. Tanpa permintaan tambahan: ringkasannya dibuat dari respons yang memang diambil pipeline. Inilah satu-satunya
+ * cara melihat bentuk naskah dari produksi (pasal yang kosong, ayat yatim, field tak dikenal) saat pasal.id memberi
+ * naskah, dan dasar memperbaiki pengurai bila ekstraksinya ternyata kurang.
+ */
+export async function catatDiagnosaIsi(db: D1Database, uri: string, json: unknown): Promise<void> {
+  const ada = await db
+    .prepare(`SELECT COUNT(*) AS n FROM sync_state WHERE key LIKE ?`)
+    .bind(`${KUNCI_DIAG_ISI}%`)
+    .first<{ n: number }>();
+  if ((ada?.n ?? 0) >= MAKS_DIAG_ISI) return;
+  const catatan = { diambil: new Date().toISOString(), uri, ringkasan: ringkasDetail(json) };
+  await db
+    .prepare(`INSERT OR IGNORE INTO sync_state (key, value, updated_at) VALUES (?, ?, datetime('now'))`)
+    .bind(KUNCI_DIAG_ISI + uri, JSON.stringify(catatan).slice(0, 12000))
+    .run();
 }

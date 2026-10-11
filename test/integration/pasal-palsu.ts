@@ -63,6 +63,19 @@ export function detailPeraturan(jenis: string, tahun: number, nomor: number, jud
   };
 }
 
+/** Catatan yang dibawa jawaban tanpa naskah (isi nyatanya 154 huruf; yang dipakai tes cukup mewakili). */
+export const CATATAN_TERBATAS = "Teks lengkap hanya untuk pemakai yang masuk dengan token akun.";
+
+/** Jawaban detail pasal.id yang membatasi akses (Oktober 2026): `work` tanpa `articles`, `content`, dan `content_note`. */
+export function detailTerbatas(jenis: string, tahun: number, nomor: number, judul: string) {
+  const uri = `/akn/id/act/${jenis.toLowerCase()}/${tahun}/${nomor}`;
+  return {
+    work: { id: tahun * 1000 + nomor, frbr_uri: uri, title: judul, type: jenis, number: String(nomor), year: tahun, status: "berlaku" },
+    content: "not_available_via_api",
+    content_note: CATATAN_TERBATAS,
+  };
+}
+
 export function pasangPasalPalsu(awal: OpsiPasal = {}): PasalPalsu {
   let opsi = awal;
   const panggilan: URL[] = [];

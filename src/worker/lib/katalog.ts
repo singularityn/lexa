@@ -3,7 +3,7 @@
  *
  * Sapuan lama mengantrekan peraturan satu per satu dan baru menyimpannya setelah detailnya berhasil diambil, padahal
  * detail adalah permintaan yang paling dibatasi pasal.id. Akibatnya peraturan yang detailnya tak kunjung berhasil
- * tak pernah tercatat sama sekali (di produksi 1.750 dari ≥5.000 PP). Kini daftar (100 peraturan per permintaan)
+ * tak pernah tercatat sama sekali (di produksi 1.750 dari ≥5.000 PP). Kini daftar (50-100 peraturan per permintaan)
  * lebih dulu menyimpan seluruh metadata sebagai baris `laws` berstatus 'menunggu' (isi_status), sehingga katalog
  * lengkap dalam hitungan jam, dan pengambilan isi (lib/isi.ts) mengisinya belakangan menurut urutan prioritas.
  *
@@ -19,15 +19,17 @@ import { hitungGiliran } from "./isi";
 import type { KonteksIngest } from "./ingest";
 
 export const SIKLUS_HARI = 3;
+/** Diminta sebanyak mungkin (klien membatasi 100). pasal.id kini hanya memberi 50; offset berikutnya dihitung dari jumlah yang diterima. */
 const UKURAN_HALAMAN = 100;
 
 /**
- * Jenis yang disapu, berurutan menurut kepentingan. UU, PERPPU, dan PP adalah kode filter `type` yang terbukti di
- * pasal.id. UUD dan TAP_MPR belum terbukti: pasal.id mengabaikan diam-diam filter yang tak dikenal dan menjawab SEMUA
- * peraturan, jadi sapuan memeriksa bahwa halaman pertama memang berisi jenis yang diminta, dan bila tidak, mencatat
- * "tidak didukung" dan mencoba lagi pada siklus berikutnya.
+ * Jenis yang disapu, berurutan menurut kepentingan: UUD dan Tap MPR dulu (sedikit, satu permintaan masing-masing, dan
+ * yang paling dicari), lalu UU, Perppu, PP. UU, PERPPU, dan PP adalah kode filter `type` yang terbukti di pasal.id.
+ * UUD dan TAP_MPR belum terbukti: pasal.id mengabaikan diam-diam filter yang tak dikenal dan menjawab SEMUA peraturan,
+ * jadi sapuan memeriksa bahwa halaman pertama memang berisi jenis yang diminta, dan bila tidak, mencatat "tidak
+ * didukung" dan mencoba lagi pada siklus berikutnya.
  */
-export const JENIS_KATALOG = ["UU", "PERPPU", "PP", "UUD", "TAP_MPR"] as const;
+export const JENIS_KATALOG = ["UUD", "TAP_MPR", "UU", "PERPPU", "PP"] as const;
 const JENIS_TERBUKTI = new Set(["UU", "PERPPU", "PP"]);
 
 export interface HasilKatalog {

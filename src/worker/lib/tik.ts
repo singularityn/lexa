@@ -9,12 +9,14 @@
  *
  * Urutan kerja: kosongkan daftar hapus, lalu (bila pasal.id boleh dihubungi) diagnosis, katalog, dan pengambilan isi
  * dengan anggaran bersama MAKS_PANGGILAN_PASAL permintaan; penguraian ulang dari arsip tak memakai pasal.id dan jalan
- * terus walau pasal.id sedang dijeda.
+ * terus walau pasal.id sedang dijeda. Bila pasal.id tak memberi naskah (pembatasan akses, lib/akses.ts), hanya
+ * pengambilan detail yang dijeda; katalog (daftar `/laws` terbuka) jalan terus.
  *
  * Tik yang tak punya pekerjaan tidak menulis apa pun ke D1 (hanya beberapa pembacaan murah), sehingga Cron per menit
  * tidak memakan kuota tulis.
  */
 
+import { bacaAkses, JEDA_PERIKSA_MS } from "./akses";
 import { adaYangDihapus, kosongkanDaftarHapus } from "./hapus";
 import { jalankanDiagnosa, KUNCI_DIAG, PEMERIKSAAN } from "./diagnosa";
 import { bacaKeadaanKatalog, jenisJatuhTempo, sapuHalaman, type HasilKatalog } from "./katalog";
@@ -39,6 +41,8 @@ export interface LaporanTik {
   katalog?: HasilKatalog[];
   isi?: LaporanIsi;
   jedaPasalSampai?: string;
+  /** Pengambilan detail ditahan karena pasal.id tak memberi naskah (lib/akses.ts); pemeriksaan berikut pada saat ini. */
+  aksesDijeda?: string;
   /** Galat pasal.id selain batas laju (5xx, jaringan): tik berhenti memakai pasal.id dan mencobanya lagi sebentar lagi. */
   galatPasal?: string;
 }
@@ -93,12 +97,17 @@ export async function jalankanTik(ctx: KonteksIngest, opsi: OpsiTik): Promise<La
   const perluHapus = hapusDitunda <= iso && (await adaYangDihapus(ctx.db));
   const jeda = opsi.pasalSiap ? await jedaPasalSampai(ctx.db, sekarang) : "token belum dipasang";
   const bolehPasal = !jeda;
-  const [keadaanKatalog, adaAmbil, adaUrai, perluDiagnosa] = await Promise.all([
+  const [keadaanKatalog, antreanAmbil, adaUrai, perluDiagnosa, akses] = await Promise.all([
     bolehPasal ? bacaKeadaanKatalog(ctx.db) : Promise.resolve(new Map<string, string>()),
     bolehPasal ? adaAntrean(ctx.db, 0) : Promise.resolve(false),
     adaAntrean(ctx.db, 1),
     bolehPasal ? diagnosaTersisa(ctx.db) : Promise.resolve(false),
+    bolehPasal ? bacaAkses(ctx.db) : Promise.resolve(null),
   ]);
+  // Pembatasan akses yang masih dalam jeda: tak ada yang diambil sampai pemeriksaan berikut jatuh tempo.
+  const aksesDitahan = akses !== null && akses.periksa_lagi > iso;
+  const adaAmbil = antreanAmbil && !aksesDitahan;
+  if (aksesDitahan) laporan.aksesDijeda = akses.periksa_lagi;
   const perluKatalog = bolehPasal && jenisJatuhTempo(keadaanKatalog, ctx.cakupan, sekarang) !== null;
 
   if (!perluHapus && !perluDiagnosa && !perluKatalog && !adaAmbil && !adaUrai) {
@@ -117,7 +126,11 @@ export async function jalankanTik(ctx: KonteksIngest, opsi: OpsiTik): Promise<La
       laporan.jedaPasalSampai = await tundaPasal(ctx.db, e.retryAfterMs, sekarang);
       await tambahStatistik(ctx.db, hari, { batas_laju: 1 });
       await catatLogBerjeda(
-        ctx.db, "pasal_laju", "gagal", `pasal.id minta jeda sampai ${laporan.jedaPasalSampai}`, 0, SELANG_LOG_MS, sekarang,
+        ctx.db, "pasal_laju", "gagal",
+        // Jeda yang diminta pasal.id dicatat apa adanya di samping jeda yang dipakai (dijepit satu jam): dari sinilah
+        // terlihat apakah batasnya per jam atau per hari.
+        `pasal.id minta jeda ${Math.round(e.retryAfterMs / 1000)} detik; dipatuhi sampai ${laporan.jedaPasalSampai}`,
+        0, SELANG_LOG_MS, sekarang,
       );
       return true;
     }
@@ -189,15 +202,24 @@ export async function jalankanTik(ctx: KonteksIngest, opsi: OpsiTik): Promise<La
     // Isi: detail dari pasal.id sebanyak anggaran yang tersisa, dan arsip yang diuraikan ulang tanpa pasal.id.
     if (adaAmbil || adaUrai) {
       const isi = await langkahIsi(ctx, {
-        maksAmbil: pasalMasihBoleh ? sisa : 0,
+        maksAmbil: pasalMasihBoleh && adaAmbil ? sisa : 0,
         maksUrai: MAKS_URAI_PER_TIK,
         batasMs: BATAS_WAKTU_MS,
+        sekarang,
       });
       laporan.isi = isi;
       await tambahStatistik(ctx.db, hari, {
         diambil: isi.diambil, diurai: isi.diurai, lengkap: isi.lengkap, kosong: isi.kosong,
-        dipertahankan: isi.dipertahankan, gagal: isi.gagal,
+        dipertahankan: isi.dipertahankan, gagal: isi.gagal, akses_terbatas: isi.aksesTerbatas === undefined ? 0 : 1,
       });
+      if (isi.aksesTerbatas !== undefined) {
+        await catatLogBerjeda(
+          ctx.db, "akses_isi", "gagal",
+          `pasal.id tidak memberi naskah peraturan (${isi.aksesTerbatas}); detail dijeda, diperiksa lagi ${JEDA_PERIKSA_MS / 60_000} menit lagi`,
+          0, SELANG_LOG_MS, sekarang,
+        );
+      }
+      if (isi.aksesPulih) await catatLog(ctx.db, "akses_isi", "sukses", "pasal.id kembali memberi naskah; pengambilan detail dilanjutkan");
       if (isi.tundaMs !== undefined) await tanganiGalatPasal(new PasalRateLimitError(isi.tundaMs));
       else if (isi.ditolak !== undefined) await tanganiGalatPasal(new PasalApiError(isi.ditolak, "token ditolak"));
       if (isi.diambil + isi.diurai > 0) {

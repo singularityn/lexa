@@ -48,7 +48,7 @@ describe.skipIf(!sqliteAda)("tik (Cron per menit)", () => {
       const url = new URL(String(input));
       panggilanPasal.push(url);
       if (opsi.batasLaju) return new Response("lambat", { status: 429, headers: { "retry-after": "120" } });
-      if (url.pathname === "/api/laws" && url.searchParams.get("type") === "UUD") return new Response("tidak ada", { status: 404 });
+      if (url.pathname.endsWith("/uu/1981/8")) return new Response("tidak ada", { status: 404 });
       if (url.pathname === "/api/laws") {
         return Response.json(
           { total: 4, limit: 100, offset: 0, laws: [{ id: 1, frbr_uri: "/akn/id/act/uu/2003/13", title: "A", type: "UU", year: 2003, status: "berlaku", content_verified: true }] },
@@ -216,14 +216,14 @@ describe.skipIf(!sqliteAda)("tik (Cron per menit)", () => {
       expect(daftar.ringkasan.skalar_atas).toMatchObject({ total: 4 });
     });
 
-    it("galat HTTP (kode jenis UUD tak dikenal) disimpan sebagai temuan dan tidak diulang", async () => {
+    it("galat HTTP (detail yang tak ditemukan) disimpan sebagai temuan dan tidak diulang", async () => {
       stubPasal();
       for (let i = 0; i < PEMERIKSAAN.length; i++) await tik(menit(i));
-      const baris = await l.db.prepare(`SELECT value FROM sync_state WHERE key = ?`).bind(`${KUNCI_DIAG}daftar:UUD`).first<{ value: string }>();
+      const baris = await l.db.prepare(`SELECT value FROM sync_state WHERE key = ?`).bind(`${KUNCI_DIAG}detail:uu/1981/8`).first<{ value: string }>();
       const catatan = JSON.parse(baris?.value ?? "{}");
       expect(catatan.status_http).toBe(404);
       expect(catatan.galat).toContain("404");
-      expect(panggilanPasal.filter((u) => u.searchParams.get("type") === "UUD")).toHaveLength(1);
+      expect(panggilanPasal.filter((u) => u.pathname.endsWith("/uu/1981/8"))).toHaveLength(1);
     });
 
     it("kena 429: pemeriksaan tidak dianggap selesai, jeda dipatuhi semua tik berikutnya, lalu dilanjutkan", async () => {
