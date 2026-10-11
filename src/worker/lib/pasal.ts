@@ -724,9 +724,9 @@ export function adaSimpulPasal(json: unknown): boolean {
 
 /**
  * Catatan pasal.id bila respons detail sama sekali tak memuat naskah. Sejak Oktober 2026 pasal.id menjawab 200 dengan
- * `{ work, content: "not_available_via_api", content_note }` tanpa `articles` bagi pemakai yang tak berhak atas teks
- * lengkap (token tanpa akses atau kuota baca harian, 300 per akun, habis). Itu bukan peraturan tanpa pasal dan tak
- * boleh disimpan sebagai 'kosong' maupun diarsipkan. Mengembalikan null bila respons membawa `articles` (walau kosong)
+ * `{ work, content: "not_available_via_api", content_note }` tanpa `articles` ("Pasal.id's API provides discovery
+ * metadata only. Read the text at the linked pasal.id page, or connect an AI assistant via MCP"). Itu bukan peraturan
+ * tanpa pasal dan tak boleh disimpan sebagai 'kosong' maupun diarsipkan. Mengembalikan null bila respons membawa `articles` (walau kosong)
  * atau tak menyiratkan pembatasan sama sekali.
  */
 export function catatanAksesTerbatas(json: unknown): string | null {

@@ -13,10 +13,15 @@ const POLA_SLUG_POJK = /^(\d+)-pojk-(\d{2})-(\d{4})$/i;
 /** UUD di pasal.id: nomor "1945" untuk naskah asli dan "1945/P4" untuk Perubahan Keempat (tahunnya sama, 1945). */
 export const POLA_NOMOR_UUD = /^(\d{4})(?:\/P(\d+))?$/i;
 
-/** "13/2003"; untuk POJK bernomor slug "48/POJK.04/2016"; untuk UUD "1945" dan "1945 Perubahan 4". */
+/** Tap MPR bernomor slug di pasal.id: "xvi-mpr-1998", "i-mprs-1960", "mprxxiv-mprs-1966" (penulisan resminya "XVI/MPR/1998"). */
+export const POLA_SLUG_TAP_MPR = /^(?:mpr)?([ivxlcdm]+)[-/](mprs?)[-/](\d{4})$/i;
+
+/** "13/2003"; untuk POJK bernomor slug "48/POJK.04/2016"; UUD "1945" dan "1945 Perubahan 4"; Tap MPR "XVI/MPR/1998". */
 export function nomorTahun(jenis: string, nomor: string, tahun: number): string {
   const uud = jenis === "UUD" ? POLA_NOMOR_UUD.exec(nomor) : null;
   if (uud) return uud[2] ? `${uud[1]} Perubahan ${uud[2]}` : uud[1];
+  const tap = jenis === "TAP_MPR" ? POLA_SLUG_TAP_MPR.exec(nomor) : null;
+  if (tap) return `${tap[1].toUpperCase()}/${tap[2].toUpperCase()}/${tap[3]}`;
   const m = jenis === "POJK" ? POLA_SLUG_POJK.exec(nomor) : null;
   return m ? `${m[1]}/POJK.${m[2]}/${m[3]}` : `${nomor}/${tahun}`;
 }

@@ -375,4 +375,87 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       expect((await l.db.prepare(`SELECT jumlah_pasal, indexed_at FROM laws`).first())).toMatchObject({ jumlah_pasal: 3, indexed_at: expect.any(String) });
     });
   });
+
+  describe("GET /api/impor/butuh-teks (daftar kerja skrip panen BPK)", () => {
+    const BPK = { origin: "https://peraturan.bpk.go.id" };
+    const tanam = async (
+      uri: string,
+      o: { jenis?: string; tahun?: number; jumlah?: number; bpkId?: string | null; sumber?: string | null; pdf?: string | null; giliran?: number; pasal?: Array<number | string> } = {},
+    ) => {
+      await l.db
+        .prepare(
+          `INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, jumlah_pasal, bpk_id, sumber_url, r2_pdf_key, isi_status, isi_giliran)
+           VALUES (?,?,?,?,?,?,?,?,?, 'menunggu', ?)`,
+        )
+        .bind(uri, o.jenis ?? "UU", uri.split("/").at(-1), o.tahun ?? 2000, `Peraturan ${uri}`, o.jumlah ?? o.pasal?.length ?? 0, o.bpkId ?? null, o.sumber ?? null, o.pdf ?? null, o.giliran ?? 1000)
+        .run();
+      for (const n of o.pasal ?? []) {
+        await l.db.prepare(`INSERT INTO articles (id, frbr_uri, nomor_pasal, isi, urutan) VALUES (?,?,?,?,?)`).bind(`${uri}#pasal-${n}`, uri, String(n), `Isi ${n}.`, Number(n) || 0).run();
+      }
+    };
+    const daftar = async (query = "", header: Record<string, string> = adm) =>
+      json<{ cakupan: string[]; total: number; tanpa_bpk: number; daftar: Array<{ frbr_uri: string; detail_url: string | null; bpk_id: string | null; jenis: string }> }>(
+        await panggil(l, `/api/impor/butuh-teks${query}`, { headers: header }),
+      );
+
+    it("dijaga token admin, dan origin BPK mendapat header CORS agar skrip di sesi peramban bisa membacanya", async () => {
+      expect((await panggil(l, "/api/impor/butuh-teks")).status).toBe(401);
+      const res = await panggil(l, "/api/impor/butuh-teks", { headers: { ...adm, origin: BPK.origin } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("access-control-allow-origin")).toBe(BPK.origin);
+      const asing = await panggil(l, "/api/impor/butuh-teks", { headers: { ...adm, origin: "https://contoh.com" } });
+      expect(asing.headers.get("access-control-allow-origin")).toBeNull();
+    });
+
+    it("memuat peraturan tanpa teks dan tanpa PDF terunggah: yang berbpk_id lebih dulu, lalu menurut giliran; alamat BPK dari sumber atau bpk_id", async () => {
+      await tanam("/akn/id/act/uu/2000/1", { bpkId: "11", sumber: "https://peraturan.bpk.go.id/Details/11/uu-no-1-tahun-2000", giliran: 500 });
+      await tanam("/akn/id/act/uu/2000/2", { bpkId: "22", sumber: "https://peraturan.go.id/id/uu-no-2-tahun-2000", giliran: 100 });
+      await tanam("/akn/id/act/pp/2001/3", { jenis: "PP", sumber: "https://pasal.id/peraturan/pp/pp-no-3-tahun-2001", giliran: 50 });
+      await tanam("/akn/id/act/pp/2001/4", { jenis: "PP", bpkId: "44", giliran: 900 });
+      await tanam("/akn/id/act/uu/2000/5", { pasal: [1, 2, 3] }); // sudah punya teks
+      await tanam("/akn/id/act/uu/2000/6", { pdf: "pdf/akn/id/act/uu/2000/6.pdf" }); // PDF sudah diunggah
+      await tanam("/akn/id/act/perpres/2000/7", { jenis: "PERPRES", bpkId: "77" }); // di luar cakupan
+
+      const b = await daftar();
+      expect(b.total).toBe(4);
+      expect(b.tanpa_bpk).toBe(1); // hanya yang bersumber pasal.id dan tanpa bpk_id
+      expect(b.daftar.map((d) => [d.frbr_uri, d.detail_url])).toEqual([
+        ["/akn/id/act/uu/2000/2", "https://peraturan.bpk.go.id/Details/22"], // sumbernya bukan BPK: pakai bpk_id
+        ["/akn/id/act/uu/2000/1", "https://peraturan.bpk.go.id/Details/11/uu-no-1-tahun-2000"], // sumber BPK memuat slug
+        ["/akn/id/act/pp/2001/4", "https://peraturan.bpk.go.id/Details/44"],
+        ["/akn/id/act/pp/2001/3", null],
+      ]);
+    });
+
+    it("jenis menyaring dan dijepit pada cakupan; batas dijepit 1-200; jenis di luar cakupan -> 400", async () => {
+      await tanam("/akn/id/act/uu/2000/1", { bpkId: "1" });
+      await tanam("/akn/id/act/uu/2000/2", { bpkId: "2" });
+      await tanam("/akn/id/act/pp/2001/3", { jenis: "PP", bpkId: "3" });
+      expect((await daftar("?jenis=PP")).daftar.map((d) => d.jenis)).toEqual(["PP"]);
+      expect((await daftar("?jenis=pp,uu")).total).toBe(3);
+      expect((await daftar("?batas=1")).daftar).toHaveLength(1);
+      expect((await daftar("?batas=0")).daftar).toHaveLength(3); // 0 dibaca sebagai bawaan
+      expect((await daftar("?batas=99999")).daftar).toHaveLength(3);
+      const luar = await panggil(l, "/api/impor/butuh-teks?jenis=PERPRES", { headers: adm });
+      expect(luar.status).toBe(400);
+      expect(await luar.json()).toMatchObject({ error: "di_luar_cakupan" });
+    });
+
+    it("celah=1 menyertakan peraturan yang teksnya sebagian (nomor pasal bercelah), bukan yang utuh", async () => {
+      await tanam("/akn/id/act/uu/2000/1", { pasal: [1, 2, 3, 4, 5] }); // utuh
+      await tanam("/akn/id/act/uu/2000/2", { pasal: [1, 2, 3, 90] }); // bercelah
+      await tanam("/akn/id/act/uu/2000/3", { bpkId: "3" }); // tanpa teks
+      expect((await daftar()).daftar.map((d) => d.frbr_uri)).toEqual(["/akn/id/act/uu/2000/3"]);
+      expect((await daftar("?celah=1")).daftar.map((d) => d.frbr_uri).sort()).toEqual(["/akn/id/act/uu/2000/2", "/akn/id/act/uu/2000/3"]);
+    });
+
+    it("sesudah PDF-nya diunggah, peraturan tak muncul lagi (pemanggilan berikutnya mengembalikan yang baru)", async () => {
+      await tanam("/akn/id/act/uu/2000/1", { bpkId: "1" });
+      await tanam("/akn/id/act/uu/2000/2", { bpkId: "2", giliran: 2000 });
+      expect((await daftar("?batas=1")).daftar.map((d) => d.frbr_uri)).toEqual(["/akn/id/act/uu/2000/1"]);
+      const put = await panggil(l, `/api/impor/pdf?uri=${encodeURIComponent("/akn/id/act/uu/2000/1")}`, { method: "PUT", headers: adm, body: PDF });
+      expect(put.status).toBe(200);
+      expect((await daftar("?batas=1")).daftar.map((d) => d.frbr_uri)).toEqual(["/akn/id/act/uu/2000/2"]);
+    });
+  });
 });

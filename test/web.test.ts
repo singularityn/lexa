@@ -59,8 +59,23 @@ describe("pelabelan", () => {
     expect(namaLengkap({ jenis: "UU", nomor: "1945/P4", tahun: 1945 })).toBe("Undang-Undang Nomor 1945/P4 Tahun 1945");
   });
 
+  it("Tap MPR bernomor slug dari pasal.id ditulis dengan penomoran resminya", () => {
+    expect(sitasi({ jenis: "TAP_MPR", nomor: "xvi-mpr-1998", tahun: 1998 })).toBe("TAP MPR XVI/MPR/1998");
+    expect(sitasi({ jenis: "TAP_MPR", nomor: "II-MPR-1983", tahun: 1983 })).toBe("TAP MPR II/MPR/1983");
+    expect(sitasi({ jenis: "TAP_MPR", nomor: "i-mprs-1960", tahun: 1960 })).toBe("TAP MPR I/MPRS/1960");
+    expect(sitasi({ jenis: "TAP_MPR", nomor: "mprxxiv-mprs-1966", tahun: 1966 })).toBe("TAP MPR XXIV/MPRS/1966");
+    expect(namaLengkap({ jenis: "TAP_MPR", nomor: "xvi-mpr-1998", tahun: 1998 })).toBe("Ketetapan MPR Nomor XVI/MPR/1998");
+    // Penulisan yang sudah resmi, nomor polos, dan jenis lain tidak berubah.
+    expect(sitasi({ jenis: "TAP_MPR", nomor: "XVI/MPR/1998", tahun: 1998 })).toBe("TAP MPR XVI/MPR/1998");
+    expect(sitasi({ jenis: "TAP_MPR", nomor: "I", tahun: 2003 })).toBe("TAP MPR I/2003");
+    expect(sitasi({ jenis: "UU", nomor: "xvi-mpr-1998", tahun: 1998 })).toBe("UU xvi-mpr-1998/1998");
+  });
+
   it("pemformat label di Worker (src/shared/label.ts) dan antarmuka (format.js) selalu sama", () => {
     const kasus = [
+      { jenis: "TAP_MPR", nomor: "xvi-mpr-1998", tahun: 1998 },
+      { jenis: "TAP_MPR", nomor: "mprxxiv-mprs-1966", tahun: 1966 },
+      { jenis: "TAP_MPR", nomor: "I", tahun: 2003 },
       { jenis: "UUD", nomor: "1945", tahun: 1945 },
       { jenis: "UUD", nomor: "1945/P4", tahun: 1945 },
       { jenis: "UUD", nomor: "2", tahun: 1950 },

@@ -123,7 +123,8 @@ pemeriksaan dan `POST /api/admin/sync`. Yang perlu diingat saat men-deploy:
   D1 (`sync_state`, kolom `laws.isi_*`), jadi deploy atau rollback tidak mengulang dari awal.
 - Rantai cadangan dimulai oleh satu permintaan HTTP ke situs atau Cron harian sesudah deploy; bila `/status` menunjukkan
   denyut yang basi, buka situsnya sekali.
-- Mengubah `PASAL_API_TOKEN` (secret) tidak memerlukan deploy: dalam 30 menit pemeriksaan akses berikutnya memakainya.
+- API pasal.id hanya memberi metadata sejak 11 Okt 2026; memperbarui `PASAL_API_TOKEN` tidak mengembalikan teksnya. Teks
+  baru dipanen dari BPK lewat `scripts/bpk-console-harvest.js` (lihat pipeline-data.md, "Panen BPK").
 
 ### Cakupan peraturan
 

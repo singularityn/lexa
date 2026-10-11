@@ -7,8 +7,8 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
 > produksi dan terbukti identik), dengan perbaikan bug yang ditemukan lewat tes, dan pipeline pengambilan isi yang
 > ditulis ulang (katalog dulu, isi kemudian). Antarmuka (`public/`) ditulis baru karena frontend v0.1 tidak ikut dalam
 > bundel Worker, dan kini memakai desain dari Claude Design (merek hanya teks "Lexa"). **Perhatian:** sejak 11 Okt 2026
-> pasal.id tidak memberi teks pasal lewat API untuk token Worker ini, sehingga peraturan baru baru terisi bila aksesnya
-> pulih; lihat [docs/pipeline-data.md](docs/pipeline-data.md). Cara menyambungkan repo ini ke Cloudflare dan memeriksa
+> API pasal.id hanya memberi metadata ("discovery metadata only"), bukan teks pasal, sehingga teks peraturan baru harus
+> datang dari naskah resmi BPK lewat skrip panen; lihat [docs/pipeline-data.md](docs/pipeline-data.md). Cara menyambungkan repo ini ke Cloudflare dan memeriksa
 > hasilnya ada di [docs/hubungkan-github-cloudflare.md](docs/hubungkan-github-cloudflare.md).
 
 ## Yang dilakukan
@@ -179,7 +179,7 @@ cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignor
 | `SEARCH_CACHE_TTL` | variabel | TTL cache pencarian dalam detik (bawaan 3600) |
 | `CAKUPAN_JENIS` | variabel (di `wrangler.jsonc`) | kode jenis peraturan yang dicakup, dipisah koma; bawaan `UUD,TAP_MPR,UU,PERPPU,PP` (lihat [Cakupan peraturan](#cakupan-peraturan)) |
 | `ADMIN_TOKEN` | secret | token untuk `/api/admin/*` dan `/api/impor/*` |
-| `PASAL_API_TOKEN` | secret | token pribadi pasal.id (`Authorization: Bearer`); tanpa ini pipeline tak memanggil pasal.id. Agar teks pasal bisa diambil, token harus berhak atas teks lengkap (lihat [docs/pipeline-data.md](docs/pipeline-data.md#akses-isi-pasalid-temuan-11-okt-2026)) |
+| `PASAL_API_TOKEN` | secret | token pribadi pasal.id (`Authorization: Bearer`) untuk daftar `/laws` (katalog); tanpa ini pipeline tak memanggil pasal.id. Teks pasal tak lagi dilayani API-nya untuk token mana pun (lihat [docs/pipeline-data.md](docs/pipeline-data.md#akses-isi-pasalid-temuan-11-okt-2026)) |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | secret | login Google; tanpa ini aplikasi berjalan sebagai tamu |
 
 Secret dipasang dengan `npx wrangler secret put NAMA` (jangan lewat pipa, newline ikut tersimpan) atau
@@ -195,9 +195,11 @@ Ringkasannya (rincian, SQL pemeriksaan, dan temuan produksi ada di [docs/pipelin
 - **Isi**: tik per menit mengambil detail satu per satu menurut `isi_giliran` (terverifikasi dulu; UUD < Tap MPR < UU <
   Perppu < PP; terbaru dulu), paling banyak 3 permintaan pasal.id per tik, mematuhi `Retry-After`. Respons mentah
   diarsipkan di R2 (`mentah/…`) sebelum diuraikan; penyimpanan tak pernah mengganti pasal dengan hasil yang lebih sedikit.
-- **Akses pasal.id**: sejak 11 Okt 2026 detail dijawab tanpa teks (`content: "not_available_via_api"`). Pipeline tidak
-  menganggapnya 'kosong': peraturan dibiarkan menunggu, pengambilan detail dijeda dan diperiksa tiap 30 menit lewat
-  peraturan pembanding, dan berjalan lagi sendiri begitu teks kembali. Keadaannya tampil di `/status`.
+- **Akses pasal.id**: sejak 11 Okt 2026 detail dijawab tanpa teks (`content: "not_available_via_api"`, "Pasal.id's API
+  provides discovery metadata only"). Pipeline tidak menganggapnya 'kosong': peraturan dibiarkan menunggu, pengambilan detail
+  dijeda dan diperiksa tiap 30 menit lewat peraturan pembanding, dan berjalan lagi sendiri begitu teks kembali. Keadaannya
+  tampil di `/status`. Teks baru kini datang dari **panen BPK** (`scripts/bpk-console-harvest.js` di peramban Anda,
+  `GET /api/impor/butuh-teks`, `PUT /api/impor/pdf`).
 - **Pemicu**: Cron `* * * * *` bila berjalan, selain itu rantai pesan di antrean (`TIK_CADANGAN`), disemai Cron harian
   dan permintaan HTTP. Cron harian menjalankan pemeliharaan.
 - **Kontrol**: `POST /api/admin/sync` (`tik`, `uri`, `jenis`, `perbaiki_celah`, `ulang_arsip`, `ringkas_kosong`).
@@ -306,13 +308,13 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 
 ## Isu yang diketahui
 
-- **pasal.id tidak memberi teks pasal lewat API (11 Okt 2026).** Setiap `GET /laws/<uri>` untuk token Worker ini dijawab
-  `{ work, content: "not_available_via_api", content_note }` tanpa `articles`. Menurut dokumentasi publik pasal.id, detail
-  lewat REST API memerlukan token akun yang berhak dan pembacaan teks lengkap dibatasi 300 per akun per hari. Pipeline
-  tidak lagi menganggap jawaban itu 'kosong' (peraturan dibiarkan 'menunggu', jawabannya tak diarsipkan), menjeda
-  pengambilan detail, memeriksa pulihnya akses tiap 30 menit, dan menampilkan keadaannya di `/status`. Pemilik perlu
-  memeriksa/memperbarui `PASAL_API_TOKEN` atau meminta kuota ke pasal.id; selama itu peraturan baru hanya tercatat
-  metadatanya. Langkah dan contoh surat ada di [docs/pipeline-data.md](docs/pipeline-data.md#akses-isi-pasalid-temuan-11-okt-2026).
+- **pasal.id tidak memberi teks pasal lewat API (11 Okt 2026).** Setiap `GET /laws/<uri>` dijawab
+  `{ work, content: "not_available_via_api", content_note }` tanpa `articles`; catatan pasal.id: "Pasal.id's API provides
+  discovery metadata only. Read the text at the linked pasal.id page, or connect an AI assistant via MCP". Ini kebijakan API
+  mereka, bukan masalah token atau kuota Lexa. Pipeline tidak lagi menganggap jawaban itu 'kosong' (peraturan dibiarkan
+  'menunggu', jawabannya tak diarsipkan), menjeda pengambilan detail, memeriksa pulihnya akses tiap 30 menit, dan menampilkan
+  keadaannya di `/status`. Peraturan baru (termasuk 5 UUD dan 39 Tap MPR yang kini terdaftar) hanya tercatat metadatanya
+  sampai teksnya dipanen dari BPK (skrip panen di bawah) atau pasal.id membuka aksesnya lagi.
 - **Cakupan data produksi (11 Okt 2026, sesudah penghapusan data di luar cakupan):** 3.870 peraturan dalam cakupan
   (UU 1.950, PP 1.750, Perppu 168, Tap MPR 2) dengan 53.119 baris pasal; 3.456 berstatus 'lengkap' (punya teks pasal,
   sebagian mungkin tersimpan tak utuh, lihat berikut) dan 414 'menunggu'. Katalog masih menyapu: UU di daftar pasal.id
@@ -359,15 +361,20 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 
 ## Yang belum ada
 
-- **Skrip panen BPK.** `cors.ts` hanya mengizinkan origin `peraturan.bpk.go.id`, yang menunjukkan panen
-  dijalankan dari sesi peramban di situs BPK lalu mengirim data ke `/api/impor/*`. Skripnya
-  (`scripts/bpk-console-harvest.js` menurut komentar kode) tidak ada di repo ini. Ini jalur sah satu-satunya untuk
-  melengkapi teks UUD, UU, Perppu, dan PP bila pasal.id tetap menutup teksnya (Lexa sengaja tidak menarik situs BPK dari
-  Worker; situs itu hanya ditautkan). Peraturan yang masih 'menunggu' atau 'kosong' bisa dibaca dari `GET /api/stats`
-  (`isi.per_jenis`) dan D1.
-- **Klien server MCP pasal.id.** Teks lengkap juga tersedia lewat server MCP pasal.id (OAuth atau token pribadi) dengan
-  batas yang sama; sengaja tidak dibangun sebagai jalur pengambilan massal karena itu pemakaian interaktif. Bila pasal.id
-  memberi akses data resmi, pengambilnya cukup menggantikan `getLawMentah`/`uraiDetail` di `lib/pasal.ts`.
+- **Skrip panen BPK sudah ada tetapi belum pernah dicoba pada situs BPK sungguhan.** `scripts/bpk-console-harvest.js`
+  (ditulis ulang karena skrip aslinya tak ikut dipulihkan) dijalankan di konsol peramban pada peraturan.bpk.go.id, bertanya
+  ke Lexa peraturan mana yang perlu teksnya (`GET /api/impor/butuh-teks`), mengunduh PDF dari halaman rinciannya, dan
+  mengunggahnya (`PUT /api/impor/pdf`); Lexa mengekstraknya menjadi pasal. Ia diuji end-to-end di Chromium terhadap Lexa
+  sungguhan dan situs BPK palsu (`e2e/panen.test.mjs`), tetapi susunan halaman BPK yang sebenarnya tak terjangkau dari
+  lingkungan pengembangan, jadi coba dengan `kering: true` dan `batas: 3` dulu (panduan di
+  [docs/pipeline-data.md](docs/pipeline-data.md#panen-bpk-melengkapi-teks)). Worker sengaja tak pernah menghubungi BPK
+  (di balik Cloudflare managed challenge); hanya peraturan yang punya tautan BPK yang bisa dipanen, dan peraturan baru dari
+  katalog pasal.id umumnya tidak punya (jumlahnya di `tanpa_bpk`).
+- **Klien server MCP atau halaman web pasal.id.** Teks lengkap hanya dibaca lewat halaman web atau server MCP pasal.id
+  (OAuth atau token pribadi, 300 pembacaan per akun per hari); sengaja tidak dibangun sebagai jalur pengambilan massal
+  karena itu dirancang untuk pembaca dan asisten AI, dan ketentuan pasal.id melarang menyalin basis datanya. Bila pasal.id
+  memberi akses data resmi (surat contoh di docs/pipeline-data.md), pengambilnya cukup menggantikan `getLawMentah` dan
+  `uraiDetail` di `lib/pasal.ts`.
 
 ## Dokumen
 

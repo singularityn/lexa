@@ -60,7 +60,7 @@ function panelKelengkapan(isi, cakupan) {
           h(
             "p",
             null,
-            "Daftar peraturan tetap diperbarui, tetapi teks pasal belum bisa diambil. Penyebab umum: token API tidak berhak atas teks lengkap, atau kuota baca harian akun (300) habis. Pengambilan dilanjutkan sendiri begitu pasal.id kembali memberi isi.",
+            "Daftar peraturan tetap diperbarui, tetapi pasal.id tidak mengirim teks pasal lewat API-nya, sehingga teks peraturan baru belum bisa diambil. Teks yang sudah tersimpan tidak terpengaruh, dan pengambilan dilanjutkan sendiri begitu pasal.id kembali memberi isi.",
           ),
           isi.akses.catatan ? h("p", { class: "redup" }, `Catatan pasal.id: ${isi.akses.catatan}`) : null,
           h("p", { class: "redup" }, `Terlihat sejak ${waktuIso(isi.akses.sejak)}; diperiksa lagi ${waktuIso(isi.akses.periksa_lagi)}.`),

@@ -90,52 +90,76 @@ dijawab 200 hanya dengan
 { "work": { "...metadata..." }, "content": "not_available_via_api", "content_note": "<154 huruf>" }
 ```
 
-tanpa `articles` dan `relationships`, untuk UU 13/2003, 17/2023, 27/2009, dan 8/1981, terverifikasi (`content_verified`)
-maupun tidak. Daftar `/laws` tetap normal (total 207.097 peraturan semua jenis, `limit` dibatasi 50). Tanpa penanganan
-khusus, jawaban seperti itu terbaca sebagai "peraturan tanpa pasal" dan semua peraturan yang menunggu akan ditandai
-'kosong'.
+tanpa `articles` dan `relationships`, untuk UU 13/2003, 17/2023, 27/2009, 8/1981, dan PP 56/2009, terverifikasi
+(`content_verified`) maupun tidak. Catatan pasal.id (`content_note`), apa adanya:
 
-**Yang dikatakan pasal.id** (dari dokumentasi dan ketentuan publiknya, diperiksa lewat pencarian web karena situsnya tak
-terjangkau dari lingkungan pengembangan): detail peraturan lewat REST API memerlukan masuk atau kunci API (token pribadi
-gratis dari menu Akun, dikirim sebagai `Authorization: Bearer`); pembacaan teks lengkap dibatasi **300 per akun per hari
-(reset 00.00 WIB)** dan kuota lebih besar diminta lewat halo@pasal.id; teks peraturan berstatus domain publik, tetapi
-ketentuannya melarang mendistribusikan ulang basis data terstruktur secara keseluruhan dan melakukan scraping melebihi
-batas laju. Batas 300 per hari itu disebut pada panduan server MCP dan plugin-nya (yang memakai OAuth atau token
-pribadi); apakah REST API memakai batas yang sama tidak dinyatakan. Jadi penyebabnya salah satu dari:
-token `PASAL_API_TOKEN` di Worker tidak (lagi) berhak atas teks lengkap (kedaluwarsa, dicabut, atau bukan token akun),
-kuota baca harian akun sudah habis, atau pasal.id memang menarik teks dari REST API. Catatan sumbernya (`content_note`)
-dicatat apa adanya di `sync_state` kunci `akses_isi` begitu Worker menemuinya.
+> Pasal.id's API provides discovery metadata only. Read the text at the linked pasal.id page, or connect an AI assistant
+> via MCP: https://pasal.id/hubungkan
+
+Jadi ini **kebijakan API pasal.id, bukan masalah token atau kuota Lexa**: memperbarui `PASAL_API_TOKEN` tidak akan
+mengembalikan teksnya. Daftar `/laws` tetap normal (total 207.097 peraturan semua jenis, `limit` dibatasi 50; `type=UUD`
+dikenali dengan 5 dokumen, `type=TAP_MPR` dengan 39) dan menjadi sumber katalog. Tanpa penanganan khusus, jawaban seperti itu
+terbaca sebagai "peraturan tanpa pasal" dan semua peraturan yang menunggu akan ditandai 'kosong'.
+
+**Yang dikatakan pasal.id** (dokumentasi dan ketentuan publiknya, diperiksa lewat pencarian web karena situsnya tak
+terjangkau dari lingkungan pengembangan): teks peraturan berstatus domain publik, tetapi ketentuannya melarang
+mendistribusikan ulang basis data terstruktur secara keseluruhan dan melakukan scraping melebihi batas laju; membaca teks
+lewat halaman webnya atau lewat server MCP-nya (OAuth atau token pribadi, pembacaan teks lengkap dibatasi 300 per akun per
+hari), dan kuota atau akses data lebih besar diminta lewat halo@pasal.id. Lexa **sengaja tidak** menarik halaman web atau
+server MCP pasal.id secara massal: keduanya dirancang untuk pembaca dan asisten AI, bukan untuk penyalinan basis data.
 
 **Yang dilakukan pipeline** (`lib/akses.ts`). Jawaban tanpa `articles` dengan `content`/`content_note` **bukan**
 peraturan 'kosong': peraturannya dibiarkan 'menunggu' (percobaan tak bertambah), jawabannya tidak diarsipkan, dan
 keadaannya dicatat di `akses_isi` (`sejak`, `terakhir`, `periksa_lagi`, `catatan`, `pemeriksaan`). Untuk membedakan
 pembatasan menyeluruh dari peraturan yang memang tanpa naskah, satu peraturan yang naskahnya sudah tersimpan diminta ulang
-sebagai pembanding: tanpa pasal pula berarti pembatasan menyeluruh; berpasal berarti akses baik dan peraturan yang
+sebagai pembanding (diundi): tanpa pasal pula berarti pembatasan menyeluruh; berpasal berarti akses baik dan peraturan yang
 diminta menjadi 'kosong' dengan catatan sumber. Selama dibatasi, pengambilan detail dijeda 30 menit (10 menit bila
 pemeriksaan gagal) sementara katalog dan penguraian ulang arsip jalan terus. Sesudah jeda, satu permintaan pembanding
 memutuskan: masih terbatas (jeda diperbarui), atau pulih (`akses_isi` dihapus dan antrean langsung dilanjutkan di tik yang
-sama). Tanpa pembanding, peraturan terdepan yang berpasal membuktikan pulihnya akses. Keadaannya tampil di halaman
-`/status` (panel "Kelengkapan isi") dan `GET /api/stats` (`isi.akses`).
+sama). Keadaannya tampil di halaman `/status` (panel "Kelengkapan isi") dan `GET /api/stats` (`isi.akses`). Pemeriksaan ini
+murah (satu permintaan per 30 menit) dan menjaga agar pipeline pulih sendiri bila pasal.id suatu hari memberi teks lagi.
 
-**Yang perlu Anda lakukan.**
+**Jalur untuk melengkapi teks** (lihat juga "Yang belum ada" di README):
 
-1. Pastikan `PASAL_API_TOKEN` adalah token pribadi yang masih berlaku: masuk ke pasal.id, menu **Akun > Akses API &
-   MCP**, buat token baru bila perlu, lalu pasang sebagai secret Worker (`npx wrangler secret put PASAL_API_TOKEN`,
-   jangan lewat pipa; atau dashboard > Settings > Variables and secrets). Dalam 30 menit pipeline memeriksanya dan
-   melanjutkan sendiri. Lihat `sync_state.akses_isi.catatan` untuk bunyi catatan pasal.id yang sebenarnya.
-2. Bila catatannya menyebut kuota atau akun: 300 pembacaan per hari berarti sekitar 13 hari untuk satu putaran atas
-   ±3.900 peraturan, lebih lama bila katalog menambah PP yang belum tersimpan. Minta kuota lebih besar ke halo@pasal.id;
-   contoh surat di bawah.
-3. Bila pasal.id memang menutup teks dari API, jalur lain yang sah ada di "Yang belum ada" pada README: skrip panen BPK
-   (dijalankan dari peramban Anda di situs BPK, mengirim ke `/api/impor/*`) dan ekstraksi PDF resmi. Peraturan yang
-   sudah punya teks di D1 (53.119 baris pasal pada 11 Okt 2026) tidak terganggu.
+1. **Panen BPK dari peramban Anda** (bagian berikutnya): naskah resmi dari peraturan.bpk.go.id, diekstrak Lexa menjadi pasal.
+   Ini jalur yang sudah dirancang sejak awal dan sah: situs itu di balik Cloudflare managed challenge sehingga hanya
+   sesi peramban manusia yang bisa mengambilnya, dan Worker tidak pernah menghubunginya.
+2. **Minta akses data ke pasal.id** (halo@pasal.id), mis. API khusus atau berkas data untuk Lexa; contoh surat di bawah.
+3. **Menunggu**: bila pasal.id kembali memberi teks lewat API, pipeline melanjutkan sendiri dalam 30 menit.
+
+Peraturan yang sudah punya teks di D1 (53.119 baris pasal pada 11 Okt 2026) tidak terganggu, dan halaman bacanya menautkan
+naskah di sumbernya (BPK, atau halaman pasal.id) untuk peraturan yang teksnya belum ada.
 
 > Yth. tim pasal.id, kami membangun Lexa (pencarian dan bacaan peraturan perundang-undangan Indonesia, Worker Cloudflare)
-> yang bersumber dari pasal.id untuk UUD, Tap MPR, UU, Perppu, dan PP (±3.900 peraturan, ±53.000 baris pasal). Pada 11
-> Oktober 2026 `GET /laws/<uri>` dengan token kami menjawab `content: "not_available_via_api"` tanpa `articles`. Mohon konfirmasi
-> apakah token kami (akun: …) masih berhak atas teks lengkap, dan apakah tersedia kuota baca yang lebih besar atau berkas
-> data untuk keperluan ini. Pengambilan kami sudah dibatasi (3 permintaan per menit, patuh pada Retry-After) dan kami
-> mencantumkan pasal.id sebagai sumber. Terima kasih.
+> yang memakai daftar peraturan pasal.id untuk UUD, Tap MPR, UU, Perppu, dan PP (±3.900 peraturan; sebelumnya ±53.000
+> baris pasal juga dari API Anda). Pada 11 Oktober 2026 `GET /laws/<uri>` menjawab `content: "not_available_via_api"`
+> dengan catatan bahwa API hanya untuk metadata. Apakah ada jalur resmi untuk mengambil teks pasal secara terstruktur untuk
+> kebutuhan ini (API untuk mitra, kuota khusus, atau berkas data), dengan pencantuman pasal.id sebagai sumber? Pengambilan kami
+> dibatasi (3 permintaan per menit, patuh pada Retry-After) dan kami tidak mendistribusikan ulang basis data Anda. Terima kasih.
+
+## Panen BPK (melengkapi teks)
+
+Kodenya: `GET /api/impor/butuh-teks` (daftar kerja), `PUT /api/impor/pdf` (unggah PDF), dan `scripts/bpk-console-harvest.js`
+(dijalankan di konsol peramban pada situs BPK). Alurnya:
+
+1. Buka https://peraturan.bpk.go.id/ di peramban, selesaikan tantangan Cloudflare bila muncul, buka DevTools > Console.
+2. Setel opsi uji lebih dulu, lalu tempel isi `scripts/bpk-console-harvest.js`:
+   `window.LEXA_PANEN = { batas: 3, kering: true }` (mengunduh PDF tanpa mengunggah). Isi alamat Lexa dan `ADMIN_TOKEN` pada
+   kotak dialog (tidak disimpan di mana pun).
+3. Bila tautan PDF tak ditemukan, buka satu halaman rincian peraturan di BPK dan jalankan `window.LEXA_PANEN = { periksa: true }`
+   sebelum menempel skrip: ia mencetak tabel metadata dan semua tautan unduhan halaman itu (kirim hasilnya agar pemilih di skrip
+   disesuaikan; skrip ditulis menurut susunan halaman BPK yang diketahui dan **belum pernah dijalankan pada situs sungguhan**).
+4. Jalankan sungguhan (tanpa `kering`, `batas` sampai 200): skrip memproses satu peraturan per ±4-6 detik, berhenti sendiri
+   sesudah 5 kegagalan beruntun (sesi kedaluwarsa), dan mencetak ringkasan. Jalankan lagi untuk melanjutkan; yang PDF-nya sudah
+   terunggah tidak muncul lagi.
+5. Lexa mengekstrak PDF menjadi pasal di latar belakang (`ekstrak_pdf`: Workers AI `toMarkdown`, lalu pengurai pasal dengan
+   penilaian mutu); hasil yang lebih sedikit dari pasal yang sudah tersimpan tidak menggantikannya. Pantau di `/status` dan
+   `sync_log` (`ekstrak_pdf`).
+
+Daftar kerja diurutkan: yang berbpk_id lebih dulu, lalu menurut `isi_giliran` (UUD, Tap MPR, UU, Perppu, PP; terbaru dulu).
+Jawabannya memuat `total` dan `tanpa_bpk`: peraturan baru dari katalog pasal.id umumnya hanya punya tautan pasal.id atau
+peraturan.go.id, bukan BPK, sehingga tak bisa dipanen oleh skrip ini; jumlahnya terlihat di `tanpa_bpk`. `?celah=1` menyertakan
+peraturan yang teksnya baru sebagian (nomor pasal bercelah), `?jenis=UU,PP` menyaring.
 
 ## Mengendalikan pipeline
 

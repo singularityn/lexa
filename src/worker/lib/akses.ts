@@ -3,8 +3,9 @@
  *
  * Pada 11 Oktober 2026 diagnosis produksi (lib/diagnosa.ts) menemukan bahwa setiap detail `/laws/<uri>` dijawab 200
  * dengan `{ work, content: "not_available_via_api", content_note }` tanpa `articles`, untuk peraturan terverifikasi
- * maupun tidak. Menurut dokumentasi pasal.id, teks lengkap lewat API hanya untuk pemakai yang masuk dengan token
- * akunnya, dan pembacaan teks lengkap dibatasi 300 per akun per hari (reset 00.00 WIB). Daftar `/laws` tetap terbuka.
+ * maupun tidak. Catatan pasal.id sendiri (content_note, apa adanya): "Pasal.id's API provides discovery metadata only.
+ * Read the text at the linked pasal.id page, or connect an AI assistant via MCP: https://pasal.id/hubungkan". Jadi
+ * ini kebijakan API-nya, bukan masalah token atau kuota Lexa; daftar `/laws` tetap terbuka.
  *
  * Pembatasan itu bukan isi peraturan, jadi pipeline tidak boleh memperlakukannya sebagai peraturan tanpa pasal
  * ('kosong' lalu baru dicoba lagi sebulan kemudian) ataupun mengarsipkan jawabannya (arsip kosong yang diuraikan

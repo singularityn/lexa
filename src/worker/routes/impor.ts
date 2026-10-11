@@ -13,7 +13,7 @@ import { tokenSah } from "../lib/auth";
 import { pilihDalam } from "../lib/d1";
 import { headerCors as corsUntuk } from "../lib/cors";
 import type { PesanIngest } from "../lib/ingest";
-import { bacaCakupan, dalamCakupan } from "../../shared/cakupan";
+import { bacaCakupan, dalamCakupan, klausaCakupan } from "../../shared/cakupan";
 
 type Bindings = Env;
 
@@ -35,6 +35,63 @@ impor.use("/*", async (c, next) => {
     );
   }
   await next();
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/impor/butuh-teks — peraturan yang masih perlu teksnya, untuk skrip panen BPK
+//
+// pasal.id tak lagi memberi teks pasal lewat API-nya (lib/akses.ts), jadi teks UUD, Tap MPR, UU, Perppu, dan PP yang
+// belum ada hanya bisa datang dari PDF resmi BPK. Skrip panen (scripts/bpk-console-harvest.js) bertanya di sini peraturan
+// mana yang perlu PDF-nya, mengambilnya dari sesi peramban pemiliknya di situs BPK, lalu mengunggahnya lewat PUT /pdf.
+//   ?jenis=UU,PP   saring jenis (bawaan: seluruh cakupan)
+//   ?batas=50      paling banyak berapa (1-200, bawaan 50)
+//   ?celah=1       sertakan juga peraturan yang teksnya sebagian (nomor pasalnya bercelah)
+// Yang sudah diunggah PDF-nya (r2_pdf_key) tak muncul lagi, jadi pemanggilan berikutnya mengembalikan yang baru.
+// ---------------------------------------------------------------------------
+impor.get("/butuh-teks", async (c) => {
+  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
+  const diminta = (c.req.query("jenis") ?? "").split(",").map((j) => j.trim().toUpperCase()).filter(Boolean);
+  const jenis = diminta.length ? cakupan.filter((j) => diminta.includes(j)) : cakupan;
+  const batas = Math.min(Math.max(Number(c.req.query("batas")) || 50, 1), 200);
+  const denganCelah = c.req.query("celah") === "1";
+  if (!jenis.length) {
+    return c.json({ error: "di_luar_cakupan", message: `Jenis di luar cakupan Lexa: ${cakupan.join(", ")}.`, cakupan }, 400, headerCors(c));
+  }
+
+  const dalam = klausaCakupan(jenis, "l.jenis");
+  // Tanpa teks sama sekali, atau (bila diminta) yang teksnya sebagian, dengan nomor pasal bercelah. Yang PDF-nya sudah diunggah tak diulang.
+  const kondisi = denganCelah
+    ? `(l.jumlah_pasal = 0 OR l.frbr_uri IN (
+         SELECT a.frbr_uri FROM articles a WHERE a.nomor_pasal GLOB '[0-9]*'
+          GROUP BY a.frbr_uri HAVING MAX(CAST(a.nomor_pasal AS INTEGER)) - COUNT(DISTINCT a.nomor_pasal) >= 2))`
+    : `l.jumlah_pasal = 0`;
+  const dasar = `FROM laws l WHERE ${dalam} AND ${kondisi} AND l.r2_pdf_key IS NULL`;
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT l.frbr_uri, l.jenis, l.nomor, l.tahun, l.judul, l.bpk_id, l.sumber_url, l.jumlah_pasal, l.isi_status
+       ${dasar}
+      ORDER BY (CASE WHEN l.bpk_id IS NOT NULL AND l.bpk_id <> '' THEN 0 ELSE 1 END), l.isi_giliran
+      LIMIT ?`,
+  ).bind(batas).all<{
+    frbr_uri: string; jenis: string; nomor: string; tahun: number; judul: string; bpk_id: string | null;
+    sumber_url: string | null; jumlah_pasal: number; isi_status: string;
+  }>();
+  const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n ${dasar}`).first<{ n: number }>();
+  const tanpaBpk = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n ${dasar} AND (l.bpk_id IS NULL OR l.bpk_id = '') AND (l.sumber_url IS NULL OR l.sumber_url NOT LIKE '%bpk.go.id%')`,
+  ).first<{ n: number }>();
+
+  const bpk = c.env.BPK_BASE.replace(/\/$/, "");
+  const daftar = results.map((r) => {
+    const sumberBpk = r.sumber_url && /^https:\/\/(www\.)?peraturan\.bpk\.go\.id\//i.test(r.sumber_url) ? r.sumber_url : null;
+    return {
+      frbr_uri: r.frbr_uri, jenis: r.jenis, nomor: r.nomor, tahun: r.tahun, judul: r.judul, jumlah_pasal: r.jumlah_pasal,
+      isi_status: r.isi_status, bpk_id: r.bpk_id || null,
+      // Alamat halaman rincian di BPK: tautan sumber bila memang BPK (memuat slug), selain itu dari bpk_id; null bila tak ada.
+      detail_url: sumberBpk ?? (r.bpk_id ? `${bpk}/Details/${r.bpk_id}` : null),
+    };
+  });
+  return c.json({ cakupan: jenis, total: total?.n ?? 0, tanpa_bpk: tanpaBpk?.n ?? 0, daftar }, 200, headerCors(c));
 });
 
 // ---------------------------------------------------------------------------
