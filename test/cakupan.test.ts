@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   bacaCakupan, CAKUPAN_BAWAAN, dalamCakupan, jenisDariUri, klausaCakupan, uriJelasDiLuarCakupan,
 } from "../src/shared/cakupan";
+import { CRON_HARIAN, CRON_MENIT } from "../src/worker/lib/jadwal";
 
 describe("bacaCakupan", () => {
   it("tanpa variabel: daftar bawaan (UUD, Tap MPR, UU, Perppu, PP)", () => {
@@ -122,5 +123,20 @@ describe("klausaCakupan", () => {
     expect(() => klausaCakupan(["UU'; DROP TABLE laws; --"], "jenis")).toThrow();
     expect(() => klausaCakupan(["uu"], "jenis")).toThrow();
     expect(() => klausaCakupan(["UU", "P P"], "jenis")).toThrow();
+  });
+});
+
+describe("jadwal Cron dan cadangan tik di wrangler.jsonc", () => {
+  const berkas = readFileSync("wrangler.jsonc", "utf8");
+
+  it("pemicu di wrangler.jsonc sama persis dengan konstanta di kode (event.cron dibandingkan karakter demi karakter)", () => {
+    const crons = /"crons"\s*:\s*\[([^\]]*)\]/.exec(berkas)?.[1];
+    expect(crons, "wrangler.jsonc harus menyetel triggers.crons").toBeTruthy();
+    const daftar = [...(crons ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(daftar).toEqual([CRON_MENIT, CRON_HARIAN]);
+  });
+
+  it("vars.TIK_CADANGAN diaktifkan di produksi dengan nilai yang dikenal kode", () => {
+    expect(/^\s*"TIK_CADANGAN"\s*:\s*"antrean"/m.test(berkas)).toBe(true);
   });
 });

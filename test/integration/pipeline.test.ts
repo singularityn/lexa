@@ -1,15 +1,12 @@
 /**
- * Pipeline data: impor dari BPK -> antrean -> ekstraksi PDF -> pengindeksan ->
- * ringkasan, serta sinkronisasi terjadwal dari pasal.id (Cron + konsumer
- * antrean), termasuk jalur kena batas laju 429.
+ * Pipeline data dari impor BPK: manifest -> PDF -> antrean -> ekstraksi PDF -> pengindeksan -> ringkasan.
+ * Sinkronisasi dari pasal.id (katalog, isi, tik, rantai antrean) diuji di katalog.test.ts, isi.test.ts, tik.test.ts,
+ * dan antrean.test.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  buatLingkungan, jalankanAntrean, jalankanCron, json, kirim, kurasSemua, panggil, sisipkan,
-  sqliteAda, TOKEN_ADMIN, type Lingkungan,
+  buatLingkungan, jalankanAntrean, json, kirim, kurasSemua, panggil, sqliteAda, TOKEN_ADMIN, type Lingkungan,
 } from "./harness";
-import { PasalClient } from "../../src/worker/lib/pasal";
-import type { PesanIngest } from "../../src/worker/lib/ingest";
 
 const adm = { "x-admin-token": TOKEN_ADMIN };
 const URI_PP99 = "/akn/id/act/pp/2025/99";
@@ -245,6 +242,33 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       expect(await l.r2.get("teks/akn/id/act/pp/2025/99.md").then((o) => o?.text())).toBe(NASKAH);
     });
 
+    it("peraturan yang terisi lewat PDF berstatus 'lengkap' (bukan lagi menunggu diambil dari pasal.id)", async () => {
+      expect(await l.db.prepare(`SELECT isi_status FROM laws`).first()).toEqual({ isi_status: "menunggu" });
+      await kurasSemua(l);
+      expect(await l.db.prepare(`SELECT isi_status, isi_percobaan, isi_catatan FROM laws`).first()).toEqual({
+        isi_status: "lengkap", isi_percobaan: 0, isi_catatan: null,
+      });
+    });
+
+    it("hasil PDF yang lebih sedikit dari pasal yang sudah tersimpan (mis. dari pasal.id) tidak menggantikannya", async () => {
+      // Naskah yang sudah ada punya lima pasal; pindaian PDF hanya terbaca tiga.
+      for (let n = 1; n <= 5; n++) {
+        await l.db.prepare(`INSERT INTO articles (id, frbr_uri, nomor_pasal, isi, urutan) VALUES (?,?,?,?,?)`)
+          .bind(`${URI_PP99}#pasal-${n}`, URI_PP99, String(n), `Isi lama ${n}.`, n).run();
+      }
+      await l.db.prepare(`UPDATE laws SET jumlah_pasal = 5 WHERE frbr_uri = ?`).bind(URI_PP99).run();
+
+      await kurasSemua(l);
+      expect((await l.db.prepare(`SELECT isi FROM articles ORDER BY urutan`).all()).results.map((r) => r.isi)).toEqual([
+        "Isi lama 1.", "Isi lama 2.", "Isi lama 3.", "Isi lama 4.", "Isi lama 5.",
+      ]);
+      expect(await l.db.prepare(`SELECT jumlah_pasal FROM laws`).first()).toEqual({ jumlah_pasal: 5 });
+      expect(await l.db.prepare(`SELECT catatan FROM ekstraksi_log`).first()).toEqual({
+        catatan: "dipertahankan: 5 pasal tersimpan lebih banyak dari 3 hasil PDF",
+      });
+      expect(await l.r2.get("teks/akn/id/act/pp/2025/99.md").then((o) => o?.text())).toBe(NASKAH); // teks konversi tetap diarsipkan
+    });
+
     it("mencatat mutu ekstraksi (vonis, jumlah pasal) dan keberhasilan di sync_log", async () => {
       await kurasSemua(l);
       expect(await l.db.prepare(`SELECT vonis, jumlah_pasal, jumlah_ayat, tahun_dokumen, catatan FROM ekstraksi_log`).first()).toEqual({
@@ -285,12 +309,14 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       expect(new Uint8Array(await pdf.arrayBuffer())).toEqual(PDF);
     });
 
-    it("kiriman ulang PDF mengganti pasal lama, bukan menambahnya", async () => {
-      await kurasSemua(l);
-      l.ai.markdown.set("99.pdf", "Pasal 1\nIsi tunggal yang baru.");
+    it("kiriman ulang PDF yang menghasilkan pasal sama banyak atau lebih mengganti pasal lama, bukan menambahnya", async () => {
+      await kurasSemua(l); // tiga baris: Pasal 1, Pasal 2 ayat 1 dan 2
+      l.ai.markdown.set("99.pdf", ["Pasal 1", "Isi baru satu.", "Pasal 2", "Isi baru dua.", "Pasal 3", "Isi baru tiga."].join("\n"));
       await unggahPdf();
       await kurasSemua(l);
-      expect((await l.db.prepare(`SELECT nomor_pasal, isi FROM articles`).all()).results).toEqual([{ nomor_pasal: "1", isi: "Isi tunggal yang baru." }]);
+      expect((await l.db.prepare(`SELECT nomor_pasal, isi FROM articles ORDER BY urutan`).all()).results).toEqual([
+        { nomor_pasal: "1", isi: "Isi baru satu." }, { nomor_pasal: "2", isi: "Isi baru dua." }, { nomor_pasal: "3", isi: "Isi baru tiga." },
+      ]);
       expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM ekstraksi_log`).first<{ n: number }>())?.n).toBe(1);
     });
   });
@@ -347,541 +373,6 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       expect(hasil.diakui).toBe(1);
       expect(hasil.diulang).toHaveLength(1); // hanya ringkasan yang diulang
       expect((await l.db.prepare(`SELECT jumlah_pasal, indexed_at FROM laws`).first())).toMatchObject({ jumlah_pasal: 3, indexed_at: expect.any(String) });
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Sinkronisasi terjadwal dari pasal.id
-// ---------------------------------------------------------------------------
-
-const hukumPasal = (jenis: string, tahun: number, nomor: number, judul: string, status = "berlaku") => ({
-  id: tahun * 100 + nomor, frbr_uri: `/akn/id/act/${jenis.toLowerCase()}/${tahun}/${nomor}`,
-  title: judul, type: jenis, number: String(nomor), year: tahun, status,
-});
-
-describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
-  let l: Lingkungan;
-  let panggilanPasal: URL[];
-
-  beforeEach(() => {
-    l = buatLingkungan();
-    panggilanPasal = [];
-    // Bentuk URL detail yang berhasil diingat PasalClient lintas instans; reset agar tes saling lepas.
-    (PasalClient as unknown as { bentukDetail: string | null }).bentukDetail = null;
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    l.tutup();
-  });
-
-  /** Stub pasal.id: `daftar[jenis]` dilayani pada /laws, `detail[uri]` pada /laws/<uri>. */
-  function stubPasal(opsi: {
-    daftar?: Record<string, unknown[]>;
-    detail?: Record<string, unknown>;
-    batasLaju?: (url: URL) => boolean;
-  }) {
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-      const url = new URL(String(input));
-      panggilanPasal.push(url);
-      if (opsi.batasLaju?.(url)) return new Response("lambat", { status: 429, headers: { "retry-after": "120" } });
-      if (url.pathname === "/api/laws" && !url.searchParams.has("uri")) {
-        const semua = opsi.daftar?.[url.searchParams.get("type") ?? ""] ?? [];
-        const offset = Number(url.searchParams.get("offset") ?? 0);
-        const limit = Number(url.searchParams.get("limit") ?? 50);
-        return Response.json({ data: semua.slice(offset, offset + limit), total: semua.length });
-      }
-      const uri = url.pathname.replace(/^\/api\/laws/, "") || url.searchParams.get("uri") || "";
-      const d = opsi.detail?.[uri];
-      return d ? Response.json(d) : new Response("tidak ada", { status: 404 });
-    });
-  }
-
-  const log = async (job: string) =>
-    (await l.db.prepare(`SELECT status, detail, jumlah FROM sync_log WHERE job = ? ORDER BY id`).bind(job).all()).results;
-
-  describe("Cron (jadwalkanSinkronisasi)", () => {
-    it("tanpa PASAL_API_TOKEN, sinkronisasi dilewati tanpa menghubungi siapa pun", async () => {
-      (l.env as { PASAL_API_TOKEN: string }).PASAL_API_TOKEN = "";
-      stubPasal({});
-      await jalankanCron(l);
-      expect(panggilanPasal).toEqual([]);
-      expect(l.antrean.pesan).toEqual([]);
-    });
-
-    it("mengantrekan peraturan baru per jenis dan mencatat jalannya", async () => {
-      stubPasal({
-        daftar: {
-          UU: [hukumPasal("UU", 2003, 13, "Ketenagakerjaan"), hukumPasal("UU", 2020, 11, "Cipta Kerja", "dicabut")],
-          PP: [hukumPasal("PP", 2021, 35, "PKWT, Alih Daya")],
-        },
-      });
-      await jalankanCron(l);
-
-      expect(l.antrean.pesan).toEqual([
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/2003/13", alasan: "baru", pasal_id: 200313, jenis: "UU" },
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/2020/11", alasan: "baru", pasal_id: 202011, jenis: "UU" },
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/pp/2021/35", alasan: "baru", pasal_id: 202135, jenis: "PP" },
-      ]);
-      // Hanya jenis dalam cakupan yang disapu (UU, PERPPU, PP); PERPRES, PERMEN, POJK, dan PBI tidak disentuh.
-      expect(panggilanPasal.map((u) => u.searchParams.get("type"))).toEqual(["UU", "PERPPU", "PP"]);
-      expect(await log("jadwal_sinkronisasi")).toEqual([
-        { status: "mulai", detail: "UU,PERPPU,PP", jumlah: 0 },
-        { status: "sukses", detail: "diperiksa 3", jumlah: 3 },
-      ]);
-    });
-
-    it("kursor offset dimajukan dan di-reset ke 0 setelah jenis itu habis", async () => {
-      const banyak = Array.from({ length: 120 }, (_, i) => hukumPasal("UU", 1990 + (i % 30), i + 1, `Judul ${i}`));
-      stubPasal({ daftar: { UU: banyak } });
-      const kursor = async () => (await l.db.prepare(`SELECT value FROM sync_state WHERE key = 'offset:UU'`).first<{ value: string }>())?.value;
-
-      await jalankanCron(l); // 4 halaman x 50 -> 120 habis pada halaman ke-3
-      expect(l.antrean.pesan).toHaveLength(120);
-      expect(await kursor()).toBe("0");
-
-      // Halaman kedua/ketiga memakai offset hasil halaman sebelumnya, bukan nomor halaman.
-      const offsetUU = panggilanPasal.filter((u) => u.searchParams.get("type") === "UU").map((u) => u.searchParams.get("offset"));
-      expect(offsetUU).toEqual(["0", "50", "100"]);
-      expect(panggilanPasal.every((u) => !u.searchParams.has("page"))).toBe(true);
-    });
-
-    it("hanya mengantrekan yang baru, berubah status, atau masih kosong; yang sudah mutakhir dilewati", async () => {
-      await sisipkan(l, [
-        { uri: "/akn/id/act/uu/2003/13", jenis: "UU", nomor: "13", tahun: 2003, judul: "Ketenagakerjaan", pasal: [{ nomor: "1", isi: "Isi." }] },
-        { uri: "/akn/id/act/uu/2020/11", jenis: "UU", nomor: "11", tahun: 2020, judul: "Cipta Kerja", pasal: [{ nomor: "1", isi: "Isi." }] },
-        { uri: "/akn/id/act/uu/2019/1", jenis: "UU", nomor: "1", tahun: 2019, judul: "Metadata saja" },
-      ]);
-      stubPasal({
-        daftar: {
-          UU: [
-            hukumPasal("UU", 2003, 13, "Ketenagakerjaan"), // mutakhir
-            hukumPasal("UU", 2020, 11, "Cipta Kerja", "dicabut"), // status berubah
-            hukumPasal("UU", 2019, 1, "Metadata saja"), // isi kosong
-          ],
-        },
-      });
-      await jalankanCron(l);
-      expect(l.antrean.pesan.map((p) => [(p as PesanIngest & { frbr_uri: string }).frbr_uri, (p as { alasan: string }).alasan])).toEqual([
-        ["/akn/id/act/uu/2020/11", "perubahan"],
-        ["/akn/id/act/uu/2019/1", "perubahan"],
-      ]);
-    });
-
-    it("kena 429: berhenti rapi, kursor disimpan, jalan berikutnya melanjutkan", async () => {
-      const banyak = Array.from({ length: 120 }, (_, i) => hukumPasal("UU", 2000, i + 1, `Judul ${i}`));
-      let kenaBatas = true;
-      stubPasal({
-        daftar: { UU: banyak },
-        batasLaju: (u) => kenaBatas && u.searchParams.get("type") === "UU" && u.searchParams.get("offset") === "50",
-      });
-      await jalankanCron(l);
-
-      // Halaman pertama (50) sudah diperiksa; permintaan kedua kena 429 dan seluruh sapuan berhenti.
-      expect(await log("jadwal_sinkronisasi")).toEqual([
-        { status: "mulai", detail: "UU,PERPPU,PP", jumlah: 0 },
-        { status: "gagal", detail: "rate limit pada UU", jumlah: 50 },
-      ]);
-      expect((await l.db.prepare(`SELECT value FROM sync_state WHERE key = 'offset:UU'`).first<{ value: string }>())?.value).toBe("50");
-      expect(panggilanPasal.map((u) => u.searchParams.get("type"))).toEqual(["UU", "UU"]); // jenis lain tidak dicoba
-
-      kenaBatas = false;
-      panggilanPasal.length = 0;
-      await jalankanCron(l);
-      expect(panggilanPasal[0].searchParams.get("offset")).toBe("50"); // melanjutkan, bukan mengulang
-    });
-
-    // Bug v0.1 yang sudah diperbaiki: kena 429 membuat fungsi `return` sebelum antrean lokal dikirim,
-    // padahal kursor offset sudah dimajukan dan log mengaku "diantrekan 50". Peraturan di halaman yang
-    // sudah dilewati hilang sampai kursor berputar penuh. Ini kandidat utama penyebab sinkronisasi
-    // yang "sering terhenti".
-    it("pesan yang sudah terkumpul sebelum kena 429 tetap dikirim ke antrean", async () => {
-      const banyak = Array.from({ length: 120 }, (_, i) => hukumPasal("UU", 2000, i + 1, `Judul ${i}`));
-      stubPasal({
-        daftar: { UU: banyak },
-        batasLaju: (u) => u.searchParams.get("type") === "UU" && u.searchParams.get("offset") === "50",
-      });
-      await jalankanCron(l);
-      expect(l.antrean.pesan).toHaveLength(50);
-      expect((l.antrean.pesan as Array<{ frbr_uri: string }>)[0].frbr_uri).toBe("/akn/id/act/uu/2000/1");
-      expect((l.antrean.pesan as Array<{ frbr_uri: string }>)[49].frbr_uri).toBe("/akn/id/act/uu/2000/50");
-    });
-
-    it("pesan dari jenis sebelumnya juga ikut terkirim bila jenis berikutnya kena 429", async () => {
-      stubPasal({
-        daftar: { UU: [hukumPasal("UU", 2003, 13, "Ketenagakerjaan")], PP: [hukumPasal("PP", 2021, 35, "PKWT")] },
-        batasLaju: (u) => u.searchParams.get("type") === "PP",
-      });
-      await jalankanCron(l);
-      expect(l.antrean.pesan.map((p) => (p as { frbr_uri: string }).frbr_uri)).toEqual(["/akn/id/act/uu/2003/13"]);
-      expect((await l.db.prepare(`SELECT value FROM sync_state WHERE key = 'offset:UU'`).first<{ value: string }>())?.value).toBe("0");
-    });
-
-    it("kursor tidak maju bila pengiriman ke antrean gagal, sehingga jalan berikutnya mengulang halaman itu", async () => {
-      stubPasal({ daftar: { UU: [hukumPasal("UU", 2003, 13, "Ketenagakerjaan"), hukumPasal("UU", 2020, 11, "Cipta Kerja")] } });
-      l.antrean.sendBatch = async () => {
-        throw new Error("Queues sedang gangguan");
-      };
-      await expect(jalankanCron(l)).resolves.toBeUndefined(); // dibungkus catch di scheduled()
-      // Hanya kursor sapuan yang dihitung: pemicu Cron juga meninggalkan jejak "denyut:..." di tabel yang sama.
-      expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM sync_state WHERE key LIKE 'offset:%' OR key = 'jenis_awal'`).first<{ n: number }>())?.n).toBe(0);
-    });
-
-    describe("urutan jenis diputar agar tidak ada yang kelaparan", () => {
-      const jenisDiminta = () => [...new Set(panggilanPasal.map((u) => u.searchParams.get("type")))];
-      const awal = async () => (await l.db.prepare(`SELECT value FROM sync_state WHERE key = 'jenis_awal'`).first<{ value: string }>())?.value;
-
-      it("kena 429 pada PERPPU: sapuan berikutnya dimulai dari PERPPU, lalu jenis di belakangnya", async () => {
-        let batas = true;
-        stubPasal({
-          daftar: { UU: [hukumPasal("UU", 2003, 13, "A")], PP: [hukumPasal("PP", 2021, 35, "B")], PERPPU: [hukumPasal("PERPPU", 2022, 2, "C")] },
-          batasLaju: (u) => batas && u.searchParams.get("type") === "PERPPU",
-        });
-        await jalankanCron(l);
-        expect(jenisDiminta()).toEqual(["UU", "PERPPU"]); // PP belum tersentuh
-        expect(await awal()).toBe("PERPPU");
-
-        batas = false;
-        panggilanPasal.length = 0;
-        await jalankanCron(l);
-        expect(jenisDiminta()).toEqual(["PERPPU", "PP", "UU"]);
-        expect(await awal()).toBe("UU"); // satu putaran penuh selesai: kembali ke awal
-      });
-
-      it("dengan cakupan dilebarkan, putaran mencakup jenis tambahan (kena 429 pada PERPRES)", async () => {
-        l.env.CAKUPAN_JENIS = "UU,PERPPU,PP,PERPRES,PERMEN,POJK,PBI";
-        let batas = true;
-        stubPasal({
-          daftar: { UU: [hukumPasal("UU", 2003, 13, "A")], PP: [hukumPasal("PP", 2021, 35, "B")], PERPRES: [hukumPasal("PERPRES", 2020, 1, "C")], PERMEN: [hukumPasal("PERMEN", 2021, 1, "D")] },
-          batasLaju: (u) => batas && u.searchParams.get("type") === "PERPRES",
-        });
-        await jalankanCron(l);
-        expect(jenisDiminta()).toEqual(["UU", "PERPPU", "PP", "PERPRES"]); // PERMEN, POJK, PBI belum tersentuh
-        expect(await awal()).toBe("PERPRES");
-
-        batas = false;
-        panggilanPasal.length = 0;
-        await jalankanCron(l);
-        expect(jenisDiminta()).toEqual(["PERPRES", "PERMEN", "POJK", "PBI", "UU", "PERPPU", "PP"]);
-        expect(await awal()).toBe("UU");
-      });
-
-      it("kena 429 berturut-turut maju satu jenis demi satu sampai putaran selesai", async () => {
-        stubPasal({
-          daftar: { UU: [hukumPasal("UU", 2003, 13, "A")] },
-          batasLaju: (u) => ["PP"].includes(u.searchParams.get("type") ?? ""),
-        });
-        await jalankanCron(l);
-        expect(await awal()).toBe("PP");
-        await jalankanCron(l); // dimulai dari PP: kena 429 lagi pada PP itu sendiri
-        expect(await awal()).toBe("PP");
-      });
-
-      it("sapuan manual untuk jenis tertentu tidak mengubah urutan putaran", async () => {
-        stubPasal({ daftar: { PP: [hukumPasal("PP", 2021, 35, "B")] }, batasLaju: (u) => u.searchParams.get("type") === "PP" });
-        await panggil(l, "/api/admin/sync", kirim("POST", { jenis: ["PP"], maks_halaman: 1 }, adm));
-        expect(await awal()).toBeUndefined();
-      });
-
-      it("nilai awal yang tidak dikenal diabaikan (urutan bawaan)", async () => {
-        await l.db.prepare(`INSERT INTO sync_state (key, value) VALUES ('jenis_awal', 'JENIS_LAMA')`).run();
-        stubPasal({});
-        await jalankanCron(l);
-        expect(jenisDiminta()[0]).toBe("UU");
-      });
-    });
-
-    it("error selain 429 pada satu jenis dicatat, jenis lain tetap diproses", async () => {
-      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-        const url = new URL(String(input));
-        if (url.searchParams.get("type") === "UU") return new Response("rusak", { status: 500 });
-        return Response.json({ data: [], total: 0 });
-      });
-      await jalankanCron(l);
-      const entri = await log("jadwal_sinkronisasi");
-      expect(entri.some((e) => String(e.detail).startsWith("UU: PasalApiError"))).toBe(true);
-      expect(entri.at(-1)).toMatchObject({ status: "sukses" });
-    });
-
-    it("tekanan balik: antrean yang belum tuntas (>400 peraturan kosong) menunda penjadwalan baru", async () => {
-      for (let i = 0; i < 401; i++) {
-        await l.db
-          .prepare(`INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, jumlah_pasal) VALUES (?,?,?,?,?,0)`)
-          .bind(`/akn/id/act/uu/2000/${i}`, "UU", String(i), 2000, `Judul ${i}`)
-          .run();
-      }
-      stubPasal({ daftar: { UU: [hukumPasal("UU", 2024, 1, "Baru")] } });
-      await jalankanCron(l);
-      expect(panggilanPasal).toEqual([]);
-      expect(l.antrean.pesan).toEqual([]);
-      expect(await log("jadwal_sinkronisasi")).toEqual([
-        { status: "gagal", detail: "dilewati: 401 peraturan masih menunggu isi (batas 400)", jumlah: 0 },
-      ]);
-    });
-
-    it("POST /api/admin/sync menjalankan sapuan yang sama atas jenis yang dipilih", async () => {
-      stubPasal({ daftar: { PP: [hukumPasal("PP", 2021, 35, "PKWT")] } });
-      const res = await panggil(l, "/api/admin/sync", kirim("POST", { jenis: ["PP"], maks_halaman: 1 }, adm));
-      expect(await res.json()).toEqual({ status: "selesai", diantrekan: 1, diperiksa: 1 });
-      expect(panggilanPasal.map((u) => u.searchParams.get("type"))).toEqual(["PP"]);
-    });
-
-    describe("cakupan peraturan (UUD, Tap MPR, UU, Perppu, PP)", () => {
-      const sync = (badan: unknown) => panggil(l, "/api/admin/sync", kirim("POST", badan, adm));
-
-      it("peraturan di luar cakupan yang ikut dalam daftar (filter type hulu diabaikan) tidak diantrekan", async () => {
-        stubPasal({ daftar: { UU: [hukumPasal("UU", 2003, 13, "Ketenagakerjaan"), hukumPasal("PERPRES", 2020, 1, "Komisi"), hukumPasal("POJK", 2019, 1, "Efek")] } });
-        await jalankanCron(l);
-        expect(l.antrean.pesan.map((p) => (p as { frbr_uri: string }).frbr_uri)).toEqual(["/akn/id/act/uu/2003/13"]);
-        expect(await log("jadwal_sinkronisasi")).toContainEqual({ status: "sukses", detail: "diperiksa 3", jumlah: 1 });
-      });
-
-      it("tekanan balik hanya menghitung peraturan kosong yang dalam cakupan (sisa lama Perpres/POJK tak menahan sapuan)", async () => {
-        for (let i = 0; i < 450; i++) {
-          await l.db
-            .prepare(`INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, jumlah_pasal) VALUES (?,?,?,?,?,0)`)
-            .bind(`/akn/id/act/perpres/2000/${i}`, "PERPRES", String(i), 2000, `Judul ${i}`)
-            .run();
-        }
-        stubPasal({ daftar: { UU: [hukumPasal("UU", 2024, 1, "Baru")] } });
-        await jalankanCron(l);
-        expect(l.antrean.pesan).toHaveLength(1);
-        expect(await log("jadwal_sinkronisasi")).toEqual([
-          { status: "mulai", detail: "UU,PERPPU,PP", jumlah: 0 },
-          { status: "sukses", detail: "diperiksa 1", jumlah: 1 },
-        ]);
-      });
-
-      it("sapuan manual untuk jenis di luar cakupan ditolak terus terang tanpa menghubungi pasal.id", async () => {
-        stubPasal({ daftar: { PERPRES: [hukumPasal("PERPRES", 2020, 1, "Komisi")] } });
-        const res = await sync({ jenis: ["PERPRES", "POJK"] });
-        expect(res.status).toBe(400);
-        expect(await res.json()).toMatchObject({ error: "di_luar_cakupan", cakupan: ["UUD", "TAP_MPR", "UU", "PERPPU", "PP"], jenis: ["PERPRES", "POJK"] });
-        expect(panggilanPasal).toEqual([]);
-        expect(l.antrean.pesan).toEqual([]);
-      });
-
-      it("sapuan manual campuran hanya menyapu jenis dalam cakupan dan menyebut yang diabaikan", async () => {
-        stubPasal({ daftar: { PP: [hukumPasal("PP", 2021, 35, "PKWT")], PERPRES: [hukumPasal("PERPRES", 2020, 1, "Komisi")] } });
-        const res = await sync({ jenis: ["PERPRES", "PP"], maks_halaman: 1 });
-        expect(await res.json()).toEqual({ status: "selesai", diantrekan: 1, diperiksa: 1, diabaikan: ["PERPRES"] });
-        expect(panggilanPasal.map((u) => u.searchParams.get("type"))).toEqual(["PP"]);
-      });
-
-      it("meminta satu peraturan di luar cakupan lewat uri ditolak; yang dalam cakupan diantrekan", async () => {
-        const luar = await sync({ uri: "/akn/id/act/perpres/2020/1" });
-        expect(luar.status).toBe(400);
-        expect(await luar.json()).toMatchObject({ error: "di_luar_cakupan", uri: "/akn/id/act/perpres/2020/1" });
-        expect(l.antrean.pesan).toEqual([]);
-        expect(await (await sync({ uri: "/akn/id/act/uu/2003/13" })).json()).toEqual({ status: "diantrekan", uri: "/akn/id/act/uu/2003/13" });
-      });
-
-      it("ringkas_kosong dan perbaiki_celah tidak mengantrekan peraturan di luar cakupan", async () => {
-        await sisipkan(l, [
-          { uri: "/akn/id/act/uu/2003/13", jenis: "UU", nomor: "13", tahun: 2003, judul: "Ketenagakerjaan", pasal: [{ nomor: "1", isi: "Isi." }, { nomor: "3", isi: "Isi tiga." }] },
-          { uri: "/akn/id/act/perpres/2020/1", jenis: "PERPRES", nomor: "1", tahun: 2020, judul: "Komisi", pasal: [{ nomor: "1", isi: "Isi." }, { nomor: "5", isi: "Isi lima." }] },
-        ]);
-        const ringkas = await (await sync({ ringkas_kosong: true })).json();
-        expect(ringkas).toEqual({ status: "diantrekan", peraturan: 1 });
-        const celah = await (await sync({ perbaiki_celah: true })).json();
-        expect(celah).toMatchObject({ status: "diantrekan", peraturan: 1 });
-        const diantrekan = l.antrean.pesan.map((p) => (p as { frbr_uri: string }).frbr_uri);
-        expect(diantrekan).toEqual(["/akn/id/act/uu/2003/13", "/akn/id/act/uu/2003/13"]);
-      });
-    });
-  });
-
-  describe("konsumer antrean (prosesPesanIngest)", () => {
-    const detailUU13 = {
-      work: { id: 200313, frbr_uri: "/akn/id/act/uu/2003/13", title: "Ketenagakerjaan", type: "UU", number: "13", year: 2003, status: "berlaku" },
-      articles: [
-        { id: 1, type: "bab", number: "X", heading: "PERLINDUNGAN", sort_order: 1 },
-        { id: 2, type: "pasal", number: "82", parent_id: 1, sort_order: 1 },
-        { id: 3, type: "ayat", number: "1", content: "Pekerja perempuan berhak memperoleh istirahat 1,5 bulan sebelum melahirkan.", parent_id: 2, sort_order: 1 },
-        { id: 4, type: "pasal", number: "156", content: "Pengusaha wajib membayar uang pesangon.", sort_order: 2 },
-      ],
-      relationships: [{ frbr_uri: "/akn/id/act/uu/2020/11", relationship_type: "Diubah Oleh", note: "UU 11/2020" }],
-    };
-    const pesanUU13: PesanIngest = { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/2003/13", alasan: "baru" };
-
-    it("menyimpan peraturan, pasal, relasi, dan arsip teks, lalu mengantrekan pengindeksan vektor", async () => {
-      stubPasal({ detail: { "/akn/id/act/uu/2003/13": detailUU13 } });
-      const hasil = await jalankanAntrean(l, [pesanUU13]);
-      expect(hasil).toEqual({ diakui: 1, diulang: [] });
-
-      expect(await l.db.prepare(`SELECT judul, jumlah_pasal, r2_text_key FROM laws`).first()).toEqual({
-        judul: "Ketenagakerjaan", jumlah_pasal: 2, r2_text_key: "teks/akn/id/act/uu/2003/13.txt",
-      });
-      expect((await l.db.prepare(`SELECT id, bab FROM articles ORDER BY urutan`).all()).results).toEqual([
-        { id: "/akn/id/act/uu/2003/13#pasal-82-ayat-1", bab: "BAB X PERLINDUNGAN" },
-        { id: "/akn/id/act/uu/2003/13#pasal-156", bab: null },
-      ]);
-      expect((await l.db.prepare(`SELECT to_uri, jenis_relasi, keterangan FROM relations`).all()).results).toEqual([
-        { to_uri: "/akn/id/act/uu/2020/11", jenis_relasi: "diubah_oleh", keterangan: "UU 11/2020" },
-      ]);
-      expect(await l.r2.get("teks/akn/id/act/uu/2003/13.txt").then((o) => o?.text())).toContain("Pasal 156\nPengusaha wajib membayar uang pesangon.");
-      expect(l.antrean.pesan).toEqual([{ tipe: "indeks_vektor", frbr_uri: "/akn/id/act/uu/2003/13" }]);
-
-      await kurasSemua(l);
-      expect(l.vektor.simpan.has("/akn/id/act/uu/2003/13#pasal-82-ayat-1")).toBe(true);
-      expect((await l.db.prepare(`SELECT indexed_at FROM laws`).first<{ indexed_at: string | null }>())?.indexed_at).toEqual(expect.any(String));
-    });
-
-    it("memproses ulang peraturan yang sama mengganti pasal dan relasi lama dengan yang baru", async () => {
-      const detail: Record<string, unknown> = { "/akn/id/act/uu/2003/13": detailUU13 };
-      stubPasal({ detail });
-      expect(await jalankanAntrean(l, [pesanUU13])).toMatchObject({ diakui: 1 });
-
-      // Hulu mengubah susunan: Pasal 82 dan 156 hilang, Pasal 99 muncul, relasinya berganti.
-      detail["/akn/id/act/uu/2003/13"] = {
-        ...detailUU13,
-        articles: [{ id: 9, type: "pasal", number: "99", content: "Isi baru." }],
-        relationships: [{ frbr_uri: "/akn/id/act/uu/2021/2", relationship_type: "Mencabut" }],
-      };
-      expect(await jalankanAntrean(l, [pesanUU13])).toMatchObject({ diakui: 1, diulang: [] });
-
-      expect((await l.db.prepare(`SELECT id, isi FROM articles`).all()).results).toEqual([
-        { id: "/akn/id/act/uu/2003/13#pasal-99", isi: "Isi baru." },
-      ]);
-      expect((await l.db.prepare(`SELECT to_uri, jenis_relasi FROM relations`).all()).results).toEqual([
-        { to_uri: "/akn/id/act/uu/2021/2", jenis_relasi: "mencabut" },
-      ]);
-      expect((await l.db.prepare(`SELECT jumlah_pasal FROM laws`).first<{ jumlah_pasal: number }>())?.jumlah_pasal).toBe(1);
-      expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(1);
-      // Indeks FTS ikut mengikuti: pasal lama tidak lagi bisa ditemukan.
-      const fts = await l.db.prepare(`SELECT COUNT(*) AS n FROM articles_fts WHERE articles_fts MATCH 'pesangon'`).first<{ n: number }>();
-      expect(fts?.n).toBe(0);
-    });
-
-    it("kena 429: seluruh sisa batch ditunda sekaligus (bukan satu per satu), dan dicatat", async () => {
-      stubPasal({ batasLaju: () => true });
-      const pesan: PesanIngest[] = ["1", "2", "3"].map((n) => ({ tipe: "peraturan", frbr_uri: `/akn/id/act/uu/2000/${n}`, alasan: "baru" }));
-      const hasil = await jalankanAntrean(l, pesan);
-      expect(hasil.diakui).toBe(0);
-      expect(hasil.diulang).toEqual([{ penundaanDetik: 120 }, { penundaanDetik: 120 }, { penundaanDetik: 120 }]);
-      expect(panggilanPasal).toHaveLength(1); // pesan pertama kena 429; sisanya tidak dicoba sama sekali
-      expect(await log("antrean_ingest")).toEqual([{ status: "gagal", detail: "rate limit pasal.id — 3 pesan ditunda 120 detik", jumlah: 3 }]);
-    });
-
-    it("penundaan 429 minimal 60 detik dan maksimal 1 jam", async () => {
-      for (const [retryAfter, harapan] of [["5", 60], ["99999", 3600]] as const) {
-        vi.stubGlobal("fetch", async () => new Response("lambat", { status: 429, headers: { "retry-after": retryAfter } }));
-        const hasil = await jalankanAntrean(l, [pesanUU13]);
-        expect(hasil.diulang).toEqual([{ penundaanDetik: harapan }]);
-      }
-    });
-
-    it("429 di tengah batch: yang sudah selesai di-ack, mulai dari pesan yang gagal ditunda", async () => {
-      const kedua = { ...detailUU13, work: { ...detailUU13.work, frbr_uri: "/akn/id/act/uu/2020/11", title: "Cipta Kerja", year: 2020, number: "11" }, articles: [], relationships: [] };
-      let n = 0;
-      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-        const url = new URL(String(input));
-        n++;
-        if (n === 1) return Response.json(url.pathname.includes("2003/13") ? detailUU13 : kedua);
-        return new Response("lambat", { status: 429 });
-      });
-      const hasil = await jalankanAntrean(l, [
-        pesanUU13,
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/2020/11", alasan: "baru" },
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/2019/9", alasan: "baru" },
-      ]);
-      expect(hasil.diakui).toBe(1);
-      expect(hasil.diulang).toHaveLength(2);
-      expect(await log("antrean_ingest")).toEqual([{ status: "gagal", detail: "rate limit pasal.id — 2 pesan ditunda 60 detik", jumlah: 2 }]);
-    });
-
-    it("galat lain: hanya pesan itu yang di-retry (backoff bawaan), pesan sehat tetap diproses", async () => {
-      stubPasal({ detail: { "/akn/id/act/uu/2003/13": detailUU13 } }); // uu/1999/8 -> 404
-      const hasil = await jalankanAntrean(l, [
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/1999/8", alasan: "baru" },
-        pesanUU13,
-      ]);
-      expect(hasil).toEqual({ diakui: 1, diulang: [{ penundaanDetik: undefined }] });
-      expect((await l.db.prepare(`SELECT frbr_uri FROM laws`).all()).results).toEqual([{ frbr_uri: "/akn/id/act/uu/2003/13" }]);
-    });
-
-    it("respons detail yang tak terpetakan (tanpa judul) di-retry, tidak menyimpan setengah data", async () => {
-      stubPasal({ detail: { "/akn/id/act/uu/2003/13": { work: { frbr_uri: "/akn/id/act/uu/2003/13" } } } });
-      const hasil = await jalankanAntrean(l, [pesanUU13]);
-      expect(hasil.diulang).toHaveLength(1);
-      expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(0);
-    });
-
-    describe("cakupan peraturan (UUD, Tap MPR, UU, Perppu, PP)", () => {
-      const luar = (tipe: string, uri: string) =>
-        (tipe === "ekstrak_pdf" ? { tipe, frbr_uri: uri, r2_key: "pdf/x.pdf" } : { tipe, frbr_uri: uri, ...(tipe === "peraturan" ? { alasan: "baru" } : {}) }) as PesanIngest;
-
-      it("pesan lama untuk peraturan yang jelas di luar cakupan di-ack tanpa menyentuh pasal.id, AI, Vectorize, R2, maupun D1", async () => {
-        stubPasal({});
-        const pesan = ["peraturan", "indeks_vektor", "ringkas", "ekstrak_pdf"].flatMap((t) =>
-          ["/akn/id/act/perpres/2020/1", "/akn/id/act/permen/2024/5", "/akn/id/act/keppres/2000/1"].map((u) => luar(t, u)),
-        );
-        const hasil = await jalankanAntrean(l, pesan);
-        expect(hasil).toEqual({ diakui: pesan.length, diulang: [] });
-        expect(panggilanPasal).toEqual([]);
-        expect(l.ai.panggilan).toEqual([]);
-        expect(l.vektor.simpan.size).toBe(0);
-        expect(l.r2.objek.size).toBe(0);
-        expect(l.antrean.pesan).toEqual([]);
-        expect(await log("antrean_ingest")).toEqual([]); // tidak memenuhi sync_log dengan ribuan baris "dilewati"
-        expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(0);
-      });
-
-      it("pesan dari Cron membawa kode jenis, sehingga jenis bersegmen tak baku (POJK, PERMEN) pun dibuang tanpa memanggil pasal.id", async () => {
-        stubPasal({});
-        const pesan = [
-          { tipe: "peraturan", frbr_uri: "/akn/id/act/peraturan-ojk/2019/1-pojk-04-2019", alasan: "baru", jenis: "POJK" },
-          { tipe: "peraturan", frbr_uri: "/akn/id/act/permenkeu/2024/5", alasan: "baru", jenis: "PERMEN" },
-        ] as PesanIngest[];
-        expect(await jalankanAntrean(l, pesan)).toEqual({ diakui: 2, diulang: [] });
-        expect(panggilanPasal).toEqual([]);
-      });
-
-      it("pesan lama tanpa jenis untuk URI tak baku diambil dulu, lalu tidak disimpan karena jenisnya di luar cakupan", async () => {
-        const uri = "/akn/id/act/permenkeu/2024/5";
-        stubPasal({ detail: { [uri]: { work: { id: 5, frbr_uri: uri, title: "Tata Cara", type: "PERMEN", number: "5", year: 2024, status: "berlaku" }, articles: [], relationships: [] } } });
-        expect(await jalankanAntrean(l, [luar("peraturan", uri)])).toEqual({ diakui: 1, diulang: [] });
-        expect(panggilanPasal).toHaveLength(1);
-        expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(0);
-      });
-
-      it("pesan indeks, ringkasan, dan ekstraksi untuk baris D1 di luar cakupan (bersegmen tak baku) tidak memanggil AI atau Vectorize", async () => {
-        const uri = "/akn/id/act/peraturan-ojk/2019/1-pojk-04-2019";
-        await sisipkan(l, [{ uri, jenis: "POJK", nomor: "1-pojk-04-2019", tahun: 2019, judul: "Pesangon Pegawai", pasal: [{ nomor: "1", isi: "Pegawai berhak atas uang pesangon." }] }]);
-        await l.r2.put("pdf/x.pdf", new TextEncoder().encode("%PDF-1.4 uji"));
-        stubPasal({});
-        const pesan = ["indeks_vektor", "ringkas", "ekstrak_pdf"].map((t) => luar(t, uri));
-        expect(await jalankanAntrean(l, pesan)).toEqual({ diakui: 3, diulang: [] });
-        expect(l.ai.panggilan).toEqual([]);
-        expect(l.vektor.simpan.size).toBe(0);
-        expect(l.antrean.pesan).toEqual([]);
-        expect((await l.db.prepare(`SELECT indexed_at, ringkasan FROM laws WHERE frbr_uri = ?`).bind(uri).first())).toEqual({ indexed_at: null, ringkasan: null });
-      });
-
-      it("pesan untuk peraturan dalam cakupan di batch yang sama tetap diproses", async () => {
-        stubPasal({ detail: { "/akn/id/act/uu/2003/13": detailUU13 } });
-        const hasil = await jalankanAntrean(l, [luar("peraturan", "/akn/id/act/perpres/2020/1"), pesanUU13]);
-        expect(hasil).toEqual({ diakui: 2, diulang: [] });
-        expect(panggilanPasal).toHaveLength(1);
-        expect((await l.db.prepare(`SELECT frbr_uri FROM laws`).all()).results).toEqual([{ frbr_uri: "/akn/id/act/uu/2003/13" }]);
-      });
-
-      it("URI dalam cakupan tetapi jenis yang dilaporkan pasal.id di luar cakupan: tidak disimpan", async () => {
-        stubPasal({ detail: { "/akn/id/act/uu/2003/13": { ...detailUU13, work: { ...detailUU13.work, type: "PERPRES" } } } });
-        const hasil = await jalankanAntrean(l, [pesanUU13]);
-        expect(hasil).toEqual({ diakui: 1, diulang: [] });
-        expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM laws`).first<{ n: number }>())?.n).toBe(0);
-        expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM articles`).first<{ n: number }>())?.n).toBe(0);
-        expect(l.antrean.pesan).toEqual([]);
-      });
-
-      it("dengan cakupan dilebarkan, pesan Perpres diproses seperti biasa", async () => {
-        l.env.CAKUPAN_JENIS = "UU,PERPRES";
-        const detail = { work: { id: 1, frbr_uri: "/akn/id/act/perpres/2020/1", title: "Komisi", type: "PERPRES", number: "1", year: 2020, status: "berlaku" }, articles: [], relationships: [] };
-        stubPasal({ detail: { "/akn/id/act/perpres/2020/1": detail } });
-        expect(await jalankanAntrean(l, [luar("peraturan", "/akn/id/act/perpres/2020/1")])).toEqual({ diakui: 1, diulang: [] });
-        expect((await l.db.prepare(`SELECT jenis FROM laws`).first())).toEqual({ jenis: "PERPRES" });
-      });
     });
   });
 });

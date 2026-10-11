@@ -131,6 +131,14 @@ function keTanggal(v: unknown): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
+/** Bendera dari JSON: true/false, 1/0, atau "true"/"false"; selain itu tidak diketahui (null). */
+export function keBendera(v: unknown): boolean | null {
+  if (typeof v === "boolean") return v;
+  if (v === 1 || v === "1" || v === "true") return true;
+  if (v === 0 || v === "0" || v === "false") return false;
+  return null;
+}
+
 /**
  * Turunkan jenis/nomor/tahun dari FRBR URI bila field eksplisit tidak ada.
  * Bentuk FRBR: /akn/id/act/uu/2003/13
@@ -234,12 +242,49 @@ export function petakanSimpul(raw: Record<string, unknown>): SimpulPasal | null 
  *   supaya daftar rincian tidak terpisah dari kalimat pengantarnya.
  */
 export function ratakanPohonPasal(simpulList: SimpulPasal[], frbrUri: string): Article[] {
+  // Simpul yatim (parent_id menunjuk simpul yang tidak ada di respons) dulu tak pernah dikunjungi, karena
+  // penelusuran hanya mulai dari akar: seluruh isinya lenyap tanpa jejak. Kini mereka diperlakukan sebagai akar.
+  const idAda = new Set(simpulList.map((s) => s.id));
+  const induk = (s: SimpulPasal) => (s.parent_id !== null && idAda.has(s.parent_id) ? s.parent_id : null);
+
   const anak = new Map<number | null, SimpulPasal[]>();
   for (const s of simpulList) {
-    const kunci = s.parent_id;
+    const kunci = induk(s);
     const daftar = anak.get(kunci);
     if (daftar) daftar.push(s);
     else anak.set(kunci, [s]);
+  }
+  for (const daftar of anak.values()) daftar.sort((a, b) => a.sort_order - b.sort_order);
+
+  // Ayat yang berdampingan dengan pasalnya (bersaudara, bukan anak) dipasang kembali ke pasal di depannya:
+  // ayat tidak pernah sah sebagai saudara pasal, dan tanpa ini pasalnya kosong sedangkan ayatnya terlewat.
+  // Butir (huruf, angka) yang menyusul ikut ke ayat terakhir, atau ke pasalnya bila belum ada ayat.
+  const POLA_BUTIR = /^(huruf|angka|butir|point|item)$/;
+  for (const daftar of [...anak.values()]) {
+    let pasalTerakhir: SimpulPasal | null = null;
+    let ayatTerakhir: SimpulPasal | null = null;
+    const tetap: SimpulPasal[] = [];
+    for (const s of daftar) {
+      if (s.type === "pasal") {
+        pasalTerakhir = s;
+        ayatTerakhir = null;
+        tetap.push(s);
+      } else if (TIPE_KERANGKA.has(s.type)) {
+        pasalTerakhir = null;
+        ayatTerakhir = null;
+        tetap.push(s);
+      } else if (pasalTerakhir && s.type === "ayat") {
+        ayatTerakhir = s;
+        anak.set(pasalTerakhir.id, [...(anak.get(pasalTerakhir.id) ?? []), s]);
+      } else if (pasalTerakhir && POLA_BUTIR.test(s.type)) {
+        const tuan = ayatTerakhir ?? pasalTerakhir;
+        anak.set(tuan.id, [...(anak.get(tuan.id) ?? []), s]);
+      } else {
+        // Tipe lain di tingkat atas (menimbang, mengingat, ...) tetap di tempatnya.
+        tetap.push(s);
+      }
+    }
+    if (tetap.length !== daftar.length) daftar.splice(0, daftar.length, ...tetap);
   }
   for (const daftar of anak.values()) daftar.sort((a, b) => a.sort_order - b.sort_order);
 
@@ -494,6 +539,10 @@ export class PasalClient {
     // Id numerik internal pasal.id disimpan terpisah: ia tidak masuk skema D1,
     // tetapi endpoint detail kemungkinan memerlukannya.
     const idNumerik = new Map<string, number>();
+    // `content_verified` dari daftar: bendera bahwa isi peraturan sudah diperiksa pasal.id. Yang tidak terverifikasi
+    // sering tak punya isi sama sekali (naskah lama berupa pindaian), jadi pengambilannya didahulukan atau dikemudiankan
+    // menurut bendera ini (lib/isi.ts, hitungGiliran).
+    const terverifikasi = new Map<string, boolean | null>();
 
     for (const mentah of daftar) {
       const law = petakanLaw(mentah);
@@ -501,11 +550,13 @@ export class PasalClient {
       laws.push(law);
       const id = Number(pilih(mentah, "id", "work_id") ?? 0);
       if (id) idNumerik.set(law.frbr_uri, id);
+      terverifikasi.set(law.frbr_uri, keBendera(mentah.content_verified));
     }
 
     return {
       laws,
       idNumerik,
+      terverifikasi,
       total,
       offsetBerikut: offset + diterima,
       hasMore: diterima > 0 && offset + diterima < total,
@@ -559,45 +610,103 @@ export class PasalClient {
    * Respons berbentuk `{ work, articles, relationships, detail_access }`, dengan
    * `articles` berupa POHON (bab → pasal → ayat), bukan daftar datar.
    */
-  async getLaw(frbrUri: string) {
-    const json = await this.requestDetail(frbrUri);
-    const obj = (typeof json === "object" && json !== null ? json : {}) as Record<string, unknown>;
-    const inti = (obj.work ?? obj.data ?? obj.law ?? obj) as Record<string, unknown>;
-
-    const law = petakanLaw(inti);
-    if (!law) throw new PasalApiError(422, `Respons pasal.id tak terpetakan untuk ${frbrUri}`);
-
-    const rawArticles = (pilih<unknown[]>(obj, "articles", "pasal") ?? []) as unknown[];
-    const simpul = Array.isArray(rawArticles)
-      ? rawArticles
-          .map((a) => petakanSimpul(a as Record<string, unknown>))
-          .filter((s): s is SimpulPasal => s !== null)
-      : [];
-    const articles: Article[] = ratakanPohonPasal(simpul, law.frbr_uri);
-
-    const rawRelations =
-      (pilih<unknown[]>(obj, "relationships", "relasi", "relations", "hubungan") ?? []) as unknown[];
-    const relations = Array.isArray(rawRelations)
-      ? rawRelations
-          .map((r) => {
-            const o = r as Record<string, unknown>;
-            const to = keTeks(
-              pilih(o, "frbr_uri", "related_frbr_uri", "target_frbr_uri", "uri", "to", "target"),
-            );
-            if (!to) return null;
-            return {
-              to_uri: to,
-              jenis_relasi: petakanJenisRelasi(
-                pilih(o, "relationship_type", "type", "jenis", "relasi", "relation"),
-              ),
-              keterangan: keTeks(pilih(o, "keterangan", "note", "description", "title")),
-            };
-          })
-          .filter((r): r is NonNullable<typeof r> => r !== null)
-      : [];
-
-    return { law: { ...law, jumlah_pasal: articles.length }, articles, relations };
+  async getLaw(frbrUri: string): Promise<DetailPeraturan> {
+    return uraiDetail(await this.requestDetail(frbrUri));
   }
+
+  /**
+   * Respons detail apa adanya, tanpa pemetaan. Pemanggil mengarsipkannya (R2) sebelum menguraikannya dengan
+   * `uraiDetail`, supaya perbaikan pengurai kelak cukup menguraikan ulang arsip tanpa menghubungi pasal.id lagi:
+   * jatah permintaan pasal.id-lah yang membatasi seluruh pipeline, bukan pengolahan di Worker.
+   */
+  async getLawMentah(frbrUri: string): Promise<unknown> {
+    return this.requestDetail(frbrUri);
+  }
+}
+
+/** Hasil penguraian respons detail `/laws/<uri>`. */
+export interface DetailPeraturan {
+  law: Law;
+  articles: Article[];
+  relations: Array<{ to_uri: string; jenis_relasi: string; keterangan: string | null }>;
+  /** Nilai `detail_access` pada respons (diagnosis tingkat akses), null bila tak ada. */
+  akses: string | null;
+  /** `content_verified` pada objek `work`, bila ada. */
+  terverifikasi: boolean | null;
+  /** Ringkasan struktur pohon ("120 simpul: pasal 40, ayat 55; 12 berisi; 0 yatim"), untuk catatan bila hasilnya janggal. */
+  pohon: string;
+}
+
+/** `detail_access` bisa berupa teks atau objek; hasilnya teks pendek. */
+function aksesKeTeks(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "string") return v.slice(0, 200) || null;
+  try {
+    return JSON.stringify(v).slice(0, 200);
+  } catch {
+    return null;
+  }
+}
+
+/** Satu baris tentang bentuk pohon: berapa simpul, tipe apa, berapa yang berisi, berapa yang yatim. */
+function ringkasPohon(simpul: SimpulPasal[]): string {
+  const idAda = new Set(simpul.map((s) => s.id));
+  const tipe = new Map<string, number>();
+  for (const s of simpul) tipe.set(s.type || "?", (tipe.get(s.type || "?") ?? 0) + 1);
+  const rincian = [...tipe.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([t, n]) => `${t} ${n}`).join(", ");
+  const berisi = simpul.filter((s) => s.content && s.content.trim()).length;
+  const yatim = simpul.filter((s) => s.parent_id !== null && !idAda.has(s.parent_id)).length;
+  return `${simpul.length} simpul${rincian ? `: ${rincian}` : ""}; ${berisi} berisi; ${yatim} yatim`;
+}
+
+/**
+ * Uraikan respons detail pasal.id menjadi peraturan, pasal, dan relasi. Murni (tanpa jaringan), sehingga arsip
+ * respons di R2 bisa diuraikan ulang kapan saja dengan versi pengurai yang terbaru.
+ */
+export function uraiDetail(json: unknown): DetailPeraturan {
+  const obj = (typeof json === "object" && json !== null ? json : {}) as Record<string, unknown>;
+  const inti = (obj.work ?? obj.data ?? obj.law ?? obj) as Record<string, unknown>;
+
+  const law = petakanLaw(inti);
+  if (!law) throw new PasalApiError(422, "Respons pasal.id tak terpetakan");
+
+  const rawArticles = (pilih<unknown[]>(obj, "articles", "pasal") ?? []) as unknown[];
+  const simpul = Array.isArray(rawArticles)
+    ? rawArticles
+        .map((a) => petakanSimpul(a as Record<string, unknown>))
+        .filter((s): s is SimpulPasal => s !== null)
+    : [];
+  const articles: Article[] = ratakanPohonPasal(simpul, law.frbr_uri);
+
+  const rawRelations =
+    (pilih<unknown[]>(obj, "relationships", "relasi", "relations", "hubungan") ?? []) as unknown[];
+  const relations = Array.isArray(rawRelations)
+    ? rawRelations
+        .map((r) => {
+          const o = r as Record<string, unknown>;
+          const to = keTeks(
+            pilih(o, "frbr_uri", "related_frbr_uri", "target_frbr_uri", "uri", "to", "target"),
+          );
+          if (!to) return null;
+          return {
+            to_uri: to,
+            jenis_relasi: petakanJenisRelasi(
+              pilih(o, "relationship_type", "type", "jenis", "relasi", "relation"),
+            ),
+            keterangan: keTeks(pilih(o, "keterangan", "note", "description", "title")),
+          };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null)
+    : [];
+
+  return {
+    law: { ...law, jumlah_pasal: articles.length },
+    articles,
+    relations,
+    akses: aksesKeTeks(obj.detail_access),
+    terverifikasi: keBendera(inti.content_verified),
+    pohon: ringkasPohon(simpul),
+  };
 }
 
 /** Bangun URL sumber resmi di BPK — situsnya tidak di-scrape, hanya ditautkan. */

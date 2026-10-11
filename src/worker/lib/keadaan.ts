@@ -89,3 +89,53 @@ export async function catatDenyut(db: D1Database, cron: string, sekarang = Date.
     .bind(`denyut:${cron}`, new Date(sekarang).toISOString(), new Date(sekarang - selangMs).toISOString())
     .run();
 }
+
+/**
+ * Catat satu baris sync_log paling sering sekali tiap `selangMs` untuk `job`. Tik berjalan tiap menit dan kerap
+ * mengulang peristiwa yang sama (kena batas laju, peraturan terisi); satu baris per tik akan menenggelamkan log.
+ * Mengembalikan apakah barisnya ditulis.
+ */
+export async function catatLogBerjeda(
+  db: D1Database,
+  job: string,
+  status: "sukses" | "gagal",
+  detail: string,
+  jumlah: number,
+  selangMs: number,
+  sekarang = Date.now(),
+): Promise<boolean> {
+  const hasil = await db
+    .prepare(
+      `INSERT INTO sync_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+           WHERE sync_state.value < ?`,
+    )
+    .bind(`log:${job}:${status}`, new Date(sekarang).toISOString(), new Date(sekarang - selangMs).toISOString())
+    .run();
+  if (!(hasil.meta?.changes ?? 0)) return false;
+  await db
+    .prepare(`INSERT INTO sync_log (job, status, detail, jumlah) VALUES (?, ?, ?, ?)`)
+    .bind(job, status, detail, jumlah)
+    .run()
+    .catch(() => {});
+  return true;
+}
+
+/**
+ * Tambahkan hitungan ke statistik harian ("statistik:YYYY-MM-DD", JSON nama -> jumlah). Dipakai halaman status untuk
+ * menunjukkan laju sebenarnya (berapa detail terambil hari ini, berapa kali kena batas laju). Hanya ditulis bila ada
+ * yang bertambah. Dipanggil di dalam pinjaman tik, jadi baca-ubah-tulis tak berebut dengan eksekusi lain.
+ */
+export async function tambahStatistik(db: D1Database, hari: string, tambahan: Record<string, number>): Promise<void> {
+  const naik = Object.entries(tambahan).filter(([, n]) => n > 0);
+  if (!naik.length) return;
+  const kunci = `statistik:${hari}`;
+  let sekarang: Record<string, number> = {};
+  try {
+    sekarang = JSON.parse((await bacaState(db, kunci)) ?? "{}") as Record<string, number>;
+  } catch {
+    sekarang = {};
+  }
+  for (const [nama, n] of naik) sekarang[nama] = (sekarang[nama] ?? 0) + n;
+  await tulisState(db, kunci, JSON.stringify(sekarang));
+}

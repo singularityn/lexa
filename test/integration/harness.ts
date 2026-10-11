@@ -232,11 +232,17 @@ export class R2Palsu {
 
 export class AntreanPalsu {
   readonly pesan: unknown[] = [];
-  async send(badan: unknown): Promise<void> {
+  /** Setiap pengiriman beserta opsinya (mis. delaySeconds), berurutan. */
+  readonly dikirim: Array<{ badan: unknown; opsi?: { delaySeconds?: number } }> = [];
+  async send(badan: unknown, opsi?: { delaySeconds?: number }): Promise<void> {
     this.pesan.push(badan);
+    this.dikirim.push({ badan, opsi });
   }
   async sendBatch(daftar: Array<{ body: unknown }>): Promise<void> {
-    for (const d of daftar) this.pesan.push(d.body);
+    for (const d of daftar) {
+      this.pesan.push(d.body);
+      this.dikirim.push({ badan: d.body });
+    }
   }
   /** Ambil dan kosongkan antrean (meniru pengiriman ke konsumer). */
   kuras(): unknown[] {
@@ -570,12 +576,14 @@ export async function sisipkan(l: Lingkungan, daftar: PeraturanUji[]): Promise<v
   for (const p of daftar) {
     await l.db
       .prepare(
-        `INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, tentang, status, instansi, bidang, bpk_id, jumlah_pasal)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, tentang, status, instansi, bidang, bpk_id, jumlah_pasal, isi_status)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .bind(
         p.uri, p.jenis, p.nomor, p.tahun, p.judul, p.tentang ?? null, p.status ?? "berlaku",
         p.instansi ?? null, p.bidang ?? null, p.bpkId ?? null, p.pasal?.length ?? 0,
+        // Seperti hasil pengambilan isi: yang punya pasal lengkap, yang tidak masih menunggu.
+        p.pasal?.length ? "lengkap" : "menunggu",
       )
       .run();
     for (const [i, a] of (p.pasal ?? []).entries()) {

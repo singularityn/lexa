@@ -2,7 +2,7 @@
  * Endpoint admin (dijaga header x-admin-token), diagnosis token, dan laporan
  * kesalahan dari pengguna.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buatLingkungan, json, kirim, KORPUS, panggil, sisipkan, sqliteAda, TOKEN_ADMIN, type Lingkungan,
 } from "./harness";
@@ -15,7 +15,10 @@ describe.skipIf(!sqliteAda)("admin dan laporan", () => {
     l = buatLingkungan();
     await sisipkan(l, KORPUS);
   });
-  afterEach(() => l.tutup());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    l.tutup();
+  });
 
   describe("pagar token", () => {
     const terlindungi: Array<[string, string, RequestInit?]> = [
@@ -127,10 +130,51 @@ describe.skipIf(!sqliteAda)("admin dan laporan", () => {
       expect(await res.json()).toMatchObject({ error: "token_belum_diatur" });
     });
 
-    it("{uri} mengantrekan satu peraturan secara manual", async () => {
-      const res = await sync({ uri: "/akn/id/act/uu/1999/8" });
-      expect(await res.json()).toEqual({ status: "diantrekan", uri: "/akn/id/act/uu/1999/8" });
-      expect(l.antrean.pesan).toEqual([{ tipe: "peraturan", frbr_uri: "/akn/id/act/uu/1999/8", alasan: "manual" }]);
+    it("{uri} mendahulukan peraturan yang sudah ada di katalog: giliran nol, percobaan diulang dari awal", async () => {
+      await l.db.prepare(`UPDATE laws SET isi_status = 'gagal', isi_percobaan = 5, isi_giliran = 3000000000 WHERE frbr_uri = ?`).bind("/akn/id/act/uu/2003/13").run();
+      const res = await sync({ uri: "/akn/id/act/uu/2003/13" });
+      expect(await res.json()).toEqual({ status: "didahulukan", uri: "/akn/id/act/uu/2003/13" });
+      expect(await l.db.prepare(`SELECT isi_status, isi_percobaan, isi_giliran FROM laws WHERE frbr_uri = ?`).bind("/akn/id/act/uu/2003/13").first()).toEqual({
+        isi_status: "menunggu", isi_percobaan: 0, isi_giliran: 0,
+      });
+      expect(l.antrean.pesan).toEqual([]); // tidak lagi lewat antrean: tik yang mengambilnya, dengan jeda yang dipatuhi
+    });
+
+    it("{uri} untuk peraturan yang belum ada di D1 mengambilnya sekarang dan menyimpannya", async () => {
+      const uri = "/akn/id/act/uu/1999/8";
+      vi.stubGlobal("fetch", async () => Response.json({
+        work: { id: 8, frbr_uri: uri, title: "Perlindungan Konsumen", type: "UU", number: "8", year: 1999, status: "berlaku" },
+        articles: [{ id: 1, type: "pasal", number: "1", content: "Konsumen adalah setiap orang pemakai barang." }],
+        relationships: [],
+      }));
+      const res = await sync({ uri });
+      expect(await res.json()).toEqual({ status: "disimpan", uri, pasal: 1, isi_status: "lengkap" });
+      expect(await l.db.prepare(`SELECT judul, jumlah_pasal, isi_status, isi_arsip FROM laws WHERE frbr_uri = ?`).bind(uri).first()).toEqual({
+        judul: "Perlindungan Konsumen", jumlah_pasal: 1, isi_status: "lengkap", isi_arsip: 1,
+      });
+      expect(l.antrean.pesan).toEqual([{ tipe: "indeks_vektor", frbr_uri: uri }]);
+    });
+
+    it("{tik} menjalankan satu tik sekarang dan mengembalikan laporannya", async () => {
+      vi.stubGlobal("fetch", async () => Response.json({ laws: [], total: 0 }));
+      const b = await json<{ status: string; laporan: Record<string, unknown> }>(await sync({ tik: true }));
+      expect(b.status).toBe("selesai");
+      expect(b.laporan).toBeTypeOf("object");
+    });
+
+    it("{ulang_arsip} mengantrekan ulang hanya peraturan yang responsnya sudah diarsipkan", async () => {
+      await l.db.prepare(`UPDATE laws SET isi_status = 'lengkap', isi_arsip = 1 WHERE frbr_uri = ?`).bind("/akn/id/act/uu/2003/13").run();
+      await l.db.prepare(`UPDATE laws SET isi_status = 'lengkap', isi_arsip = 0 WHERE frbr_uri = ?`).bind("/akn/id/act/pp/2021/35").run();
+      const b = await json<{ status: string; peraturan: number }>(await sync({ ulang_arsip: true }));
+      expect(b).toEqual({ status: "dijadwalkan", peraturan: 1 });
+      expect(await l.db.prepare(`SELECT frbr_uri, isi_status FROM laws WHERE isi_status = 'menunggu' AND isi_arsip = 1`).all()).toMatchObject({ results: [{ frbr_uri: "/akn/id/act/uu/2003/13", isi_status: "menunggu" }] });
+    });
+
+    it("{jenis} memulai sapuan katalog ulang untuk jenis itu: tanda selesai dan kursornya dihapus", async () => {
+      await l.db.prepare(`INSERT INTO sync_state (key, value) VALUES ('katalog_selesai:UU', 'x'), ('katalog_offset:UU', '200'), ('katalog_selesai:PP', 'y')`).run();
+      const b = await json<{ status: string; jenis: string[] }>(await sync({ jenis: ["UU"] }));
+      expect(b).toEqual({ status: "dijadwalkan", jenis: ["UU"] });
+      expect((await l.db.prepare(`SELECT key FROM sync_state ORDER BY key`).all()).results).toEqual([{ key: "katalog_selesai:PP" }]);
     });
 
     it("{ringkas_kosong} hanya mengantrekan peraturan yang punya isi tetapi belum punya ringkasan", async () => {
@@ -145,15 +189,20 @@ describe.skipIf(!sqliteAda)("admin dan laporan", () => {
       expect(log.results).toEqual([{ job: "ringkas", status: "sukses", jumlah: 2 }]);
     });
 
-    it("{perbaiki_celah} mengantrekan ulang peraturan yang nomor pasalnya bercelah, terparah dulu", async () => {
+    it("{perbaiki_celah} mendahulukan pengambilan ulang peraturan yang nomor pasalnya bercelah, terparah dulu", async () => {
       // UU 13/2003 hanya punya Pasal 82 dan 156 (156 - 2 = 154 celah); PP 35/2021 hanya Pasal 40 (39 celah).
       // UU 11/2020 dan UU 6/2023 hanya punya Pasal 1: tidak bercelah.
+      await l.db.prepare(`UPDATE laws SET isi_status = 'lengkap', isi_arsip = 1`).run();
       const b = await json<{ peraturan: number; perkiraan_pasal_hilang: number }>(await sync({ perbaiki_celah: true }));
-      expect(b).toMatchObject({ status: "diantrekan", peraturan: 2, perkiraan_pasal_hilang: 193 });
-      expect(l.antrean.pesan).toEqual([
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/uu/2003/13", alasan: "manual" },
-        { tipe: "peraturan", frbr_uri: "/akn/id/act/pp/2021/35", alasan: "manual" },
-      ]);
+      expect(b).toMatchObject({ status: "didahulukan", peraturan: 2, perkiraan_pasal_hilang: 193 });
+      // Antreannya: terparah dulu, dan arsipnya dilepas karena arsip yang sama akan menghasilkan celah yang sama.
+      expect(await l.db.prepare(`SELECT frbr_uri, isi_giliran, isi_arsip FROM laws WHERE isi_status = 'menunggu' ORDER BY isi_giliran`).all()).toMatchObject({
+        results: [
+          { frbr_uri: "/akn/id/act/uu/2003/13", isi_giliran: 1_000_000, isi_arsip: 0 },
+          { frbr_uri: "/akn/id/act/pp/2021/35", isi_giliran: 1_000_001, isi_arsip: 0 },
+        ],
+      });
+      expect(l.antrean.pesan).toEqual([]);
       const log = await l.db.prepare(`SELECT job, detail, jumlah FROM sync_log`).all();
       expect(log.results).toEqual([{ job: "perbaiki_celah", detail: "perkiraan 193 pasal hilang", jumlah: 2 }]);
     });

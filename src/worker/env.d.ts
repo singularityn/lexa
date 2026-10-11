@@ -38,6 +38,11 @@ interface Env {
    * Tak ada atau tak sah: `CAKUPAN_BAWAAN` di shared/cakupan.ts. Lihat berkas itu.
    */
   CAKUPAN_JENIS?: string;
+  /**
+   * "antrean": bila Cron per menit tak berjalan (tak ada denyutnya di sync_state), tik dijalankan oleh rantai pesan di
+   * antrean ingest, disemai pemicu harian dan permintaan HTTP. Lihat lib/cadangan.ts. Kosong: tanpa cadangan.
+   */
+  TIK_CADANGAN?: string;
 
   // --- Secret (dipasang lewat `wrangler secret put`) ---
   ADMIN_TOKEN: string;

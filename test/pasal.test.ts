@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  keBendera,
   PasalApiError,
   PasalClient,
   PasalRateLimitError,
@@ -7,6 +8,7 @@ import {
   petakanLaw,
   petakanSimpul,
   ratakanPohonPasal,
+  uraiDetail,
   urlBpk,
   type SimpulPasal,
 } from "../src/worker/lib/pasal";
@@ -295,5 +297,131 @@ describe("urlBpk", () => {
 
   it("mengembalikan null bila ID BPK tidak diketahui", () => {
     expect(urlBpk("https://peraturan.bpk.go.id", null)).toBeNull();
+  });
+});
+
+describe("ratakanPohonPasal: bentuk pohon yang dulu menghilangkan isi", () => {
+  const URI = "/akn/id/act/uu/2023/17";
+
+  it("pasal yatim (induknya tak ada di respons) diperlakukan sebagai akar, bukan dibuang diam-diam", () => {
+    const baris = ratakanPohonPasal(
+      [
+        simpul({ id: 3, type: "ayat", number: "1", content: "Ayat yatim tanpa pasal.", parent_id: 998, sort_order: 0 }),
+        simpul({ id: 1, type: "pasal", number: "1", content: "Pasal satu.", sort_order: 1 }),
+        simpul({ id: 2, type: "pasal", number: "2", content: "Pasal dua yatim.", parent_id: 999, sort_order: 2 }),
+      ],
+      URI,
+    );
+    // Ayat yatim yang tak punya pasal di depannya tetap tak punya tempat; pasal yatim kini terambil.
+    expect(baris.map((b) => [b.nomor_pasal, b.isi])).toEqual([["1", "Pasal satu."], ["2", "Pasal dua yatim."]]);
+  });
+
+  it("ayat yatim yang jatuh sesudah sebuah pasal dipasang ke pasal itu", () => {
+    const baris = ratakanPohonPasal(
+      [
+        simpul({ id: 1, type: "pasal", number: "1", content: "Pengantar.", sort_order: 1 }),
+        simpul({ id: 2, type: "ayat", number: "1", content: "Ayat yatim.", parent_id: 998, sort_order: 2 }),
+      ],
+      URI,
+    );
+    expect(baris.map((b) => [b.nomor_pasal, b.ayat, b.isi])).toEqual([["1", "1", "Pengantar.\nAyat yatim."]]);
+  });
+
+  it("ayat yang bersaudara dengan pasalnya (sama-sama anak bab) dipasang ke pasal di depannya", () => {
+    const baris = ratakanPohonPasal(
+      [
+        simpul({ id: 1, type: "bab", number: "I", heading: "KETENTUAN UMUM", sort_order: 1 }),
+        simpul({ id: 2, type: "pasal", number: "4", parent_id: 1, sort_order: 10 }),
+        simpul({ id: 3, type: "ayat", number: "1", content: "Setiap orang berhak.", parent_id: 1, sort_order: 11 }),
+        simpul({ id: 4, type: "ayat", number: "2", content: "Hak dilaksanakan.", parent_id: 1, sort_order: 12 }),
+        simpul({ id: 5, type: "pasal", number: "5", content: "Pasal tunggal.", parent_id: 1, sort_order: 20 }),
+      ],
+      URI,
+    );
+    expect(baris.map((b) => [b.nomor_pasal, b.ayat, b.isi, b.bab])).toEqual([
+      ["4", "1", "Setiap orang berhak.", "BAB I KETENTUAN UMUM"],
+      ["4", "2", "Hak dilaksanakan.", "BAB I KETENTUAN UMUM"],
+      ["5", null, "Pasal tunggal.", "BAB I KETENTUAN UMUM"],
+    ]);
+  });
+
+  it("butir (huruf) yang menyusul ayat bersaudara ikut ke ayat itu, dan yang menyusul pasal tanpa ayat ikut ke pasalnya", () => {
+    const baris = ratakanPohonPasal(
+      [
+        simpul({ id: 1, type: "pasal", number: "1", content: "Pengantar:", sort_order: 1 }),
+        simpul({ id: 2, type: "huruf", number: "a", content: "butir satu;", sort_order: 2 }),
+        simpul({ id: 3, type: "huruf", number: "b", content: "butir dua.", sort_order: 3 }),
+        simpul({ id: 4, type: "pasal", number: "2", sort_order: 4 }),
+        simpul({ id: 5, type: "ayat", number: "1", content: "Ayat pasal dua:", sort_order: 5 }),
+        simpul({ id: 6, type: "huruf", number: "a", content: "rincian ayat.", sort_order: 6 }),
+      ],
+      URI,
+    );
+    expect(baris[0].isi).toBe("Pengantar:\n(a) butir satu;\n(b) butir dua.");
+    expect(baris[1]).toMatchObject({ nomor_pasal: "2", ayat: "1", isi: "Ayat pasal dua:\n(a) rincian ayat." });
+  });
+
+  it("tipe lain di tingkat atas (menimbang, mengingat) tidak diseret ke pasal di depannya", () => {
+    const baris = ratakanPohonPasal(
+      [
+        simpul({ id: 1, type: "pasal", number: "1", content: "Pasal satu.", sort_order: 1 }),
+        simpul({ id: 2, type: "penutup", content: "Ditetapkan di Jakarta.", sort_order: 2 }),
+      ],
+      URI,
+    );
+    expect(baris).toHaveLength(1);
+    expect(baris[0].isi).toBe("Pasal satu.");
+  });
+
+  it("pohon yang bersarang benar tidak berubah", () => {
+    const baris = ratakanPohonPasal(
+      [
+        simpul({ id: 1, type: "pasal", number: "1", sort_order: 1 }),
+        simpul({ id: 2, type: "ayat", number: "1", content: "A.", parent_id: 1, sort_order: 2 }),
+        simpul({ id: 3, type: "ayat", number: "2", content: "B.", parent_id: 1, sort_order: 3 }),
+      ],
+      URI,
+    );
+    expect(baris.map((b) => [b.nomor_pasal, b.ayat, b.isi])).toEqual([["1", "1", "A."], ["1", "2", "B."]]);
+  });
+});
+
+describe("uraiDetail", () => {
+  const mentah = {
+    work: { id: 7, frbr_uri: "/akn/id/act/uu/2023/17", title: "Kesehatan", type: "UU", number: "17", year: 2023, status: "berlaku", content_verified: true },
+    detail_access: { tier: "free", partial: true },
+    articles: [
+      { id: 1, type: "pasal", number: "1", content: "Pasal satu.", sort_order: 1 },
+      { id: 2, type: "pasal", number: "2", content: "Yatim.", parent_id: 555, sort_order: 2 },
+    ],
+    relationships: [{ frbr_uri: "/akn/id/act/uu/2009/36", relationship_type: "Mencabut" }],
+  };
+
+  it("memetakan peraturan, pasal, relasi, tingkat akses, bendera verifikasi, dan ringkasan pohon", () => {
+    const d = uraiDetail(mentah);
+    expect(d.law).toMatchObject({ frbr_uri: "/akn/id/act/uu/2023/17", judul: "Kesehatan", jenis: "UU", jumlah_pasal: 2 });
+    expect(d.articles.map((a) => a.nomor_pasal)).toEqual(["1", "2"]);
+    expect(d.relations).toEqual([{ to_uri: "/akn/id/act/uu/2009/36", jenis_relasi: "mencabut", keterangan: null }]);
+    expect(d.akses).toBe('{"tier":"free","partial":true}');
+    expect(d.terverifikasi).toBe(true);
+    expect(d.pohon).toBe("2 simpul: pasal 2; 2 berisi; 1 yatim");
+  });
+
+  it("respons yang tak terpetakan melempar PasalApiError 422 (tanpa menyimpan setengah data)", () => {
+    expect(() => uraiDetail({ work: { frbr_uri: "/akn/id/act/uu/2023/17" } })).toThrow(PasalApiError);
+    expect(() => uraiDetail(null)).toThrow(PasalApiError);
+  });
+
+  it("detail_access teks dibawa apa adanya, dan yang tak ada menjadi null", () => {
+    expect(uraiDetail({ ...mentah, detail_access: "full" }).akses).toBe("full");
+    expect(uraiDetail({ ...mentah, detail_access: undefined }).akses).toBeNull();
+  });
+});
+
+describe("keBendera", () => {
+  it("membaca true/false, 1/0, dan 'true'/'false'; selain itu tidak diketahui", () => {
+    for (const v of [true, 1, "1", "true"]) expect(keBendera(v), String(v)).toBe(true);
+    for (const v of [false, 0, "0", "false"]) expect(keBendera(v), String(v)).toBe(false);
+    for (const v of [undefined, null, "", "ya", 2, {}]) expect(keBendera(v), String(v)).toBeNull();
   });
 });

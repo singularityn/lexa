@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buatLingkungan, CRON_HARIAN, CRON_MENIT, jalankanCron, konteksIngestUji, sqliteAda, type Lingkungan,
 } from "./harness";
+import { tanamKatalogSelesai } from "./tik-bantu";
 import { PasalClient } from "../../src/worker/lib/pasal";
 import { jalankanTik } from "../../src/worker/lib/tik";
 import { KUNCI_DIAG, PEMERIKSAAN } from "../../src/worker/lib/diagnosa";
@@ -17,10 +18,12 @@ describe.skipIf(!sqliteAda)("tik (Cron per menit)", () => {
   let l: Lingkungan;
   let panggilanPasal: URL[];
 
-  beforeEach(() => {
+  beforeEach(async () => {
     l = buatLingkungan();
     panggilanPasal = [];
     (PasalClient as unknown as { bentukDetail: string | null }).bentukDetail = null;
+    // Katalog dianggap baru selesai disapu: tes di sini menguji daftar hapus, diagnosis, jeda, dan pinjaman, bukan katalog.
+    await tanamKatalogSelesai(l, WAKTU);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -76,14 +79,16 @@ describe.skipIf(!sqliteAda)("tik (Cron per menit)", () => {
       expect(panggilanPasal).toEqual([]);
     });
 
-    it("pemicu per menit di Worker menjalankan tik, bukan sapuan harian", async () => {
+    it("pemicu per menit di Worker menjalankan tik; pemicu harian menjalankan pemeliharaan, bukan tik", async () => {
       stubPasal();
       await tanamSemuaDiagnosa();
       await tanamTandaHapus("r2", ["teks/a.txt"]);
       await l.r2.put("teks/a.txt", "isi");
+      await jalankanCron(l, CRON_HARIAN);
+      expect(l.r2.objek.has("teks/a.txt")).toBe(true); // pemeliharaan tidak mengosongkan daftar hapus
       await jalankanCron(l, CRON_MENIT);
       expect(l.r2.objek.has("teks/a.txt")).toBe(false);
-      expect(panggilanPasal).toEqual([]); // sapuan harian akan menghubungi /laws untuk tiap jenis
+      expect(panggilanPasal).toEqual([]);
     });
   });
 

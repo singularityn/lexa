@@ -1,41 +1,29 @@
 /**
  * Pipeline ingest: pasal.id -> D1 -> Vectorize/R2.
  *
- * Dipecah menjadi dua tahap yang berkomunikasi lewat Queue:
- *   1. `jadwalkanSinkronisasi` (dipicu Cron) — hanya menarik *daftar* peraturan
- *      yang berubah lalu menitipkan tiap URI ke antrean.
- *   2. `prosesPesanIngest` (konsumer antrean) — menarik detail satu peraturan,
- *      menyimpannya, lalu mengindeks ke Vectorize.
- *
- * Pemisahan ini disengaja: rate limit pasal.id untuk endpoint detail hanya
- * 60/menit. Kalau semuanya dikerjakan di dalam satu invokasi Cron, satu batch
- * besar pasti kena 429 dan kehilangan progres. Dengan antrean, `max_concurrency`
- * dan retry bawaan Queues yang menahan laju, dan kegagalan satu dokumen tidak
- * menjatuhkan seluruh sinkronisasi.
+ * Bagian yang bergantung pada laju pasal.id (daftar peraturan dan detail) kini dikerjakan tik (lib/tik.ts,
+ * lib/katalog.ts, lib/isi.ts) dengan status per peraturan di D1 dan jeda yang dipatuhi. Yang tersisa di sini
+ * dikerjakan konsumer antrean Cloudflare Queues, karena tak menyentuh pasal.id dan aman diulang:
+ *   - `indeks_vektor` : embedding semua pasal sebuah peraturan lalu upsert ke Vectorize (Workers AI);
+ *   - `ringkas`       : ringkasan AI sebuah peraturan;
+ *   - `ekstrak_pdf`   : PDF dari impor BPK -> pasal terstruktur.
+ * Pesan `peraturan` dari alur lama (daftar yang mengantrekan tiap peraturan) tidak lagi dibuat; sisa yang masih di
+ * antrean dibuang tanpa menyentuh pasal.id, karena katalog menemukan ulang semuanya.
  */
 
-import type { Article, Law } from "../../shared/types";
 import { labelSitasi } from "../../shared/label";
-import { dalamCakupan, klausaCakupan, uriJelasDiLuarCakupan, type Cakupan } from "../../shared/cakupan";
-import { PasalClient, PasalRateLimitError } from "./pasal";
+import { dalamCakupan, uriJelasDiLuarCakupan, type Cakupan } from "../../shared/cakupan";
+import type { PasalClient } from "./pasal";
 import { uraikanPasal, idPasalUnik, nilaiKualitasEkstraksi, type LaporanKualitas } from "./bpk";
 
 export type PesanIngest =
-  | {
-      tipe: "peraturan";
-      frbr_uri: string;
-      alasan: "baru" | "perubahan" | "manual";
-      /** Id internal pasal.id, bila diketahui dari hasil pendaftaran. */
-      pasal_id?: number;
-      /**
-       * Kode jenis dari daftar pasal.id (diisi Cron). Konsumer memakainya untuk membuang peraturan di luar cakupan
-       * tanpa memanggil pasal.id; pesan tanpa ini (lama, atau dari sapuan manual per URI) dinilai dari URI-nya.
-       */
-      jenis?: string;
-    }
+  /** Alur lama (tidak lagi dibuat); sisa di antrean dibuang. Lihat komentar di atas. */
+  | { tipe: "peraturan"; frbr_uri: string; alasan?: string; pasal_id?: number; jenis?: string }
   | { tipe: "indeks_vektor"; frbr_uri: string }
   | { tipe: "ekstrak_pdf"; frbr_uri: string; r2_key: string }
-  | { tipe: "ringkas"; frbr_uri: string };
+  | { tipe: "ringkas"; frbr_uri: string }
+  /** Satu tik pekerjaan latar; rantai cadangan bila Cron per menit tak berjalan (lib/cadangan.ts). */
+  | { tipe: "tik"; g?: number };
 
 /** Ukuran potongan teks untuk embedding. bge-m3 kuat di teks pendek-menengah. */
 const MAKS_KARAKTER_CHUNK = 1200;
@@ -69,256 +57,6 @@ async function catatLog(
     .bind(job, status, detail, jumlah, durasiMs ?? null)
     .run()
     .catch(() => {});
-}
-
-async function bacaState(db: D1Database, key: string): Promise<string | null> {
-  const row = await db
-    .prepare(`SELECT value FROM sync_state WHERE key = ?`)
-    .bind(key)
-    .first<{ value: string }>();
-  return row?.value ?? null;
-}
-
-async function tulisState(db: D1Database, key: string, value: string) {
-  await db
-    .prepare(
-      `INSERT INTO sync_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    )
-    .bind(key, value)
-    .run();
-}
-
-/**
- * Jenis yang dikenal sebagai filter `type` pada `GET /laws` pasal.id (terbukti di produksi), diurutkan dari yang
- * paling sering dicari. Cron hanya menyapu irisannya dengan cakupan (shared/cakupan.ts). UUD dan TAP_MPR tidak ada
- * di daftar ini karena kode filternya belum terbukti: keduanya masuk lewat impor BPK, dan sapuan manual
- * (`POST /api/admin/sync {"jenis":["UUD"]}`) boleh mencobanya.
- */
-const JENIS_PRIORITAS = ["UU", "PERPPU", "PP", "PERPRES", "PERMEN", "POJK", "PBI"];
-
-/**
- * Tahap 1 — dijalankan Cron.
- * Menyapu daftar peraturan per jenis (hanya yang dalam cakupan) dan mengantrekan yang baru/berubah.
- */
-export async function jadwalkanSinkronisasi(
-  ctx: KonteksIngest,
-  opsi: { jenis?: string[]; maksHalaman?: number } = {},
-): Promise<{ diantrekan: number; diperiksa: number }> {
-  const mulai = Date.now();
-  const maksHalaman = opsi.maksHalaman ?? 4; // 4 x 50 = 200 dokumen per jenis per jalan
-  const UKURAN = 50;
-
-  // Jenis di luar cakupan tidak pernah ditarik, juga bila diminta lewat sapuan manual.
-  const jenisCron = JENIS_PRIORITAS.filter((j) => dalamCakupan(ctx.cakupan, j));
-  const jenisManual = opsi.jenis?.filter((j) => dalamCakupan(ctx.cakupan, j));
-
-  // Urutan jenis diputar agar tidak ada yang kelaparan. Dengan urutan tetap, satu jenis di depan
-  // yang selalu kena batas laju (di produksi: PERPRES, setelah ±12 permintaan) menghentikan
-  // seluruh sapuan sebelum jenis di belakangnya sempat disentuh: kursor PERMEN, POJK, dan PBI
-  // tidak bergerak sejak 2 Sep 2026. Kini sapuan berikutnya dimulai dari jenis tempat sapuan
-  // sebelumnya terhenti, dan kembali ke awal hanya setelah satu putaran penuh selesai.
-  // Sapuan manual untuk jenis tertentu (opsi.jenis) tidak memutar apa pun.
-  const putar = !opsi.jenis;
-  let daftarJenis = jenisManual ?? jenisCron;
-  if (putar) {
-    const i = jenisCron.indexOf((await bacaState(ctx.db, "jenis_awal")) ?? "");
-    if (i > 0) daftarJenis = [...jenisCron.slice(i), ...jenisCron.slice(0, i)];
-  }
-  if (!daftarJenis.length) {
-    await catatLog(ctx.db, "jadwal_sinkronisasi", "gagal", "dilewati: tidak ada jenis dalam cakupan yang diminta", 0);
-    return { diantrekan: 0, diperiksa: 0 };
-  }
-
-  // Tekanan balik. Kapasitas nyata pipeline dibatasi rate limit pasal.id
-  // (360 detail/jam), sedangkan satu kali penjadwalan bisa mengantrekan lebih
-  // dari seribu pesan. Menjalankannya berulang tanpa memeriksa sisa pekerjaan
-  // menumpuk antrean sampai pesan kehabisan jatah retry dan terbuang ke
-  // dead-letter queue — kehilangan yang tidak terlihat di mana pun.
-  //
-  // Peraturan dengan `jumlah_pasal = 0` adalah yang metadatanya sudah masuk
-  // tetapi isinya belum, jadi ia menjadi ukuran kasar antrean yang belum tuntas.
-  // Hanya yang dalam cakupan: sisa lama di luar cakupan tidak akan pernah diisi dan tak boleh menahan sapuan.
-  const tertunda = await ctx.db
-    .prepare(`SELECT COUNT(*) AS n FROM laws WHERE jumlah_pasal = 0 AND ${klausaCakupan(ctx.cakupan, "jenis")}`)
-    .first<{ n: number }>();
-
-  const BATAS_TERTUNDA = 400;
-  if ((tertunda?.n ?? 0) > BATAS_TERTUNDA) {
-    await catatLog(
-      ctx.db, "jadwal_sinkronisasi", "gagal",
-      `dilewati: ${tertunda?.n} peraturan masih menunggu isi (batas ${BATAS_TERTUNDA})`, 0,
-    );
-    return { diantrekan: 0, diperiksa: 0 };
-  }
-
-  await catatLog(ctx.db, "jadwal_sinkronisasi", "mulai", daftarJenis.join(","));
-
-  let diantrekan = 0;
-  let diperiksa = 0;
-  const antrean: PesanIngest[] = [];
-  /** Kursor yang baru ditulis SETELAH pesannya masuk antrean, bukan sebelum. */
-  const kursorBaru = new Map<string, string>();
-
-  // Queues menerima maksimal 100 pesan per panggilan sendBatch.
-  const kirimAntrean = async () => {
-    for (let i = 0; i < antrean.length; i += 100) {
-      await ctx.queue.sendBatch(antrean.slice(i, i + 100).map((body) => ({ body })));
-    }
-    antrean.length = 0;
-  };
-  const simpanKursor = async () => {
-    for (const [kunci, nilai] of kursorBaru) await tulisState(ctx.db, kunci, nilai);
-  };
-
-  for (const jenis of daftarJenis) {
-    // Kursor menyimpan OFFSET, bukan nomor halaman: API memakai limit/offset,
-    // dan mengirim `page` hanya membuatnya diabaikan tanpa peringatan.
-    const kunciOffset = `offset:${jenis}`;
-    let offset = Number((await bacaState(ctx.db, kunciOffset)) ?? "0");
-    if (!Number.isFinite(offset) || offset < 0) offset = 0;
-
-    for (let i = 0; i < maksHalaman; i++) {
-      let hasil;
-      try {
-        hasil = await ctx.pasal.listLaws({ jenis, offset, limit: UKURAN });
-      } catch (e) {
-        if (e instanceof PasalRateLimitError) {
-          // Berhenti rapi; Cron berikutnya melanjutkan dari kursor yang sama.
-          // Pesan yang sudah terkumpul HARUS tetap dikirim: kursornya sudah maju, jadi
-          // membuangnya berarti peraturan di halaman-halaman itu terlewat sampai
-          // kursor berputar penuh.
-          kursorBaru.set(kunciOffset, String(offset));
-          if (putar) kursorBaru.set("jenis_awal", jenis);
-          await kirimAntrean();
-          await simpanKursor();
-          await catatLog(ctx.db, "jadwal_sinkronisasi", "gagal", `rate limit pada ${jenis}`, diantrekan);
-          return { diantrekan, diperiksa };
-        }
-        await catatLog(ctx.db, "jadwal_sinkronisasi", "gagal", `${jenis}: ${String(e)}`, diantrekan);
-        break;
-      }
-
-      if (!hasil.laws.length) {
-        // Habis — mulai lagi dari awal pada siklus berikutnya agar perubahan
-        // pada peraturan lama juga tertangkap.
-        kursorBaru.set(kunciOffset, "0");
-        break;
-      }
-
-      diperiksa += hasil.laws.length;
-
-      // Tanya D1 sekali untuk seluruh halaman, bukan sekali per dokumen.
-      const uriList = hasil.laws.map((l) => l.frbr_uri);
-      const { results: sudahAda } = await ctx.db
-        .prepare(
-          `SELECT frbr_uri, status, jumlah_pasal
-             FROM laws WHERE frbr_uri IN (${uriList.map(() => "?").join(",")})`,
-        )
-        .bind(...uriList)
-        .all<{ frbr_uri: string; status: string; jumlah_pasal: number }>();
-
-      const petaAda = new Map(sudahAda.map((r) => [r.frbr_uri, r]));
-
-      for (const law of hasil.laws) {
-        // Filter `type` pasal.id yang salah nama diabaikan diam-diam (lihat lib/pasal.ts), jadi daftar yang
-        // diterima tetap diperiksa: satu peraturan di luar cakupan lolos sama dengan beban yang tak diinginkan.
-        if (!dalamCakupan(ctx.cakupan, law.jenis)) continue;
-        const ada = petaAda.get(law.frbr_uri);
-        // Ambil ulang bila belum ada, statusnya berubah, atau isinya kosong
-        // (mis. ingest sebelumnya gagal di tengah jalan).
-        if (!ada || ada.status !== law.status || ada.jumlah_pasal === 0) {
-          antrean.push({
-            tipe: "peraturan",
-            frbr_uri: law.frbr_uri,
-            alasan: ada ? "perubahan" : "baru",
-            pasal_id: hasil.idNumerik.get(law.frbr_uri),
-            jenis: law.jenis,
-          });
-          diantrekan++;
-        }
-      }
-
-      // Maju dengan jumlah yang benar-benar diterima. Kalau API memaksakan
-      // limit lebih kecil dari yang diminta, offset tetap tidak melompati data.
-      offset = hasil.offsetBerikut;
-      kursorBaru.set(kunciOffset, hasil.hasMore ? String(offset) : "0");
-      if (!hasil.hasMore) break;
-    }
-  }
-
-  // Satu putaran penuh selesai tanpa kena batas laju: mulai dari awal lagi.
-  if (putar) kursorBaru.set("jenis_awal", jenisCron[0]);
-  await kirimAntrean();
-  await simpanKursor();
-
-  await catatLog(
-    ctx.db, "jadwal_sinkronisasi", "sukses",
-    `diperiksa ${diperiksa}`, diantrekan, Date.now() - mulai,
-  );
-  return { diantrekan, diperiksa };
-}
-
-/** Simpan satu peraturan beserta pasal dan relasinya, secara atomik. */
-export async function simpanPeraturan(
-  db: D1Database,
-  law: Law,
-  articles: Article[],
-  relations: Array<{ to_uri: string; jenis_relasi: string; keterangan: string | null }>,
-) {
-  const statements: D1PreparedStatement[] = [];
-
-  statements.push(
-    db
-      .prepare(
-        `INSERT INTO laws (
-           frbr_uri, jenis, nomor, tahun, judul, tentang, status,
-           tanggal_penetapan, tanggal_berlaku, instansi, bidang,
-           bpk_id, sumber_url, ringkasan, jumlah_pasal, updated_at
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
-         ON CONFLICT(frbr_uri) DO UPDATE SET
-           jenis=excluded.jenis, nomor=excluded.nomor, tahun=excluded.tahun,
-           judul=excluded.judul, tentang=excluded.tentang, status=excluded.status,
-           tanggal_penetapan=excluded.tanggal_penetapan,
-           tanggal_berlaku=excluded.tanggal_berlaku,
-           instansi=excluded.instansi, bidang=excluded.bidang,
-           bpk_id=excluded.bpk_id, sumber_url=excluded.sumber_url,
-           jumlah_pasal=excluded.jumlah_pasal, updated_at=datetime('now')`,
-      )
-      .bind(
-        law.frbr_uri, law.jenis, law.nomor, law.tahun, law.judul, law.tentang,
-        law.status, law.tanggal_penetapan, law.tanggal_berlaku, law.instansi,
-        law.bidang, law.bpk_id, law.sumber_url, law.ringkasan, articles.length,
-      ),
-  );
-
-  // Ganti total pasal: lebih sederhana dan lebih benar daripada diff, karena
-  // penomoran pasal bisa bergeser saat peraturan diubah.
-  statements.push(db.prepare(`DELETE FROM articles WHERE frbr_uri = ?`).bind(law.frbr_uri));
-  for (const a of articles) {
-    statements.push(
-      db
-        .prepare(
-          `INSERT INTO articles (id, frbr_uri, nomor_pasal, ayat, bab, bagian, judul, isi, urutan)
-           VALUES (?,?,?,?,?,?,?,?,?)`,
-        )
-        .bind(a.id, a.frbr_uri, a.nomor_pasal, a.ayat, a.bab, a.bagian, a.judul, a.isi, a.urutan),
-    );
-  }
-
-  statements.push(db.prepare(`DELETE FROM relations WHERE from_uri = ?`).bind(law.frbr_uri));
-  for (const r of relations) {
-    statements.push(
-      db
-        .prepare(
-          `INSERT OR IGNORE INTO relations (from_uri, to_uri, jenis_relasi, keterangan)
-           VALUES (?,?,?,?)`,
-        )
-        .bind(law.frbr_uri, r.to_uri, r.jenis_relasi, r.keterangan),
-    );
-  }
-
-  await db.batch(statements);
 }
 
 /** Potong teks panjang di batas kalimat agar embedding tidak terputus di tengah. */
@@ -466,7 +204,10 @@ export async function ekstrakPdf(
 ): Promise<number> {
   const mulai = Date.now();
   // Peraturan di luar cakupan tidak diekstrak (konversi PDF memakai Workers AI).
-  const baris = await ctx.db.prepare(`SELECT jenis FROM laws WHERE frbr_uri = ?`).bind(frbrUri).first<{ jenis: string }>();
+  const baris = await ctx.db
+    .prepare(`SELECT jenis, jumlah_pasal FROM laws WHERE frbr_uri = ?`)
+    .bind(frbrUri)
+    .first<{ jenis: string; jumlah_pasal: number }>();
   if (baris && !dalamCakupan(ctx.cakupan, baris.jenis)) return 0;
   const objek = await ctx.docs.get(r2Key);
   if (!objek) throw new Error(`Berkas ${r2Key} tidak ada di R2`);
@@ -528,6 +269,18 @@ export async function ekstrakPdf(
     return 0;
   }
 
+  // Hasil PDF yang lebih sedikit dari pasal yang sudah tersimpan (mis. dari pasal.id) tidak menggantikannya:
+  // pindaian yang terbaca buruk tak boleh menimpa naskah yang lebih utuh. Teks hasil konversi tetap diarsipkan di R2.
+  const lama = baris?.jumlah_pasal ?? 0;
+  if (pasal.length < lama) {
+    await catatEkstraksi(
+      ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai,
+      `dipertahankan: ${lama} pasal tersimpan lebih banyak dari ${pasal.length} hasil PDF`,
+    );
+    await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: hasil PDF ${pasal.length} pasal < ${lama} tersimpan, dipertahankan`);
+    return 0;
+  }
+
   // Id dijamin unik lebih dulu: satu tabrakan PRIMARY KEY membatalkan seluruh
   // batch, dan bersamanya seluruh pasal dokumen ini.
   const ids = idPasalUnik(frbrUri, pasal);
@@ -549,7 +302,11 @@ export async function ekstrakPdf(
 
   statements.push(
     ctx.db
-      .prepare(`UPDATE laws SET jumlah_pasal = ?, r2_text_key = ? WHERE frbr_uri = ?`)
+      .prepare(
+        `UPDATE laws SET jumlah_pasal = ?, r2_text_key = ?, isi_status = 'lengkap', isi_percobaan = 0,
+                         isi_diambil_at = datetime('now'), isi_catatan = NULL
+          WHERE frbr_uri = ?`,
+      )
       .bind(pasal.length, kunciTeks, frbrUri),
   );
 
@@ -638,21 +395,23 @@ export async function buatRingkasan(ctx: KonteksIngest, frbrUri: string): Promis
   return true;
 }
 
-/** Tahap 2 — konsumer antrean. */
+/** Konsumer antrean untuk pesan yang tak menyentuh pasal.id. Pesan `tik` ditangani index.ts. */
 export async function prosesPesanIngest(
   ctx: KonteksIngest,
-  pesan: PesanIngest,
+  pesan: Exclude<PesanIngest, { tipe: "tik" }>,
 ): Promise<void> {
-  // Pesan lama yang masih tertinggal di antrean untuk peraturan yang jelas di luar cakupan dibuang tanpa menyentuh
-  // pasal.id (jatah 60 permintaan per menitnya dipakai bersama daftar dan detail) maupun Workers AI. Jenis yang
-  // segmen URI-nya tak baku (POJK, PERMEN) tidak bisa dinilai dari URI: pesan `peraturan` dari Cron membawa kode
-  // jenisnya, dan sisanya dinilai oleh baris D1 (indeksVektor, buatRingkasan, ekstrakPdf) atau setelah detailnya
-  // diambil. Sengaja tidak dicatat ke sync_log: ribuan baris "dilewati" menutupi catatan sinkronisasi yang berarti.
-  const luarCakupan =
-    pesan.tipe === "peraturan" && pesan.jenis !== undefined
-      ? !dalamCakupan(ctx.cakupan, pesan.jenis)
-      : uriJelasDiLuarCakupan(ctx.cakupan, pesan.frbr_uri);
-  if (luarCakupan) {
+  // Pesan lama `peraturan` (alur sebelum katalog) dibuang: mengerjakannya berarti menarik detail dari pasal.id di luar
+  // jeda dan giliran yang kini dikelola tik, dan katalog menemukan ulang peraturannya. Sengaja tidak dicatat ke
+  // sync_log: ribuan baris "dilewati" menutupi catatan sinkronisasi yang berarti.
+  if (pesan.tipe === "peraturan") {
+    console.log("Lexa: pesan peraturan dari alur lama dibuang:", pesan.frbr_uri);
+    return;
+  }
+
+  // Pesan lama untuk peraturan yang jelas di luar cakupan dibuang tanpa menyentuh Workers AI. Jenis yang segmen
+  // URI-nya tak baku (POJK, PERMEN) tak bisa dinilai dari URI; sisanya dinilai oleh baris D1 (indeksVektor,
+  // buatRingkasan, ekstrakPdf).
+  if (uriJelasDiLuarCakupan(ctx.cakupan, pesan.frbr_uri)) {
     console.log("Lexa: pesan ingest dilewati, di luar cakupan:", pesan.tipe, pesan.frbr_uri);
     return;
   }
@@ -667,39 +426,5 @@ export async function prosesPesanIngest(
     return;
   }
 
-  if (pesan.tipe === "ekstrak_pdf") {
-    await ekstrakPdf(ctx, pesan.frbr_uri, pesan.r2_key);
-    return;
-  }
-
-  const { law, articles, relations } = await ctx.pasal.getLaw(pesan.frbr_uri);
-  // URI dan jenis yang dilaporkan pasal.id seharusnya sejalan; bila tidak, yang menentukan adalah jenisnya.
-  if (!dalamCakupan(ctx.cakupan, law.jenis)) {
-    console.log("Lexa: peraturan tidak disimpan, di luar cakupan:", law.jenis, law.frbr_uri);
-    return;
-  }
-  await simpanPeraturan(ctx.db, law, articles, relations);
-
-  // Arsipkan teks lengkap ke R2 supaya tetap punya salinan bila sumber hilang.
-  if (articles.length) {
-    const teksLengkap = articles
-      .map((a) => `Pasal ${a.nomor_pasal}${a.ayat ? ` ayat (${a.ayat})` : ""}\n${a.isi}`)
-      .join("\n\n");
-    const kunci = `teks/${law.frbr_uri.replace(/^\//, "")}.txt`;
-    await ctx.docs
-      .put(kunci, teksLengkap, {
-        httpMetadata: { contentType: "text/plain; charset=utf-8" },
-        customMetadata: { judul: law.judul.slice(0, 200), jenis: law.jenis },
-      })
-      .catch(() => {});
-    await ctx.db
-      .prepare(`UPDATE laws SET r2_text_key = ? WHERE frbr_uri = ?`)
-      .bind(kunci, law.frbr_uri)
-      .run()
-      .catch(() => {});
-  }
-
-  // Pengindeksan vektor dipisah ke pesan sendiri: ia memanggil Workers AI dan
-  // bisa jauh lebih lambat, jadi tidak boleh membuat penyimpanan D1 ikut retry.
-  await ctx.queue.send({ tipe: "indeks_vektor", frbr_uri: law.frbr_uri });
+  await ekstrakPdf(ctx, pesan.frbr_uri, pesan.r2_key);
 }

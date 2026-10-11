@@ -3,8 +3,10 @@
  *
  * Satu Worker mengerjakan tiga peran:
  *   - `fetch`     : melayani /api/* (sisanya jatuh ke static assets SPA)
- *   - `scheduled` : Cron harian yang menjadwalkan sinkronisasi
- *   - `queue`     : konsumer antrean yang menarik & mengindeks tiap peraturan
+ *   - `scheduled` : Cron per menit (tik: kosongkan daftar hapus, sapu katalog, ambil isi peraturan) dan harian
+ *                   (pemeliharaan)
+ *   - `queue`     : konsumer antrean untuk pekerjaan yang tak menyentuh pasal.id (indeks vektor, ringkasan AI,
+ *                   ekstraksi PDF) dan rantai tik cadangan bila Cron per menit tak berjalan
  */
 
 import { Hono } from "hono";
@@ -16,21 +18,32 @@ import { auth } from "./routes/auth";
 import { tanya } from "./routes/tanya";
 import { koleksi } from "./routes/koleksi";
 import { layaniPeraturan } from "./lib/pratinjau";
-import { PasalClient, PasalRateLimitError } from "./lib/pasal";
+import { PasalClient } from "./lib/pasal";
 import { bacaCakupan, klausaCakupan } from "../shared/cakupan";
-import {
-  jadwalkanSinkronisasi,
-  prosesPesanIngest,
-  type KonteksIngest,
-  type PesanIngest,
-} from "./lib/ingest";
+import { prosesPesanIngest, type KonteksIngest, type PesanIngest } from "./lib/ingest";
 import { jalankanTik } from "./lib/tik";
 import { catatDenyut } from "./lib/keadaan";
+import { CRON_HARIAN } from "./lib/jadwal";
+import { cadanganAktif, generasiSah, sambungTik, semaiTik } from "./lib/cadangan";
+import { jalankanPemeliharaan } from "./lib/pemeliharaan";
 
 const app = new Hono<{ Bindings: Env }>();
 
+/** Semai rantai tik cadangan dari permintaan HTTP biasa, paling sering sekali semenit per isolat (lib/cadangan.ts). */
+let semaiTerakhir = 0;
+
 app.use("*", async (c, next) => {
   await next();
+  if (cadanganAktif(c.env) && Date.now() - semaiTerakhir >= 60_000) {
+    semaiTerakhir = Date.now();
+    try {
+      c.executionCtx.waitUntil(
+        semaiTik(c.env.DB, c.env.INGEST_QUEUE).catch((e) => console.error("Lexa: semai tik gagal", e)),
+      );
+    } catch {
+      // Tanpa ExecutionContext (pratinjau lokal): tidak ada yang disemai.
+    }
+  }
   // Header keamanan dasar. CSP sengaja ketat: aplikasi ini tidak memuat aset
   // pihak ketiga sama sekali.
   c.header("X-Content-Type-Options", "nosniff");
@@ -85,9 +98,6 @@ app.get("/sitemap.xml", async (c) => {
   );
 });
 
-/** Pemicu harian di wrangler.jsonc (02:00 WIB). Pemicu lain, yaitu per menit, menjalankan tik. */
-const CRON_HARIAN = "0 19 * * *";
-
 function konteksIngest(env: Env): KonteksIngest {
   return {
     db: env.DB,
@@ -108,21 +118,20 @@ export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     // Jejak bahwa pemicu ini berjalan; kegagalan mencatat tak boleh menghentikan pekerjaannya.
     ctx.waitUntil(catatDenyut(env.DB, event.cron).catch((e) => console.error("Lexa: denyut gagal dicatat", e)));
-    // Dua pemicu di wrangler.jsonc: harian (sapuan lama) dan per menit (tik). Yang tak dikenal dianggap tik.
+    const konteks = konteksIngest(env);
+
+    // Dua pemicu di wrangler.jsonc: harian (pemeliharaan) dan per menit (tik). Yang tak dikenal dianggap tik.
     if (event.cron === CRON_HARIAN) {
-      if (!env.PASAL_API_TOKEN) {
-        console.warn("Lexa: PASAL_API_TOKEN belum diatur — sinkronisasi dilewati.");
-        return;
-      }
       ctx.waitUntil(
-        jadwalkanSinkronisasi(konteksIngest(env)).catch((e) => {
-          console.error("Lexa: sinkronisasi terjadwal gagal", e);
-        }),
+        (async () => {
+          await jalankanPemeliharaan(konteks).catch((e) => console.error("Lexa: pemeliharaan gagal", e));
+          if (cadanganAktif(env)) await semaiTik(env.DB, env.INGEST_QUEUE).catch((e) => console.error("Lexa: semai tik gagal", e));
+        })(),
       );
       return;
     }
     ctx.waitUntil(
-      jalankanTik(konteksIngest(env), { pasalSiap: Boolean(env.PASAL_API_TOKEN) }).catch((e) => {
+      jalankanTik(konteks, { pasalSiap: Boolean(env.PASAL_API_TOKEN) }).catch((e) => {
         console.error("Lexa: tik gagal", e);
       }),
     );
@@ -130,42 +139,36 @@ export default {
 
   async queue(batch: MessageBatch<PesanIngest>, env: Env) {
     const ctx = konteksIngest(env);
+    let tikDikerjakan = false;
 
-    // Diproses berurutan, bukan paralel: pasal.id membatasi endpoint detail di
-    // 60 permintaan/menit, dan Promise.all atas satu batch akan menembusnya.
-    for (let i = 0; i < batch.messages.length; i++) {
-      const pesan = batch.messages[i];
+    // Diproses berurutan, bukan paralel: pengindeksan memanggil Workers AI, dan paralel menembus batas lajunya.
+    for (const pesan of batch.messages) {
+      const badan = pesan.body;
+
+      if (badan.tipe === "tik") {
+        // Rantai cadangan (lib/cadangan.ts). Satu tik per batch cukup; pesan ganda atau basi dibuang.
+        if (!tikDikerjakan && (await generasiSah(env.DB, badan.g).catch(() => true))) {
+          tikDikerjakan = true;
+          try {
+            const laporan = await jalankanTik(ctx, { pasalSiap: Boolean(env.PASAL_API_TOKEN) });
+            await catatDenyut(env.DB, "antrean").catch(() => {});
+            await sambungTik(env.DB, env.INGEST_QUEUE, badan.g, laporan.dilewati !== "sepi");
+          } catch (e) {
+            console.error("Lexa: tik antrean gagal", e);
+            pesan.retry({ delaySeconds: 60 });
+            continue;
+          }
+        }
+        pesan.ack();
+        continue;
+      }
+
       try {
-        await prosesPesanIngest(ctx, pesan.body);
+        await prosesPesanIngest(ctx, badan);
         pesan.ack();
       } catch (e) {
-        if (e instanceof PasalRateLimitError) {
-          // Sekali kena 429, sisa batch pasti kena hal yang sama. Kalau tiap
-          // pesan dibiarkan gagal sendiri-sendiri dengan backoff bawaan, jatah
-          // retry habis hanya untuk menunggu — dan pesan yang sebenarnya sehat
-          // berakhir di dead-letter queue. Jadi seluruh sisa batch ditunda
-          // sekaligus sampai jendela rate limit terbuka lagi.
-          const tunda = Math.min(Math.max(Math.ceil(e.retryAfterMs / 1000), 60), 3600);
-          for (let j = i; j < batch.messages.length; j++) {
-            batch.messages[j].retry({ delaySeconds: tunda });
-          }
-          ctx.db
-            .prepare(
-              `INSERT INTO sync_log (job, status, detail, jumlah)
-               VALUES ('antrean_ingest', 'gagal', ?, ?)`,
-            )
-            .bind(
-              `rate limit pasal.id — ${batch.messages.length - i} pesan ditunda ${tunda} detik`,
-              batch.messages.length - i,
-            )
-            .run()
-            .catch(() => {});
-          return;
-        }
-
-        console.error("Lexa: ingest gagal", pesan.body, e);
-        // retry() memakai backoff bawaan Queues; setelah max_retries pesan
-        // jatuh ke lexa-ingest-dlq untuk diperiksa manual.
+        console.error("Lexa: ingest gagal", badan, e);
+        // retry() memakai backoff bawaan Queues; setelah max_retries pesan jatuh ke lexa-ingest-dlq untuk diperiksa manual.
         pesan.retry();
       }
     }
