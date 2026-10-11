@@ -10,7 +10,7 @@ import { CATATAN_TERBATAS, detailPeraturan, detailTerbatas, itemDaftar, pasangPa
 import { baris, hitungBaris, menit, satu, sisipkanAntre, tanamKatalogSelesai, tanamSemuaDiagnosa, tik } from "./tik-bantu";
 import { adaSimpulPasal, catatanAksesTerbatas, PasalClient } from "../../src/worker/lib/pasal";
 import { PEMERIKSAAN } from "../../src/worker/lib/diagnosa";
-import { bacaAkses, JEDA_PERIKSA_GALAT_MS, JEDA_PERIKSA_MS, uraiAkses } from "../../src/worker/lib/akses";
+import { bacaAkses, JEDA_PERIKSA_GALAT_MS, JEDA_PERIKSA_MS, tandaiAksesTerbatas, uraiAkses } from "../../src/worker/lib/akses";
 
 const PEMBANDING = "/akn/id/act/uu/2003/13";
 const ANTRE_UU = "/akn/id/act/uu/2020/11";
@@ -109,9 +109,12 @@ describe.skipIf(!sqliteAda)("akses isi pasal.id", () => {
       await tanamAntrean();
       pasal = pasangPasalPalsu({ detail: semuaTerbatas() });
 
+      // Pemeriksaan awal: keadaan akses belum diketahui padahal ada yang menunggu, jadi pembanding diminta lebih dulu dan,
+      // karena terbatas juga, peraturan di antrean sama sekali tak diminta.
       const laporan = await tik(l, menit(0));
-      expect(laporan.isi).toMatchObject({ diambil: 0, lengkap: 0, kosong: 0, gagal: 0, aksesTerbatas: CATATAN });
-      expect(pasal.detailDiminta()).toEqual([ANTRE_UU, PEMBANDING]); // yang terdepan, lalu pembanding; PP tak dicoba
+      expect(laporan.isi).toMatchObject({ diambil: 0, lengkap: 0, kosong: 0, gagal: 0 });
+      expect(laporan.aksesDijeda).toBe(iso(menit(0) + JEDA_PERIKSA_MS));
+      expect(pasal.detailDiminta()).toEqual([PEMBANDING]);
       expect(await bacaAkses(l.env.DB)).toEqual({
         sejak: iso(menit(0)), terakhir: iso(menit(0)), periksa_lagi: iso(menit(0) + JEDA_PERIKSA_MS), catatan: CATATAN, pemeriksaan: 1,
       });
@@ -159,7 +162,7 @@ describe.skipIf(!sqliteAda)("akses isi pasal.id", () => {
       expect(laporan.katalog).toEqual([{ jenis: "UU", diperiksa: 1, disimpan: 1, selesai: true }]);
       expect(laporan.isi).toBeUndefined();
       expect(laporan.aksesDijeda).toBe(iso(menit(0) + JEDA_PERIKSA_MS));
-      expect(pasal.detailDiminta()).toEqual([ANTRE_UU, PEMBANDING]); // tak bertambah
+      expect(pasal.detailDiminta()).toEqual([PEMBANDING]); // tak bertambah
       expect(await satu(l, `SELECT isi_status FROM laws WHERE frbr_uri = '/akn/id/act/uu/2024/5'`)).toEqual({ isi_status: "menunggu" });
     });
 
@@ -170,7 +173,7 @@ describe.skipIf(!sqliteAda)("akses isi pasal.id", () => {
 
       const laporan = await tik(l, menit(31));
       expect(laporan.isi).toMatchObject({ diambil: 0, aksesTerbatas: CATATAN });
-      expect(pasal.detailDiminta().slice(2)).toEqual([PEMBANDING]);
+      expect(pasal.detailDiminta().slice(1)).toEqual([PEMBANDING]);
       expect(await bacaAkses(l.env.DB)).toEqual({
         sejak: iso(menit(0)), terakhir: iso(menit(31)), periksa_lagi: iso(menit(31) + JEDA_PERIKSA_MS), catatan: CATATAN, pemeriksaan: 2,
       });
@@ -178,6 +181,85 @@ describe.skipIf(!sqliteAda)("akses isi pasal.id", () => {
         { frbr_uri: ANTRE_PP, isi_status: "menunggu", isi_percobaan: 0, isi_arsip: 0 },
         { frbr_uri: ANTRE_UU, isi_status: "menunggu", isi_percobaan: 0, isi_arsip: 0 },
       ]);
+    });
+  });
+
+  describe("pemeriksaan awal (keadaan akses belum diketahui)", () => {
+    it("tik pertama memeriksa pembanding lebih dulu dan memakai satu dari tiga permintaan; yang terbatas dicatat di log dan statistik", async () => {
+      await tanamAntrean();
+      await l.db.prepare(`DELETE FROM sync_state WHERE key = 'katalog_selesai:UU'`).run();
+      pasal = pasangPasalPalsu({ detail: semuaTerbatas(), daftar: { UU: [itemDaftar("UU", 2024, 5, "Baru")] } });
+      const laporan = await tik(l, menit(0));
+      expect(pasal.detailDiminta()).toEqual([PEMBANDING]);
+      expect(pasal.daftarDiminta()).toEqual([{ jenis: "UU", offset: "0" }]); // katalog tetap jalan
+      expect(laporan.aksesDijeda).toBe(iso(menit(0) + JEDA_PERIKSA_MS));
+      expect(await bacaAkses(l.env.DB)).toMatchObject({ catatan: CATATAN, pemeriksaan: 1 });
+      expect(await log("akses_isi")).toEqual([{ status: "gagal", detail: expect.stringContaining(CATATAN), jumlah: 0 }]);
+      expect(JSON.parse((await satu<{ value: string }>(l, `SELECT value FROM sync_state WHERE key = 'statistik:2026-10-11'`))!.value)).toMatchObject({ akses_terbatas: 1 });
+    });
+
+    it("akses baik: dicatat sebagai diperiksa (memakai satu dari tiga permintaan), tak diperiksa lagi dalam enam jam, dan diperiksa lagi sesudahnya", async () => {
+      await tanamAntrean();
+      await sisipkanAntre(l, [{ uri: "/akn/id/act/pp/2018/9", jenis: "PP", tahun: 2018 }]); // yang ketiga menunggu: pemeriksaan memakai jatah
+      pasal = pasangPasalPalsu({ detail: { ...semuaPenuh(), "/akn/id/act/pp/2018/9": penuh("/akn/id/act/pp/2018/9") } });
+      await tik(l, menit(0));
+      expect(pasal.detailDiminta()).toEqual([PEMBANDING, ANTRE_UU, ANTRE_PP]);
+      expect(await satu(l, `SELECT isi_status FROM laws WHERE frbr_uri = '/akn/id/act/pp/2018/9'`)).toEqual({ isi_status: "menunggu" });
+      await tik(l, menit(1)); // tik berikutnya mengambil yang tersisa, tanpa pemeriksaan awal lagi
+      expect(pasal.detailDiminta().slice(3)).toEqual(["/akn/id/act/pp/2018/9"]);
+      expect(await bacaAkses(l.env.DB)).toBeNull();
+      expect(await satu<{ value: string }>(l, `SELECT value FROM sync_state WHERE key = 'akses_diperiksa'`)).toEqual({ value: iso(menit(0)) });
+
+      // Antrean berikut: tak ada pemeriksaan awal dalam enam jam, jadi ketiga permintaan untuk peraturan di antrean.
+      await sisipkanAntre(l, [
+        { uri: "/akn/id/act/uu/2019/1", jenis: "UU", tahun: 2019 }, { uri: "/akn/id/act/uu/2019/2", jenis: "UU", tahun: 2019 },
+        { uri: "/akn/id/act/uu/2019/3", jenis: "UU", tahun: 2019 }, { uri: "/akn/id/act/uu/2019/4", jenis: "UU", tahun: 2019 },
+      ]);
+      pasal.atur({ detail: { ...semuaPenuh(), ...Object.fromEntries([1, 2, 3, 4].map((n) => [`/akn/id/act/uu/2019/${n}`, penuh(`/akn/id/act/uu/2019/${n}`)])) } });
+      await tik(l, menit(60));
+      expect(pasal.detailDiminta().slice(4)).toEqual(["/akn/id/act/uu/2019/1", "/akn/id/act/uu/2019/2", "/akn/id/act/uu/2019/3"]);
+      await tik(l, menit(6 * 60 + 1)); // lewat enam jam: pemeriksaan awal lagi (pembanding diundi), lalu satu peraturan tersisa
+      const ketiga = pasal.detailDiminta().slice(7);
+      expect(ketiga).toHaveLength(2);
+      expect(ketiga[1]).toBe("/akn/id/act/uu/2019/4");
+      expect(await satu<{ value: string }>(l, `SELECT value FROM sync_state WHERE key = 'akses_diperiksa'`)).toEqual({ value: iso(menit(6 * 60 + 1)) });
+    });
+
+    it("tanpa peraturan menunggu, tanpa pembanding, atau saat akses sudah tercatat: tak ada pemeriksaan awal", async () => {
+      // Tanpa peraturan menunggu: sepi.
+      await sisipkanAntre(l, [{ uri: PEMBANDING, jenis: "UU", tahun: 2003, status: "lengkap", jumlahPasal: 5 }]);
+      pasal = pasangPasalPalsu({ detail: semuaPenuh() });
+      expect(await tik(l, menit(0))).toEqual({ dilewati: "sepi" });
+      expect(pasal.panggilan).toEqual([]);
+    });
+
+    it("tanpa pembanding tersimpan: tak ada yang bisa diperiksa, dan tak ada yang dicatat", async () => {
+      await sisipkanAntre(l, [{ uri: ANTRE_UU, jenis: "UU", tahun: 2020 }]);
+      pasal = pasangPasalPalsu({ detail: { [ANTRE_UU]: penuh(ANTRE_UU) } });
+      await tik(l, menit(0));
+      expect(await satu(l, `SELECT value FROM sync_state WHERE key = 'akses_diperiksa'`)).toBeNull();
+      expect(pasal.detailDiminta()).toEqual([ANTRE_UU]); // langsung diambil
+    });
+
+    it("akses sudah tercatat dan jedanya habis: satu pemeriksaan saja (pembanding), bukan pemeriksaan awal ditambah pemeriksaan jeda", async () => {
+      await tanamAntrean();
+      await tandaiAksesTerbatas(l.env.DB, CATATAN, menit(0)); // tercatat tanpa lewat pemeriksaan awal (tak ada akses_diperiksa)
+      pasal = pasangPasalPalsu({ detail: semuaTerbatas() });
+      await tik(l, menit(31));
+      expect(pasal.detailDiminta()).toEqual([PEMBANDING]);
+      expect(await bacaAkses(l.env.DB)).toMatchObject({ pemeriksaan: 2 });
+    });
+
+    it("kena 429 pada pemeriksaan awal: jeda disimpan dan tak ada yang dicatat; sesudah jeda diperiksa lagi", async () => {
+      await tanamAntrean();
+      pasal = pasangPasalPalsu({ detail: semuaTerbatas(), batasLaju: () => true });
+      const kena = await tik(l, menit(0));
+      expect(kena.jedaPasalSampai).toBe(iso(menit(0) + 120_000));
+      expect(await bacaAkses(l.env.DB)).toBeNull();
+      expect(await satu(l, `SELECT value FROM sync_state WHERE key = 'akses_diperiksa'`)).toBeNull();
+      pasal.atur({ batasLaju: undefined });
+      await tik(l, menit(3));
+      expect(await bacaAkses(l.env.DB)).not.toBeNull();
     });
   });
 
@@ -192,7 +274,7 @@ describe.skipIf(!sqliteAda)("akses isi pasal.id", () => {
       expect(laporan.isi).toMatchObject({ aksesPulih: true, diambil: 2, lengkap: 2 });
       expect(laporan.isi?.aksesTerbatas).toBeUndefined();
       expect(await bacaAkses(l.env.DB)).toBeNull();
-      expect(pasal.detailDiminta().slice(2)).toEqual([PEMBANDING, ANTRE_UU, ANTRE_PP]);
+      expect(pasal.detailDiminta().slice(1)).toEqual([PEMBANDING, ANTRE_UU, ANTRE_PP]);
       expect(await peraturanAntre()).toEqual([
         { frbr_uri: ANTRE_PP, isi_status: "lengkap", isi_percobaan: 0, isi_arsip: 1 },
         { frbr_uri: ANTRE_UU, isi_status: "lengkap", isi_percobaan: 0, isi_arsip: 1 },
@@ -214,7 +296,7 @@ describe.skipIf(!sqliteAda)("akses isi pasal.id", () => {
       pasal.atur({ detail: { ...semuaPenuh(), [ANTRE_3]: penuh(ANTRE_3) } });
       const laporan = await tik(l, menit(31));
       expect(laporan.isi).toMatchObject({ aksesPulih: true, diambil: 2, lengkap: 2 });
-      expect(pasal.detailDiminta().slice(2)).toEqual([PEMBANDING, ANTRE_UU, ANTRE_PP]); // MAKS_PANGGILAN_PASAL = 3
+      expect(pasal.detailDiminta().slice(1)).toEqual([PEMBANDING, ANTRE_UU, ANTRE_PP]); // MAKS_PANGGILAN_PASAL = 3
       expect(await satu(l, `SELECT isi_status FROM laws WHERE frbr_uri = ?`, ANTRE_3)).toEqual({ isi_status: "menunggu" });
     });
 
@@ -259,7 +341,8 @@ describe.skipIf(!sqliteAda)("akses isi pasal.id", () => {
       const laporan = await tik(l, menit(0));
       expect(laporan.isi).toMatchObject({ diambil: 1, kosong: 1, lengkap: 0 });
       expect(laporan.isi?.aksesTerbatas).toBeUndefined();
-      expect(pasal.detailDiminta()).toEqual([ANTRE_UU, PEMBANDING]);
+      // Pemeriksaan awal (pembanding), peraturan di antrean (jawaban tanpa naskah), lalu pembanding lagi untuk membedakan.
+      expect(pasal.detailDiminta()).toEqual([PEMBANDING, ANTRE_UU, PEMBANDING]);
       expect(await bacaAkses(l.env.DB)).toBeNull();
       expect(await satu(l, `SELECT isi_status, jumlah_pasal, isi_arsip, isi_catatan FROM laws WHERE frbr_uri = ?`, ANTRE_UU)).toEqual({
         isi_status: "kosong", jumlah_pasal: 0, isi_arsip: 0, isi_catatan: `0 simpul; 0 berisi; 0 yatim [${CATATAN}]`,

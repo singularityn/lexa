@@ -54,7 +54,9 @@ mentah diarsipkan sebelum diuraikan sehingga perbaikan pengurai cukup menguraika
 boleh dihubungi) diagnosis, katalog, dan pengambilan isi dengan anggaran bersama **3 permintaan pasal.id per tik**.
 Pinjaman `pinjaman:tik` (240 detik) mencegah dua tik berjalan bersamaan. Kena 429, tik menyimpan jeda
 (`pasal_tunda_sampai`, dijepit 1 menit sampai 1 jam) yang dipatuhi semua tik berikutnya; `Retry-After` yang diminta
-dicatat apa adanya di `sync_log` (`pasal_laju`). Tik tanpa kerja tidak menulis apa pun ke D1.
+dicatat apa adanya di `sync_log` (`pasal_laju`). Yang teramati pada 11 Okt 2026: 429 dengan `Retry-After: 3600` datang
+sesudah ±20-26 permintaan dalam beberapa menit (daftar maupun detail), jadi pasal.id tampaknya membatasi sekitar 20-25
+permintaan per jam; katalog pun maju ±20 halaman (±1.000 peraturan) per jam. Tik tanpa kerja tidak menulis apa pun ke D1.
 
 **Pemicu tik dan cadangannya** (`wrangler.jsonc`, `lib/cadangan.ts`). Cron `* * * * *` menjalankan tik dan Cron
 `0 19 * * *` menjalankan pemeliharaan harian. **Pada 11 Okt 2026 Cron per menit terbukti tidak berjalan di produksi**
@@ -116,8 +118,12 @@ sebagai pembanding (diundi): tanpa pasal pula berarti pembatasan menyeluruh; ber
 diminta menjadi 'kosong' dengan catatan sumber. Selama dibatasi, pengambilan detail dijeda 30 menit (10 menit bila
 pemeriksaan gagal) sementara katalog dan penguraian ulang arsip jalan terus. Sesudah jeda, satu permintaan pembanding
 memutuskan: masih terbatas (jeda diperbarui), atau pulih (`akses_isi` dihapus dan antrean langsung dilanjutkan di tik yang
-sama). Keadaannya tampil di halaman `/status` (panel "Kelengkapan isi") dan `GET /api/stats` (`isi.akses`). Pemeriksaan ini
-murah (satu permintaan per 30 menit) dan menjaga agar pipeline pulih sendiri bila pasal.id suatu hari memberi teks lagi.
+sama). Keadaannya tampil di halaman `/status` (panel "Kelengkapan isi") dan `GET /api/stats` (`isi.akses`). Karena antrean
+katalog bisa berjam-jam sebelum detail pertama diminta, tik yang menemui peraturan menunggu dengan keadaan akses yang belum
+diketahui lebih dulu menjalankan **pemeriksaan awal** (satu permintaan pembanding, memakai satu dari tiga jatah tik; diulang
+paling cepat tiap 6 jam bila akses baik; `sync_state` kunci `akses_diperiksa`), sehingga `/status` jujur sejak tik pertama.
+Pemeriksaan ini murah (satu permintaan per 30 menit saat terbatas) dan menjaga agar pipeline pulih sendiri bila pasal.id
+suatu hari memberi teks lagi.
 
 **Jalur untuk melengkapi teks** (lihat juga "Yang belum ada" di README):
 

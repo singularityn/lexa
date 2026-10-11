@@ -16,7 +16,7 @@
  * tidak memakan kuota tulis.
  */
 
-import { bacaAkses, JEDA_PERIKSA_MS } from "./akses";
+import { bacaAkses, JEDA_PERIKSA_MS, periksaAksesAwal } from "./akses";
 import { adaYangDihapus, kosongkanDaftarHapus } from "./hapus";
 import { jalankanDiagnosa, KUNCI_DIAG, PEMERIKSAAN } from "./diagnosa";
 import { bacaKeadaanKatalog, jenisJatuhTempo, sapuHalaman, type HasilKatalog } from "./katalog";
@@ -149,6 +149,16 @@ export async function jalankanTik(ctx: KonteksIngest, opsi: OpsiTik): Promise<La
     return true;
   };
 
+  /** Pembatasan akses isi terlihat: hitung di statistik harian dan catat di log (paling sering sekali per setengah jam). */
+  const laporkanAksesTerbatas = async (catatan: string) => {
+    await tambahStatistik(ctx.db, hari, { akses_terbatas: 1 });
+    await catatLogBerjeda(
+      ctx.db, "akses_isi", "gagal",
+      `pasal.id tidak memberi naskah peraturan (${catatan}); detail dijeda, diperiksa lagi ${JEDA_PERIKSA_MS / 60_000} menit lagi`,
+      0, SELANG_LOG_MS, sekarang,
+    );
+  };
+
   try {
     if (perluHapus) {
       try {
@@ -183,6 +193,22 @@ export async function jalankanTik(ctx: KonteksIngest, opsi: OpsiTik): Promise<La
       }
     }
 
+    // Keadaan akses isi belum diketahui padahal ada peraturan yang menunggu: satu permintaan pembanding menjawabnya sekarang,
+    // bukan berjam-jam kemudian saat antrean katalog habis (lib/akses.ts). Bila terbatas, pengambilan detail langsung dijeda.
+    if (pasalMasihBoleh && sisa > 0 && adaAmbil && akses === null) {
+      try {
+        const putusan = await periksaAksesAwal(ctx.db, ctx.pasal, sekarang);
+        if (putusan !== "dilewati" && putusan !== "tak_diketahui") sisa--;
+        if (putusan === "terbatas") {
+          const baru = await bacaAkses(ctx.db);
+          laporan.aksesDijeda = baru?.periksa_lagi;
+          await laporkanAksesTerbatas(baru?.catatan ?? "");
+        }
+      } catch (e) {
+        pasalMasihBoleh = !(await tanganiGalatPasal(e));
+      }
+    }
+
     // Katalog lebih dulu dari isi: satu permintaan menyimpan metadata 100 peraturan, dan baris itulah yang diisi sesudahnya.
     let keadaan = keadaanKatalog;
     while (pasalMasihBoleh && sisa > 0) {
@@ -210,15 +236,9 @@ export async function jalankanTik(ctx: KonteksIngest, opsi: OpsiTik): Promise<La
       laporan.isi = isi;
       await tambahStatistik(ctx.db, hari, {
         diambil: isi.diambil, diurai: isi.diurai, lengkap: isi.lengkap, kosong: isi.kosong,
-        dipertahankan: isi.dipertahankan, gagal: isi.gagal, akses_terbatas: isi.aksesTerbatas === undefined ? 0 : 1,
+        dipertahankan: isi.dipertahankan, gagal: isi.gagal,
       });
-      if (isi.aksesTerbatas !== undefined) {
-        await catatLogBerjeda(
-          ctx.db, "akses_isi", "gagal",
-          `pasal.id tidak memberi naskah peraturan (${isi.aksesTerbatas}); detail dijeda, diperiksa lagi ${JEDA_PERIKSA_MS / 60_000} menit lagi`,
-          0, SELANG_LOG_MS, sekarang,
-        );
-      }
+      if (isi.aksesTerbatas !== undefined) await laporkanAksesTerbatas(isi.aksesTerbatas);
       if (isi.aksesPulih) await catatLog(ctx.db, "akses_isi", "sukses", "pasal.id kembali memberi naskah; pengambilan detail dilanjutkan");
       if (isi.tundaMs !== undefined) await tanganiGalatPasal(new PasalRateLimitError(isi.tundaMs));
       else if (isi.ditolak !== undefined) await tanganiGalatPasal(new PasalApiError(isi.ditolak, "token ditolak"));

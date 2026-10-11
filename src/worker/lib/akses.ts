@@ -17,10 +17,14 @@
  * yang diminta memang tak punya naskah.
  */
 
-import { adaSimpulPasal, type PasalClient } from "./pasal";
+import { adaSimpulPasal, catatanAksesTerbatas, type PasalClient } from "./pasal";
 import { bacaState, tulisState } from "./keadaan";
 
 export const KUNCI_AKSES = "akses_isi";
+/** Kapan akses isi terakhir diperiksa dengan kepastian (pembatasan atau akses baik); mencegah pemeriksaan awal tiap tik. */
+export const KUNCI_DIPERIKSA = "akses_diperiksa";
+/** Selang pemeriksaan awal bila akses ternyata baik. */
+export const SELANG_PERIKSA_AWAL_MS = 6 * 3_600_000;
 /** Selang antarpemeriksaan selama akses terbatas. */
 export const JEDA_PERIKSA_MS = 30 * 60_000;
 /** Selang bila pemeriksaan sendiri gagal (jaringan, 5xx): lebih pendek, karena belum ada kepastian apa pun. */
@@ -102,7 +106,10 @@ export type PutusanAkses = "terbatas" | "baik" | "tak_diketahui";
  * ke pemanggil, yang tahu cara menanganinya. Pembandingnya diundi: pembanding yang hilang di sumber (404) tak boleh
  * mengunci pemeriksaan selamanya.
  */
-export async function periksaAkses(db: D1Database, pasal: PasalClient): Promise<{ putusan: PutusanAkses; uri?: string }> {
+export async function periksaAkses(
+  db: D1Database,
+  pasal: PasalClient,
+): Promise<{ putusan: PutusanAkses; uri?: string; catatan?: string }> {
   const pembanding = await db
     .prepare(
       `SELECT frbr_uri FROM laws
@@ -112,5 +119,25 @@ export async function periksaAkses(db: D1Database, pasal: PasalClient): Promise<
     .first<{ frbr_uri: string }>();
   if (!pembanding) return { putusan: "tak_diketahui" };
   const mentah = await pasal.getLawMentah(pembanding.frbr_uri);
-  return { putusan: adaSimpulPasal(mentah) ? "baik" : "terbatas", uri: pembanding.frbr_uri };
+  if (adaSimpulPasal(mentah)) return { putusan: "baik", uri: pembanding.frbr_uri };
+  return { putusan: "terbatas", uri: pembanding.frbr_uri, catatan: catatanAksesTerbatas(mentah) ?? undefined };
+}
+
+/**
+ * Pemeriksaan awal: bila antrean punya peraturan menunggu tetapi keadaan akses belum diketahui (belum ada `akses_isi`)
+ * dan belum diperiksa dalam SELANG_PERIKSA_AWAL_MS, satu permintaan pembanding memutuskannya. Tanpa ini pembatasan baru
+ * terlihat saat pengambilan detail pertama, yang di belakang antrean katalog bisa berjam-jam, dan /status tak jujur selama
+ * itu. Mengembalikan putusannya, atau "dilewati" bila belum waktunya. Galat pasal.id dilempar ke pemanggil.
+ */
+export async function periksaAksesAwal(
+  db: D1Database,
+  pasal: PasalClient,
+  sekarang: number,
+): Promise<PutusanAkses | "dilewati"> {
+  const terakhir = await bacaState(db, KUNCI_DIPERIKSA);
+  if (terakhir && Date.parse(terakhir) > sekarang - SELANG_PERIKSA_AWAL_MS) return "dilewati";
+  const hasil = await periksaAkses(db, pasal);
+  if (hasil.putusan === "terbatas") await tandaiAksesTerbatas(db, hasil.catatan ?? "", sekarang);
+  if (hasil.putusan !== "tak_diketahui") await tulisState(db, KUNCI_DIPERIKSA, new Date(sekarang).toISOString());
+  return hasil.putusan;
 }

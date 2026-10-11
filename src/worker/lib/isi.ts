@@ -394,9 +394,9 @@ export async function langkahIsi(ctx: KonteksIngest, opsi: OpsiIsi): Promise<Lap
   else if (akses) {
     // Jeda habis: tanya pasal.id lagi lewat peraturan pembanding sebelum menyentuh antrean.
     try {
-      const { putusan } = await periksaAkses(ctx.db, ctx.pasal);
+      const { putusan, catatan } = await periksaAkses(ctx.db, ctx.pasal);
       if (putusan === "terbatas") {
-        laporan.aksesTerbatas = (await tandaiAksesTerbatas(ctx.db, akses.catatan, sekarang)).catatan;
+        laporan.aksesTerbatas = (await tandaiAksesTerbatas(ctx.db, catatan ?? akses.catatan, sekarang)).catatan;
         anggaran = 0;
       } else if (putusan === "baik") {
         await tandaiAksesPulih(ctx.db);
