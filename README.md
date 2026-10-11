@@ -56,9 +56,10 @@ untuk pemeliharaan) dan `queue` (konsumer antrean ingest, yang juga menjalankan 
 | `INGEST_QUEUE` | Queues | `lexa-ingest` | antrean ingest; DLQ `lexa-ingest-dlq` |
 | `ASSETS` | Static Assets | `public/` | cangkang SPA yang dipakai `/peraturan` untuk pratinjau tautan |
 
-Cron: `* * * * *` (tik pipeline) dan `0 19 * * *` (pemeliharaan harian, 02:00 WIB). Di produksi Cron per menit tak
-terbukti berjalan (tak ada jejak `denyut:* * * * *`), sehingga `vars.TIK_CADANGAN = "antrean"` menjalankan tik lewat rantai
-pesan di `lexa-ingest`; lihat [docs/pipeline-data.md](docs/pipeline-data.md). Skema D1 dan alasan desainnya ada di
+Cron: `* * * * *` (tik pipeline) dan `0 19 * * *` (pemeliharaan harian, 02:00 WIB). Pemicu per menit baru terbukti
+berjalan di produksi sekitar 17:40 UTC pada 11 Okt 2026 (jejak `denyut:* * * * *`), berjam-jam sesudah ditambahkan, sehingga
+`vars.TIK_CADANGAN = "antrean"` menjalankan tik lewat rantai pesan di `lexa-ingest` sebagai cadangan; rantai berhenti sendiri
+selama denyut Cron segar. Lihat [docs/pipeline-data.md](docs/pipeline-data.md). Skema D1 dan alasan desainnya ada di
 `migrations/`.
 
 ### Endpoint API
@@ -175,7 +176,7 @@ cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignor
 | `SUMMARY_MODEL` | variabel | model teks untuk ringkasan dan tanya-jawab |
 | `BPK_BASE` | variabel | basis URL peraturan.bpk.go.id untuk tautan sumber |
 | `PASAL_API_BASE` | variabel | basis URL API pasal.id |
-| `TIK_CADANGAN` | variabel (di `wrangler.jsonc`) | `antrean` menyalakan rantai tik cadangan lewat antrean ingest (Cron per menit tak terbukti berjalan di produksi); tes dan pratinjau lokal tidak menyalakannya |
+| `TIK_CADANGAN` | variabel (di `wrangler.jsonc`) | `antrean` menyalakan rantai tik cadangan lewat antrean ingest, yang hanya berjalan selama denyut Cron per menit tidak segar (pemicu itu baru berjalan di produksi berjam-jam sesudah ditambahkan); tes dan pratinjau lokal tidak menyalakannya |
 | `SEARCH_CACHE_TTL` | variabel | TTL cache pencarian dalam detik (bawaan 3600) |
 | `CAKUPAN_JENIS` | variabel (di `wrangler.jsonc`) | kode jenis peraturan yang dicakup, dipisah koma; bawaan `UUD,TAP_MPR,UU,PERPPU,PP` (lihat [Cakupan peraturan](#cakupan-peraturan)) |
 | `ADMIN_TOKEN` | secret | token untuk `/api/admin/*` dan `/api/impor/*` |

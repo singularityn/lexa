@@ -97,7 +97,7 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Antarmuka | buka URL dasar | beranda Lexa tampil dengan statistik; `/tentang` dibuka langsung tanpa 404 |
 | Binding | Settings > Bindings | `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` utuh |
 | Variabel | Settings > Variables and secrets | kelima variabel teks dashboard dan keempat secret masih ada, ditambah `CAKUPAN_JENIS` (dari `wrangler.jsonc`) |
-| Cron | Settings > Trigger events | `* * * * *` dan `0 19 * * *`. Di produksi pemicu per menit tak terbukti berjalan (tak ada `denyut:* * * * *` di `sync_state`); periksa daftarnya di sini. Pipeline tetap berjalan lewat rantai pesan antrean (`TIK_CADANGAN`), yang dimulai oleh satu kunjungan ke situs atau Cron harian |
+| Cron | Settings > Trigger events | `* * * * *` dan `0 19 * * *`. Pemicu per menit baru terbukti berjalan di produksi sekitar 17:40 UTC pada 11 Okt 2026 (kunci `denyut:* * * * *` di `sync_state`), berjam-jam sesudah ditambahkan; bila suatu saat denyutnya basi, periksa daftarnya di sini. Pipeline tetap berjalan lewat rantai pesan antrean (`TIK_CADANGAN`), yang dimulai oleh satu kunjungan ke situs atau Cron harian dan berhenti sendiri selama Cron per menit segar |
 | Konsumer antrean | Queues > lexa-ingest | masih terhubung ke `lexa`, DLQ dan retry seperti sebelumnya |
 | API | `/api/stats`, `/api/search?q=pesangon`, `/robots.txt`, `/sitemap.xml` | 200 dengan data |
 | Pencarian kata bertanda hubung | `/cari?q=perundang-undangan&mode=keyword` | ada hasil (bug lama: nihil) |

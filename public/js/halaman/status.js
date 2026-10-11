@@ -47,7 +47,8 @@ function panelKelengkapan(isi, cakupan) {
   const berisi = baris.reduce((n, b) => n + b.berisi, 0);
   const persen = total ? Math.round((berisi / total) * 100) : 0;
   const hariIni = isi.hari_ini;
-  const terakhir = isi.denyut.antrean ?? isi.denyut.menit;
+  // Dua pemicu bisa berganti peran (Cron per menit, atau rantai antrean bila Cron itu tak berjalan): yang terbaru yang dipakai.
+  const terakhir = [isi.denyut.antrean, isi.denyut.menit].filter(Boolean).sort().at(-1) ?? null;
 
   return h(
     "section",

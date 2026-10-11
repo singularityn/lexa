@@ -59,10 +59,10 @@ sesudah ±20-26 permintaan dalam beberapa menit (daftar maupun detail), jadi pas
 permintaan per jam; katalog pun maju ±20 halaman (±1.000 peraturan) per jam. Tik tanpa kerja tidak menulis apa pun ke D1.
 
 **Pemicu tik dan cadangannya** (`wrangler.jsonc`, `lib/cadangan.ts`). Cron `* * * * *` menjalankan tik dan Cron
-`0 19 * * *` menjalankan pemeliharaan harian. **Pada 11 Okt 2026 Cron per menit terbukti tidak berjalan di produksi**
-(kunci `denyut:* * * * *` tak pernah muncul berjam-jam sesudah deploy, sedangkan Cron harian berjalan); penyebabnya tak
-terlihat dari luar Worker, jadi periksa dashboard (Worker `lexa` > Settings > Trigger events). Karena itu ada
-cadangan: dengan `vars.TIK_CADANGAN = "antrean"`, rantai pesan `{ tipe: "tik", g }` di antrean `lexa-ingest`
+`0 19 * * *` menjalankan pemeliharaan harian. **Pada 11 Okt 2026 Cron per menit baru berjalan sekitar 17:40 UTC**, berjam-jam
+sesudah ditambahkan (kunci `denyut:* * * * *` baru muncul saat itu, sedangkan Cron harian berjalan sejak awal); penyebabnya
+tak terlihat dari luar Worker (periksa dashboard: Worker `lexa` > Settings > Trigger events). Karena pemicunya tak bisa
+dijamin, ada cadangan: dengan `vars.TIK_CADANGAN = "antrean"`, rantai pesan `{ tipe: "tik", g }` di antrean `lexa-ingest`
 menjalankan satu tik lalu mengirim pesan berikutnya (60 detik bila ada kerja, 5 menit bila sepi). Rantai hanya berlanjut
 selama `denyut:* * * * *` tidak segar (lebih tua dari 12 menit), jadi bila Cron per menit pulih, rantai berhenti sendiri.
 Penyemainya Cron harian dan permintaan HTTP biasa (paling banyak sekali semenit per isolat); satu rantai saja yang boleh
