@@ -299,6 +299,23 @@ describe.skipIf(!sqliteAda)("akses isi pasal.id", () => {
       expect(await bacaAkses(l.env.DB)).toMatchObject({ pemeriksaan: 2, terakhir: iso(menit(34)) });
     });
 
+    it("pembanding yang hilang di sumber (404) tak mengunci pemeriksaan: pembanding diundi, jadi yang lain akhirnya dicoba", async () => {
+      const PEMBANDING_2 = "/akn/id/act/uu/2004/1";
+      await tanamAntrean();
+      await sisipkanAntre(l, [{ uri: PEMBANDING_2, jenis: "UU", tahun: 2004, status: "lengkap", jumlahPasal: 5 }]);
+      pasal = pasangPasalPalsu({ detail: { ...semuaTerbatas(), [PEMBANDING_2]: terbatas(PEMBANDING_2) } });
+      await tik(l, menit(0));
+      expect(await bacaAkses(l.env.DB)).not.toBeNull();
+
+      // PEMBANDING hilang di sumber (tak ada di detail), PEMBANDING_2 kembali berpasal: dari undian ke undian, pemeriksaan
+      // yang kebetulan memilih yang hilang ditunda sepuluh menit, dan yang memilih PEMBANDING_2 memulihkan akses.
+      pasal.atur({ detail: { [ANTRE_UU]: penuh(ANTRE_UU), [ANTRE_PP]: penuh(ANTRE_PP), [PEMBANDING_2]: penuh(PEMBANDING_2, 5) } });
+      let pulih = false;
+      for (let i = 0; i < 40 && !pulih; i++) pulih = Boolean((await tik(l, menit(31 + 11 * i))).isi?.aksesPulih);
+      expect(pulih).toBe(true);
+      expect(await bacaAkses(l.env.DB)).toBeNull();
+    });
+
     it("pembanding gagal 5xx: pemeriksaan ditunda sepuluh menit dan tak ada peraturan yang dihukum", async () => {
       await tanamAntrean();
       pasal = pasangPasalPalsu({ detail: semuaTerbatas() });

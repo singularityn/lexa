@@ -98,14 +98,15 @@ export type PutusanAkses = "terbatas" | "baik" | "tak_diketahui";
  * Putuskan apakah pasal.id memberi naskah, dengan meminta ulang satu peraturan yang naskahnya sudah tersimpan (bukan
  * yang sedang diantre: peraturan berstatus 'lengkap' tak pernah ada di antrean). Tanpa pembanding (belum ada
  * peraturan berpasal di D1) hasilnya "tak_diketahui". Galat dari pasal.id (batas laju, token ditolak, 5xx) dilempar
- * ke pemanggil, yang tahu cara menanganinya.
+ * ke pemanggil, yang tahu cara menanganinya. Pembandingnya diundi: pembanding yang hilang di sumber (404) tak boleh
+ * mengunci pemeriksaan selamanya.
  */
 export async function periksaAkses(db: D1Database, pasal: PasalClient): Promise<{ putusan: PutusanAkses; uri?: string }> {
   const pembanding = await db
     .prepare(
       `SELECT frbr_uri FROM laws
         WHERE isi_status = 'lengkap' AND jumlah_pasal BETWEEN 3 AND 80
-        ORDER BY frbr_uri LIMIT 1`,
+        ORDER BY RANDOM() LIMIT 1`,
     )
     .first<{ frbr_uri: string }>();
   if (!pembanding) return { putusan: "tak_diketahui" };
