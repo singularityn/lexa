@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  buatLingkungan, CRON_MENIT, jalankanCron, konteksIngestUji, sqliteAda, type Lingkungan,
+  buatLingkungan, CRON_HARIAN, CRON_MENIT, jalankanCron, konteksIngestUji, sqliteAda, type Lingkungan,
 } from "./harness";
 import { PasalClient } from "../../src/worker/lib/pasal";
 import { jalankanTik } from "../../src/worker/lib/tik";
@@ -244,6 +244,34 @@ describe.skipIf(!sqliteAda)("tik (Cron per menit)", () => {
       await tundaPasal(l.env.DB, 60_000, WAKTU);
       expect(await jedaPasalSampai(l.env.DB, WAKTU)).toBe(new Date(WAKTU + 1_800_000).toISOString());
       expect(await jedaPasalSampai(l.env.DB, WAKTU + 1_800_001)).toBeNull();
+    });
+  });
+
+  describe("denyut (jejak bahwa Cron berjalan)", () => {
+    const denyut = async (cron: string) =>
+      (await l.db.prepare(`SELECT value FROM sync_state WHERE key = ?`).bind(`denyut:${cron}`).first<{ value: string }>())?.value;
+
+    it("setiap eksekusi Cron meninggalkan jejak per ekspresi, juga saat tik sepi", async () => {
+      stubPasal();
+      await tanamSemuaDiagnosa();
+      await jalankanCron(l, CRON_MENIT);
+      expect(await denyut(CRON_MENIT)).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
+      expect(await denyut(CRON_HARIAN)).toBeUndefined();
+      await jalankanCron(l, CRON_HARIAN);
+      expect(await denyut(CRON_HARIAN)).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
+    });
+
+    it("tidak menulis lagi selama catatannya masih baru, dan menulis ulang sesudah lima menit", async () => {
+      const { catatDenyut } = await import("../../src/worker/lib/keadaan");
+      await catatDenyut(l.env.DB, CRON_MENIT, WAKTU);
+      const sebelum = perubahanTotal();
+      await catatDenyut(l.env.DB, CRON_MENIT, WAKTU + 60_000);
+      await catatDenyut(l.env.DB, CRON_MENIT, WAKTU + 240_000);
+      expect(perubahanTotal()).toBe(sebelum);
+      expect(await denyut(CRON_MENIT)).toBe(new Date(WAKTU).toISOString());
+
+      await catatDenyut(l.env.DB, CRON_MENIT, WAKTU + 301_000);
+      expect(await denyut(CRON_MENIT)).toBe(new Date(WAKTU + 301_000).toISOString());
     });
   });
 

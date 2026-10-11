@@ -73,3 +73,19 @@ export async function lepasPinjaman(db: D1Database, nama: string): Promise<void>
     .run()
     .catch(() => {});
 }
+
+/**
+ * Catat bahwa pemicu Cron `cron` berjalan: kunci "denyut:<ekspresi>" berisi waktu eksekusi terakhir (ISO). Bila
+ * catatannya masih lebih baru dari `selangMs`, tidak ada yang ditulis, jadi Cron per menit hanya menulis tiap lima
+ * menit. Tanpa jejak ini tidak ada cara membedakan "Cron per menit tak berjalan" dari "berjalan tetapi tak ada kerja".
+ */
+export async function catatDenyut(db: D1Database, cron: string, sekarang = Date.now(), selangMs = 300_000): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO sync_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+           WHERE sync_state.value < ?`,
+    )
+    .bind(`denyut:${cron}`, new Date(sekarang).toISOString(), new Date(sekarang - selangMs).toISOString())
+    .run();
+}

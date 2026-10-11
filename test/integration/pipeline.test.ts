@@ -523,7 +523,8 @@ describe.skipIf(!sqliteAda)("sinkronisasi pasal.id", () => {
         throw new Error("Queues sedang gangguan");
       };
       await expect(jalankanCron(l)).resolves.toBeUndefined(); // dibungkus catch di scheduled()
-      expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM sync_state`).first<{ n: number }>())?.n).toBe(0);
+      // Hanya kursor sapuan yang dihitung: pemicu Cron juga meninggalkan jejak "denyut:..." di tabel yang sama.
+      expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM sync_state WHERE key LIKE 'offset:%' OR key = 'jenis_awal'`).first<{ n: number }>())?.n).toBe(0);
     });
 
     describe("urutan jenis diputar agar tidak ada yang kelaparan", () => {

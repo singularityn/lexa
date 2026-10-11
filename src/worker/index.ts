@@ -25,6 +25,7 @@ import {
   type PesanIngest,
 } from "./lib/ingest";
 import { jalankanTik } from "./lib/tik";
+import { catatDenyut } from "./lib/keadaan";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -105,6 +106,8 @@ export default {
   fetch: app.fetch,
 
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    // Jejak bahwa pemicu ini berjalan; kegagalan mencatat tak boleh menghentikan pekerjaannya.
+    ctx.waitUntil(catatDenyut(env.DB, event.cron).catch((e) => console.error("Lexa: denyut gagal dicatat", e)));
     // Dua pemicu di wrangler.jsonc: harian (sapuan lama) dan per menit (tik). Yang tak dikenal dianggap tik.
     if (event.cron === CRON_HARIAN) {
       if (!env.PASAL_API_TOKEN) {
