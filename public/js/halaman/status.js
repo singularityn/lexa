@@ -2,7 +2,7 @@
 import { h, isi } from "../dom.js";
 import { api, dibatalkan } from "../api.js";
 import { angka, daftarCakupan, judulRingkas, kodeJenis, labelJenis, sitasi, urlPeraturan } from "../format.js";
-import { kerangka, kotakGalat } from "../komponen/umum.js";
+import { kerangka, kotakGalat, peringatan } from "../komponen/umum.js";
 
 const NAMA_PEKERJAAN = /** @type {Record<string, string>} */ ({
   jadwal_sinkronisasi: "Sinkronisasi terjadwal",
@@ -12,7 +12,109 @@ const NAMA_PEKERJAAN = /** @type {Record<string, string>} */ ({
   ringkas: "Ringkasan AI",
   perbaiki_celah: "Perbaikan pasal bercelah",
   asisten: "Tanya Lexa",
+  isi_peraturan: "Pengambilan isi peraturan",
+  akses_isi: "Akses isi pasal.id",
+  pasal_laju: "Batas laju pasal.id",
+  hapus_objek: "Pembersihan data lama",
+  pemeliharaan: "Pemeliharaan harian",
 });
+
+/** Urutan jenis di tabel kelengkapan: sama dengan urutan pengambilan isi. */
+const URUTAN_JENIS = ["UUD", "TAP_MPR", "UU", "PERPPU", "PP"];
+
+/** Waktu ISO (UTC) dalam zona waktu pembaca. @param {string | null | undefined} iso */
+function waktuIso(iso) {
+  if (!iso) return "belum pernah";
+  const t = new Date(iso);
+  return Number.isNaN(t.getTime()) ? iso : t.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
+}
+
+/**
+ * Kelengkapan isi: berapa peraturan yang sudah punya pasal, menunggu giliran, atau tanpa isi di sumber, per jenis, dan
+ * kendala yang sedang menghambat (pasal.id tidak memberi naskah, atau meminta jeda).
+ * @param {import("../api.js").KemajuanIsi} isi
+ * @param {string[]} cakupan
+ */
+function panelKelengkapan(isi, cakupan) {
+  const jenis = [...URUTAN_JENIS.filter((j) => cakupan.includes(j)), ...cakupan.filter((j) => !URUTAN_JENIS.includes(j))];
+  const baris = jenis.map((j) => ({
+    jenis: j,
+    sumber: isi.katalog[j]?.total_sumber ?? null,
+    dukungan: isi.katalog[j]?.dukungan ?? null,
+    ...(isi.per_jenis[j] ?? { total: 0, pasal: 0, lengkap: 0, menunggu: 0, kosong: 0, gagal: 0 }),
+  }));
+  const total = baris.reduce((n, b) => n + b.total, 0);
+  const lengkap = baris.reduce((n, b) => n + b.lengkap, 0);
+  const persen = total ? Math.round((lengkap / total) * 100) : 0;
+  const hariIni = isi.hari_ini;
+  const terakhir = isi.denyut.antrean ?? isi.denyut.menit;
+
+  return h(
+    "section",
+    { class: "bagian", "aria-labelledby": "judul-kelengkapan" },
+    h("h2", { id: "judul-kelengkapan" }, "Kelengkapan isi"),
+    isi.akses
+      ? peringatan(
+          "diubah",
+          h("p", null, h("strong", null, "pasal.id sedang tidak memberi isi peraturan.")),
+          h(
+            "p",
+            null,
+            "Daftar peraturan tetap diperbarui, tetapi teks pasal belum bisa diambil. Penyebab umum: token API tidak berhak atas teks lengkap, atau kuota baca harian akun (300) habis. Pengambilan dilanjutkan sendiri begitu pasal.id kembali memberi isi.",
+          ),
+          isi.akses.catatan ? h("p", { class: "redup" }, `Catatan pasal.id: ${isi.akses.catatan}`) : null,
+          h("p", { class: "redup" }, `Terlihat sejak ${waktuIso(isi.akses.sejak)}; diperiksa lagi ${waktuIso(isi.akses.periksa_lagi)}.`),
+        )
+      : null,
+    isi.pasal_dijeda_sampai ? peringatan("info", h("p", null, `pasal.id meminta jeda. Pengambilan data dilanjutkan sekitar ${waktuIso(isi.pasal_dijeda_sampai)}.`)) : null,
+    h(
+      "div",
+      { class: "kartu" },
+      h("p", { class: "kelengkapan-ringkas" }, h("strong", null, `${angka(lengkap)} dari ${angka(total)}`), " peraturan sudah punya teks pasal"),
+      h(
+        "div",
+        { class: "meter", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(persen), "aria-label": "Peraturan yang sudah punya teks pasal" },
+        h("span", { style: { width: `${persen}%` } }),
+      ),
+      h(
+        "div",
+        { class: "tabel-gulir", tabindex: "0", role: "region", "aria-label": "Kelengkapan isi per jenis, dapat digulir" },
+        h(
+          "table",
+          { class: "tabel" },
+          h("thead", null, h("tr", null, ["Jenis", "Di sumber", "Tersimpan", "Berisi pasal", "Menunggu", "Tanpa isi", "Gagal"].map((k, i) => h("th", { class: i ? "angka-tabel" : "" }, k)))),
+          h(
+            "tbody",
+            null,
+            baris.map((b) =>
+              h(
+                "tr",
+                null,
+                h("td", null, kodeJenis(b.jenis)),
+                h("td", { class: "angka-tabel" }, b.dukungan?.startsWith("tidak") ? "tak ada" : b.sumber === null ? "belum disapu" : angka(b.sumber)),
+                h("td", { class: "angka-tabel" }, angka(b.total)),
+                h("td", { class: "angka-tabel" }, angka(b.lengkap)),
+                h("td", { class: "angka-tabel" }, angka(b.menunggu)),
+                h("td", { class: "angka-tabel" }, angka(b.kosong)),
+                h("td", { class: "angka-tabel" }, angka(b.gagal)),
+              ),
+            ),
+          ),
+        ),
+      ),
+      h(
+        "p",
+        { class: "redup kelengkapan-catatan" },
+        "\"Di sumber\" adalah jumlah peraturan jenis itu di daftar pasal.id; \"Menunggu\" sudah tercatat tetapi pasalnya belum diambil. Lexa mengambil isi bertahap, UUD dan Tap MPR lebih dulu, lalu UU, Perppu, dan PP, yang terbaru lebih dulu.",
+      ),
+      h(
+        "p",
+        { class: "redup kelengkapan-catatan" },
+        `Pemroses latar terakhir berjalan ${waktuIso(terakhir)}. Hari ini: ${angka(hariIni.katalog ?? 0)} peraturan didaftar, ${angka(hariIni.lengkap ?? 0)} diisi, ${angka(hariIni.batas_laju ?? 0)} kali kena batas laju.`,
+      ),
+    ),
+  );
+}
 
 /** Waktu D1 ("2026-10-03 08:38:22", UTC) dalam zona waktu pembaca. @param {string} d */
 function waktuLokal(d) {
@@ -42,6 +144,7 @@ export default async function status(ctx) {
         h("div", { class: "kartu" }, h("span", { class: "angka" }, angka(s.total_pasal)), h("span", { class: "label" }, "pasal dan ayat")),
         h("div", { class: "kartu" }, h("span", { class: "angka" }, `${cakupan}%`), h("span", { class: "label" }, `terindeks untuk pencarian makna (${angka(s.terindeks_vektor)})`)),
       ),
+      s.isi ? panelKelengkapan(s.isi, s.cakupan ?? []) : null,
       h(
         "div",
         { class: "dua-sama" },

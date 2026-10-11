@@ -3,11 +3,13 @@
 Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di atas Cloudflare Workers
 (D1, R2, KV, Queues, Vectorize, Workers AI) dengan antarmuka web tanpa langkah build.
 
-> **Status: v0.2.** Backend adalah kode v0.1 yang berjalan di Worker `lexa` (dipulihkan dari sourcemap
-> produksi dan terbukti identik), dengan perbaikan bug yang ditemukan lewat tes. Antarmuka (`public/`)
-> ditulis baru karena frontend v0.1 tidak ikut dalam bundel Worker. Cara menyambungkan repo ini ke
-> Cloudflare dan memeriksa hasilnya ada di
-> [docs/hubungkan-github-cloudflare.md](docs/hubungkan-github-cloudflare.md).
+> **Status: v0.2.** Backend berawal dari kode v0.1 yang berjalan di Worker `lexa` (dipulihkan dari sourcemap
+> produksi dan terbukti identik), dengan perbaikan bug yang ditemukan lewat tes, dan pipeline pengambilan isi yang
+> ditulis ulang (katalog dulu, isi kemudian). Antarmuka (`public/`) ditulis baru karena frontend v0.1 tidak ikut dalam
+> bundel Worker, dan kini memakai desain dari Claude Design (merek hanya teks "Lexa"). **Perhatian:** sejak 11 Okt 2026
+> pasal.id tidak memberi teks pasal lewat API untuk token Worker ini, sehingga peraturan baru baru terisi bila aksesnya
+> pulih; lihat [docs/pipeline-data.md](docs/pipeline-data.md). Cara menyambungkan repo ini ke Cloudflare dan memeriksa
+> hasilnya ada di [docs/hubungkan-github-cloudflare.md](docs/hubungkan-github-cloudflare.md).
 
 ## Yang dilakukan
 
@@ -30,14 +32,18 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
   menyebut sumbernya, dan menandai peraturan yang sudah dicabut atau diubah.
 - **Akun opsional**: login Google, koleksi pribadi dengan catatan (tamu menyimpannya di perangkat; saat
   masuk, koleksi perangkat digabung ke akun tanpa menimpa catatan), riwayat percakapan.
-- **Ingest**: Cron harian + Queues menarik data dari API pasal.id; API impor menerima manifest dan PDF
-  dari BPK; PDF diekstrak menjadi pasal dengan penilaian kualitas; hasilnya diindeks ke FTS5 dan Vectorize.
+- **Ingest**: katalog dulu, isi kemudian. Daftar pasal.id disapu per jenis (UUD, Tap MPR, UU, Perppu, PP) ke D1, lalu
+  isinya diambil satu per satu menurut prioritas oleh tik per menit (dengan cadangan lewat Queues); tiap peraturan
+  membawa statusnya sendiri (menunggu, lengkap, kosong, gagal), responsnya diarsipkan di R2 supaya bisa diuraikan ulang
+  tanpa pasal.id, dan data yang sudah ada tak pernah diganti dengan yang lebih sedikit. API impor menerima manifest
+  dan PDF dari BPK; PDF diekstrak menjadi pasal dengan penilaian kualitas; hasilnya diindeks ke FTS5 dan Vectorize.
+  Lihat [docs/pipeline-data.md](docs/pipeline-data.md).
 
 ## Arsitektur
 
 Satu Worker (`src/worker/index.ts`, Hono) mengerjakan tiga peran: `fetch` (API `/api/*`, `robots.txt`,
-`sitemap.xml`, dan `/peraturan` untuk pratinjau tautan), `scheduled` (Cron harian) dan `queue` (konsumer
-antrean ingest). Selain rute itu, permintaan dilayani sebagai aset statis dari `public/` dengan fallback ke
+`sitemap.xml`, dan `/peraturan` untuk pratinjau tautan), `scheduled` (Cron per menit untuk tik pipeline dan Cron harian
+untuk pemeliharaan) dan `queue` (konsumer antrean ingest, yang juga menjalankan tik cadangan). Selain rute itu, permintaan dilayani sebagai aset statis dari `public/` dengan fallback ke
 `index.html` (rute sisi klien).
 
 | Binding | Layanan | Resource | Fungsi |
@@ -50,7 +56,10 @@ antrean ingest). Selain rute itu, permintaan dilayani sebagai aset statis dari `
 | `INGEST_QUEUE` | Queues | `lexa-ingest` | antrean ingest; DLQ `lexa-ingest-dlq` |
 | `ASSETS` | Static Assets | `public/` | cangkang SPA yang dipakai `/peraturan` untuk pratinjau tautan |
 
-Cron: harian pukul 19:00 UTC (02:00 WIB). Skema D1 dan alasan desainnya ada di `migrations/`.
+Cron: `* * * * *` (tik pipeline) dan `0 19 * * *` (pemeliharaan harian, 02:00 WIB). Di produksi Cron per menit tak
+terbukti berjalan (tak ada jejak `denyut:* * * * *`), sehingga `vars.TIK_CADANGAN = "antrean"` menjalankan tik lewat rantai
+pesan di `lexa-ingest`; lihat [docs/pipeline-data.md](docs/pipeline-data.md). Skema D1 dan alasan desainnya ada di
+`migrations/`.
 
 ### Endpoint API
 
@@ -73,6 +82,13 @@ Rute: `/` beranda, `/cari`, `/telusuri`, `/peraturan?uri=…` (sama dengan URL p
 `/koleksi`, `/akun`, `/tentang`, `/status`. Seluruh teks dinamis dimasukkan sebagai simpul teks (tanpa
 `innerHTML`), CSP ketat lewat `public/_headers`, dan JavaScript-nya dicek tipenya (`checkJs`) lewat
 `tsconfig.web.json`.
+
+Desainnya dari Claude Design (paket `Redesign UI aplikasi Lexa`, Oktober 2026): palet krem dan tinta (terang dan gelap),
+Plus Jakarta Sans untuk antarmuka dan Newsreader untuk naskah, kapsul navigasi mengambang di ponsel dan bilah samping di
+layar lebar. Huruf dilayani dari `public/fonts/` (hanya aksara latin, 128 KB) supaya CSP tetap `font-src 'self'`.
+**Tidak ada logo**: merek hanyalah teks "Lexa" (Newsreader 600); favicon, ikon aplikasi, dan gambar pratinjau tautan
+memakai tipografi yang sama dan dibuat ulang oleh `npm run ikon` dan `node scripts/buat-og.mjs`. Halaman `/status`
+menampilkan kelengkapan isi per jenis dan kendala pasal.id yang sedang berlaku.
 
 #### Pratinjau tautan
 
@@ -109,16 +125,18 @@ navigasi utama ada di bilah bawah, dan area aman (takik, bilah gestur) dihormati
 ```
 src/worker/index.ts      titik masuk: fetch + scheduled + queue
 src/worker/routes/       api, fitur, dokumen, auth, tanya, koleksi, impor
-src/worker/lib/          query (stemmer, parser kueri), search (hybrid + RRF), pasal (klien pasal.id),
-                         bpk (parser manifest dan PDF), ingest (pipeline), pratinjau (pratinjau tautan), sesi, auth, cors, bidang, d1
+src/worker/lib/          query (stemmer, parser kueri), search (hybrid + RRF), pasal (klien dan pengurai pasal.id),
+                         bpk (parser manifest dan PDF), ingest (konsumer antrean, PDF, vektor), pratinjau (pratinjau tautan),
+                         sesi, auth, cors, bidang, d1; pipeline isi: katalog, isi, tik, cadangan, akses, hapus,
+                         pemeliharaan, diagnosa, keadaan, jadwal
 src/worker/env.d.ts      tipe global Env (binding, variabel, secret)
 src/shared/types.ts      tipe bersama
 public/                  antarmuka (index.html, css/, js/, _headers, favicon, ikon/, og/)
-migrations/              migrasi D1 0000-0004 (direkonstruksi dari skema produksi)
+migrations/              migrasi D1: 0000-0004 direkonstruksi dari skema produksi, 0005-0006 antrean isi dan daftar hapus
 test/                    tes unit; test/integration: Worker asli di atas SQLite sungguhan
 e2e/                     tes antarmuka di Chromium
 scripts/                 pratinjau lokal (dev-node.ts), data contoh, pembuat ikon dan gambar pratinjau, pembaruan sw.js
-docs/                    analisis kelayakan dan panduan koneksi GitHub-Cloudflare
+docs/                    analisis kelayakan, panduan koneksi GitHub-Cloudflare, pipeline data, analisis UI/UX
 wrangler.jsonc           konfigurasi Worker
 ```
 
@@ -157,27 +175,45 @@ cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignor
 | `SUMMARY_MODEL` | variabel | model teks untuk ringkasan dan tanya-jawab |
 | `BPK_BASE` | variabel | basis URL peraturan.bpk.go.id untuk tautan sumber |
 | `PASAL_API_BASE` | variabel | basis URL API pasal.id |
+| `TIK_CADANGAN` | variabel (di `wrangler.jsonc`) | `antrean` menyalakan rantai tik cadangan lewat antrean ingest (Cron per menit tak terbukti berjalan di produksi); tes dan pratinjau lokal tidak menyalakannya |
 | `SEARCH_CACHE_TTL` | variabel | TTL cache pencarian dalam detik (bawaan 3600) |
 | `CAKUPAN_JENIS` | variabel (di `wrangler.jsonc`) | kode jenis peraturan yang dicakup, dipisah koma; bawaan `UUD,TAP_MPR,UU,PERPPU,PP` (lihat [Cakupan peraturan](#cakupan-peraturan)) |
 | `ADMIN_TOKEN` | secret | token untuk `/api/admin/*` dan `/api/impor/*` |
-| `PASAL_API_TOKEN` | secret | token API pasal.id; tanpa ini sinkronisasi terjadwal dilewati |
+| `PASAL_API_TOKEN` | secret | token pribadi pasal.id (`Authorization: Bearer`); tanpa ini pipeline tak memanggil pasal.id. Agar teks pasal bisa diambil, token harus berhak atas teks lengkap (lihat [docs/pipeline-data.md](docs/pipeline-data.md#akses-isi-pasalid-temuan-11-okt-2026)) |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | secret | login Google; tanpa ini aplikasi berjalan sebagai tamu |
 
 Secret dipasang dengan `npx wrangler secret put NAMA` (jangan lewat pipa, newline ikut tersimpan) atau
 lewat dashboard. Nilainya tidak pernah masuk Git. Variabel teks lain saat ini dipertahankan dari dashboard
 (`keep_vars` di `wrangler.jsonc`); `CAKUPAN_JENIS` ditetapkan di `wrangler.jsonc` dan ikut setiap deploy.
 
+## Pipeline data
+
+Ringkasannya (rincian, SQL pemeriksaan, dan temuan produksi ada di [docs/pipeline-data.md](docs/pipeline-data.md)):
+
+- **Katalog**: daftar `/laws` pasal.id disapu per jenis tiap 3 hari (UUD, Tap MPR, UU, Perppu, PP; 50 peraturan per
+  permintaan) dan disimpan sebagai baris `laws` berstatus `menunggu`. Peraturan yang detailnya sulit diambil tetap tercatat.
+- **Isi**: tik per menit mengambil detail satu per satu menurut `isi_giliran` (terverifikasi dulu; UUD < Tap MPR < UU <
+  Perppu < PP; terbaru dulu), paling banyak 3 permintaan pasal.id per tik, mematuhi `Retry-After`. Respons mentah
+  diarsipkan di R2 (`mentah/…`) sebelum diuraikan; penyimpanan tak pernah mengganti pasal dengan hasil yang lebih sedikit.
+- **Akses pasal.id**: sejak 11 Okt 2026 detail dijawab tanpa teks (`content: "not_available_via_api"`). Pipeline tidak
+  menganggapnya 'kosong': peraturan dibiarkan menunggu, pengambilan detail dijeda dan diperiksa tiap 30 menit lewat
+  peraturan pembanding, dan berjalan lagi sendiri begitu teks kembali. Keadaannya tampil di `/status`.
+- **Pemicu**: Cron `* * * * *` bila berjalan, selain itu rantai pesan di antrean (`TIK_CADANGAN`), disemai Cron harian
+  dan permintaan HTTP. Cron harian menjalankan pemeliharaan.
+- **Kontrol**: `POST /api/admin/sync` (`tik`, `uri`, `jenis`, `perbaiki_celah`, `ulang_arsip`, `ringkas_kosong`).
+
 ## Cakupan peraturan
 
 Atas keputusan pemilik, cakupan Lexa dibatasi pada **UUD (dan yang setara: Ketetapan MPR), undang-undang
 (termasuk Perppu), dan peraturan pemerintah**. Alasannya beban: ukuran D1 dan indeks FTS, jumlah vektor di
-Vectorize, pemanggilan Workers AI, dan terutama antrean ingest yang dibatasi laju pasal.id (360 detail per jam)
-yang sebelumnya terkuras oleh PERPRES dan jenis lain sehingga PP tertinggal. Satu daftar (`CAKUPAN_JENIS`, bawaan
+Vectorize, pemanggilan Workers AI, dan terutama antrean ingest yang dibatasi laju pasal.id (di produksi 429 datang
+setelah belasan permintaan, dan pembacaan teks lengkap dibatasi 300 per akun per hari) yang sebelumnya terkuras oleh PERPRES
+dan jenis lain sehingga PP tertinggal. Satu daftar (`CAKUPAN_JENIS`, bawaan
 di `src/shared/cakupan.ts`) dipakai di semua tempat:
 
 | Pintu | Perilaku untuk jenis di luar cakupan |
 |---|---|
-| Cron sinkronisasi | hanya menyapu UU, PERPPU, dan PP (irisan cakupan dengan kode filter `type` pasal.id yang terbukti); daftar yang ikut jenis lain dibuang; sisa peraturan kosong di luar cakupan tidak menahan sapuan |
+| Katalog dan tik | hanya menyapu jenis dalam cakupan (UUD, TAP_MPR, UU, PERPPU, PP: irisan `CAKUPAN_JENIS` dengan `JENIS_KATALOG`); baris daftar jenis lain dibuang; baris antrean di luar cakupan ditandai 'kosong' tanpa memanggil pasal.id |
 | Konsumer antrean | pesan lama untuk URI di luar cakupan di-ack tanpa menyentuh pasal.id, AI, Vectorize, R2, atau D1; peraturan yang jenisnya dilaporkan pasal.id di luar cakupan tidak disimpan |
 | `POST /api/admin/sync` | `jenis` di luar cakupan ditolak (400 `di_luar_cakupan`); `uri`, `ringkas_kosong`, dan `perbaiki_celah` hanya menyentuh yang dalam cakupan |
 | Impor BPK | dokumen di luar cakupan dimasukkan ke `ditolak` dengan alasannya (skrip panen cukup membaca daftar itu); PDF untuk baris lama di luar cakupan ditolak (422) |
@@ -190,23 +226,27 @@ Penentu cakupan adalah kolom `laws.jenis`. Segmen FRBR URI hanya jalan pintas un
 (`permenkeu`, `mk`, `pkpu`, ...), sehingga URI yang tak dikenal dinilai "belum jelas" dan diserahkan ke barisnya. Pesan
 Cron membawa kode jenis untuk alasan yang sama.
 
-Baris peraturan yang sudah tersimpan di D1 (di produksi pada 4 Okt 2026: 2.131 dari 5.673; PERPRES 1.380, POJK 547,
-PERMEN 204) **hanya disembunyikan, tidak dihapus**, sehingga melebarkan cakupan kelak langsung menampakkannya
-kembali tanpa menarik ulang. Menghapusnya (opsional; mengurangi D1, FTS5, Vectorize, dan R2) tidak dilakukan
-otomatis; langkahnya ada di [docs/hubungkan-github-cloudflare.md](docs/hubungkan-github-cloudflare.md#cakupan-peraturan).
+Baris peraturan di luar cakupan **sudah dihapus dari produksi pada 11 Okt 2026** atas permintaan pemilik: 2.131
+peraturan (PERPRES 1.380, POJK 547, PERMEN 204, dan sisanya) dengan 15.457 baris pasal dan relasinya dari D1, sedangkan 6.393
+berkas R2 dan 21.128 vektor Vectorize yang yatim dicatat di tabel `daftar_hapus` dan dikosongkan bertahap oleh tik
+(`lib/hapus.ts`). Melebarkan cakupan kelak berarti mengambil datanya lagi dari sumber.
 
 Melebarkan cakupan: tambahkan kodenya ke `vars.CAKUPAN_JENIS` di `wrangler.jsonc` (mis.
-`"UUD,TAP_MPR,UU,PERPPU,PP,PERPRES"`), sebarkan, lalu jalankan sinkronisasi. Jenis yang disapu Cron hanyalah yang
-kode filternya dikenal pasal.id (`UU`, `PERPPU`, `PP`, `PERPRES`, `PERMEN`, `POJK`, `PBI`); `UUD` dan `TAP_MPR` masuk lewat
-impor BPK, atau dicoba dengan `POST /api/admin/sync {"jenis":["UUD"]}`. Nilai kosong atau tak sah dibaca sebagai
-bawaan, bukan sebagai "semua" maupun "tidak ada". Pratinjau lokal memakai bawaan yang sama
-(`CAKUPAN_JENIS=UU,PP,PERPRES npm run dev:node` untuk melebarkannya).
+`"UUD,TAP_MPR,UU,PERPPU,PP,PERPRES"`) **dan** ke `JENIS_KATALOG` di `src/worker/lib/katalog.ts` (dengan `PERINGKAT_JENIS` dan
+`SQL_GILIRAN` di `lib/isi.ts` bila perlu urutannya), sebarkan, lalu mulai sapuan dengan
+`POST /api/admin/sync {"jenis":["PERPRES"]}`. Hanya kode filter `type` yang dikenal pasal.id yang bekerja (`UU`, `PERPPU`,
+`PP`, `PERPRES`, `PERMEN`, `POJK`, `PBI`; `UUD` dan `TAP_MPR` dibuktikan oleh sapuan pertama dan dicatat di
+`katalog_dukungan:*`); yang lain masuk lewat impor BPK. Nilai kosong atau tak sah dibaca sebagai bawaan, bukan sebagai
+"semua" maupun "tidak ada". Pratinjau lokal memakai bawaan yang sama (`CAKUPAN_JENIS=UU,PP,PERPRES npm run dev:node` untuk
+melebarkannya).
 
 ## Migrasi D1
 
-Berkas di `migrations/` diberi nomor berurutan. **Jangan mengubah 0000-0004**: nama berkasnya sama
-dengan yang tercatat di tabel `d1_migrations` produksi, sehingga dianggap sudah diterapkan di sana.
-Perubahan skema baru = berkas baru (`0005_….sql`), lalu terapkan secara sengaja:
+Berkas di `migrations/` diberi nomor berurutan. **Jangan mengubah 0000-0006**: nama berkasnya sama
+dengan yang tercatat di tabel `d1_migrations` produksi, sehingga dianggap sudah diterapkan di sana (0005 dan 0006
+diterapkan pada 11 Okt 2026: kolom `isi_*` dan penanda arsip pada `laws`, indeks antrean parsial, pemicu FTS yang hanya
+menyala untuk kolom yang diindeks, dan tabel `daftar_hapus`). Perubahan skema baru = berkas baru (`0007_….sql`), lalu
+terapkan secara sengaja:
 
 ```bash
 npm run d1:migrate:local     # uji di D1 lokal dulu
@@ -266,15 +306,24 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 
 ## Isu yang diketahui
 
-- Cakupan data produksi (diperiksa 4 Okt 2026): 5.673 peraturan tersimpan dan 71.627 baris pasal. Yang dalam cakupan
-  (disajikan): 3.542 peraturan (UU 1.950, PP 1.422, Perppu 168, Tap MPR 2) dengan 56.170 baris pasal; 3.420 di antaranya
-  punya teks pasal dan 122 hanya metadata (halaman bacanya menampilkan "Teks pasal belum tersedia" dan tautan ke naskah
-  resmi). Sisanya, 2.131 peraturan di luar cakupan, tersimpan tetapi disembunyikan. Belum ada UUD 1945 di D1: ia masuk
-  lewat impor BPK (jenis `UUD` diterima) atau bila pasal.id menyediakannya.
-- Kursor sinkronisasi `offset:PP` = 4400, jauh di atas 1.422 PP yang tersimpan: sapuan lama membuang halaman saat kena
-  batas laju (sudah diperbaiki), dan kursor menandakan pasal.id memuat sedikitnya ±4.400 PP. Setelah cakupan dibatasi,
-  PERPRES tak lagi menghabiskan jatah laju, sehingga PP terisi bertahap (≤200 per hari, ditahan bila lebih dari 400
-  peraturan menunggu isinya). Bila hendak dipercepat atau ditahan, lihat pemulihan di docs/hubungkan-github-cloudflare.md.
+- **pasal.id tidak memberi teks pasal lewat API (11 Okt 2026).** Setiap `GET /laws/<uri>` untuk token Worker ini dijawab
+  `{ work, content: "not_available_via_api", content_note }` tanpa `articles`. Menurut dokumentasi publik pasal.id, detail
+  lewat REST API memerlukan token akun yang berhak dan pembacaan teks lengkap dibatasi 300 per akun per hari. Pipeline
+  tidak lagi menganggap jawaban itu 'kosong' (peraturan dibiarkan 'menunggu', jawabannya tak diarsipkan), menjeda
+  pengambilan detail, memeriksa pulihnya akses tiap 30 menit, dan menampilkan keadaannya di `/status`. Pemilik perlu
+  memeriksa/memperbarui `PASAL_API_TOKEN` atau meminta kuota ke pasal.id; selama itu peraturan baru hanya tercatat
+  metadatanya. Langkah dan contoh surat ada di [docs/pipeline-data.md](docs/pipeline-data.md#akses-isi-pasalid-temuan-11-okt-2026).
+- **Cakupan data produksi (11 Okt 2026, sesudah penghapusan data di luar cakupan):** 3.870 peraturan dalam cakupan
+  (UU 1.950, PP 1.750, Perppu 168, Tap MPR 2) dengan 53.119 baris pasal; 3.456 berstatus 'lengkap' (punya teks pasal,
+  sebagian mungkin tersimpan tak utuh, lihat berikut) dan 414 'menunggu'. Katalog masih menyapu: UU di daftar pasal.id
+  berjumlah 1.901 dan PP jauh lebih banyak daripada 1.750 (kursor lama menandakan ±5.000), sehingga angka ini naik, dengan
+  status 'menunggu'. Belum ada UUD 1945 di D1: sapuan UUD dan Tap MPR mencoba kode filternya di pasal.id (hasilnya di
+  `katalog_dukungan:*`); bila tak didukung, UUD 1945 masuk lewat impor BPK.
+- **Ekstraksi pasal sebagian.** Sebelum teksnya ditutup, banyak undang-undang besar tersimpan sebagian (UU 17/2023: 59 dari
+  458 pasal; UU 27/2009: Pasal 1 dan 400-408 dari 408; KUHAP 39 dari 286), polanya pasal yang punya ayat lenyap.
+  Pengurai sudah diperbaiki untuk simpul yatim dan ayat/butir bersaudara (`ratakanPohonPasal`), tetapi bentuk respons nyata
+  belum pernah terlihat; ringkasannya akan tersimpan di `sync_state` kunci `diagisi:*` begitu pasal.id memberi teks lagi,
+  dan `{"perbaiki_celah": true}` lalu mengantrekan ulang yang tersimpan sebagian.
 - Teks hasil ekstraksi versi lama masih memuat sisa: 401 peraturan punya baris pasal ber-id `~n` (umumnya bagian
   Penjelasan yang memakai ulang nomor pasal; UU 13/2003 punya 72 baris seperti itu dan UU 11/2020 744) dan 289
   memuat teks "PENJELASAN" di dalam baris pasalnya. Parser saat ini berhenti di judul "PENJELASAN"; antarmuka
@@ -294,13 +343,13 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 - Ambang relevansi Tanya Lexa berbasis peringkat RRF, bukan kemiripan mutlak: enam hasil vektor teratas
   selalu lolos untuk kueri apa pun. Perlindungan utamanya prompt yang tegas; ambang sesungguhnya butuh skor
   kosinus dari Vectorize.
-- Vektor lama tidak dihapus dari Vectorize saat peraturan diingest ulang (disaring saat pencarian, tetapi
-  menumpuk).
-- Sisa 28 relasi menggantung ke PP menunjuk peraturan yang memang belum ter-ingest (kursor sinkronisasi
-  tertinggal; lihat langkah pemulihan di docs/hubungkan-github-cloudflare.md).
+- Vektor yang yatim karena peraturan diambil ulang kini dicatat di `daftar_hapus` dan dihapus dari Vectorize oleh tik;
+  yang menumpuk sebelumnya (21.128 id) sedang dikosongkan bertahap.
+- Sisa 28 relasi menggantung ke PP menunjuk peraturan yang memang belum ter-ingest (katalog belum lengkap; ia akan
+  tersambung begitu peraturannya tercatat).
 - D1 dan R2 berada di Amerika Timur dengan read replication nonaktif, sehingga latensi dari Indonesia tinggi.
 - Pembatas laju `/api/tanya` berbasis KV (tidak atomik); sitemap satu berkas (batas protokol 50.000
-  URL; produksi memuat 3.542 dalam cakupan) dan memakai URL berparameter.
+  URL; produksi memuat 3.870 dalam cakupan) dan memakai URL berparameter.
 - Pratinjau tautan hanya ada untuk halaman peraturan (`/peraturan?uri=…`), dengan gambar merek yang sama untuk
   semuanya; halaman lain (mis. hasil pencarian) memakai pratinjau umum situs. WhatsApp dan Telegram menyimpan
   pratinjau per tautan, jadi tautan yang pernah dibagikan sebelum fitur ini ada bisa tetap tampil lama.
@@ -309,7 +358,13 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 
 - **Skrip panen BPK.** `cors.ts` hanya mengizinkan origin `peraturan.bpk.go.id`, yang menunjukkan panen
   dijalankan dari sesi peramban di situs BPK lalu mengirim data ke `/api/impor/*`. Skripnya
-  (`scripts/bpk-console-harvest.js` menurut komentar kode) tidak ada di repo ini.
+  (`scripts/bpk-console-harvest.js` menurut komentar kode) tidak ada di repo ini. Ini jalur sah satu-satunya untuk
+  melengkapi teks UUD, UU, Perppu, dan PP bila pasal.id tetap menutup teksnya (Lexa sengaja tidak menarik situs BPK dari
+  Worker; situs itu hanya ditautkan). Peraturan yang masih 'menunggu' atau 'kosong' bisa dibaca dari `GET /api/stats`
+  (`isi.per_jenis`) dan D1.
+- **Klien server MCP pasal.id.** Teks lengkap juga tersedia lewat server MCP pasal.id (OAuth atau token pribadi) dengan
+  batas yang sama; sengaja tidak dibangun sebagai jalur pengambilan massal karena itu pemakaian interaktif. Bila pasal.id
+  memberi akses data resmi, pengambilnya cukup menggantikan `getLawMentah`/`uraiDetail` di `lib/pasal.ts`.
 
 ## Dokumen
 
@@ -317,5 +372,7 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
   data BPK, estimasi biaya, peta jalan, dan peta fitur.
 - [docs/hubungkan-github-cloudflare.md](docs/hubungkan-github-cloudflare.md): menghubungkan repo ini ke
   Worker `lexa` lewat Workers Builds, dengan daftar periksa pasca-deploy dan rollback.
+- [docs/pipeline-data.md](docs/pipeline-data.md): pipeline katalog dan isi, akses pasal.id (temuan 11 Okt 2026),
+  mengendalikan dan memeriksa pipeline di produksi, dan tindakan produksi.
 - [docs/analisis-ux-dan-fitur.md](docs/analisis-ux-dan-fitur.md): analisis lanjutan UI/UX dan fitur (temuan,
   tindakan, peta jalan), memakai Claude Design, memasang ke layar utama, dan daftar periksa di perangkat asli.

@@ -852,3 +852,36 @@ describe("cakupan peraturan (UUD, Tap MPR, UU, Perppu, PP)", () => {
     await reset();
   });
 });
+
+describe("status: kelengkapan isi", () => {
+  it("menampilkan kemajuan isi per jenis dalam urutan pengambilan, tanpa peringatan bila akses baik", async () => {
+    await page.goto(BASE + "/status", { waitUntil: "networkidle" });
+    await page.waitForSelector("#judul-kelengkapan");
+    const jenis = await page.locator("section[aria-labelledby=judul-kelengkapan] tbody tr td:first-child").allTextContents();
+    expect(jenis).toEqual(["UUD", "TAP MPR", "UU", "PERPPU", "PP"]);
+    const meter = page.locator("section[aria-labelledby=judul-kelengkapan] [role=progressbar]");
+    expect(Number(await meter.getAttribute("aria-valuenow"))).toBeGreaterThanOrEqual(0);
+    expect(await page.textContent("section[aria-labelledby=judul-kelengkapan]")).toMatch(/\d+ dari \d+\s*peraturan sudah punya teks pasal/);
+    expect(await page.locator("section[aria-labelledby=judul-kelengkapan] .peringatan").count()).toBe(0);
+  });
+
+  it("memperingatkan terus terang bila pasal.id tidak memberi isi, dengan catatan sumber dan kapan diperiksa lagi", async () => {
+    const nyata = await (await fetch(`${BASE}/api/stats`)).json();
+    nyata.isi.akses = {
+      sejak: "2026-10-11T16:18:00.000Z",
+      terakhir: "2026-10-11T17:20:00.000Z",
+      periksa_lagi: "2026-10-11T17:50:00.000Z",
+      catatan: "not_available_via_api — Teks lengkap hanya untuk pemakai yang masuk.",
+    };
+    nyata.isi.pasal_dijeda_sampai = "2026-10-11T18:00:00.000Z";
+    await page.route((url) => url.pathname === "/api/stats", (route) => route.fulfill({ json: nyata }));
+    await page.goto(BASE + "/status", { waitUntil: "networkidle" });
+    await page.waitForSelector("#judul-kelengkapan");
+    const panel = page.locator("section[aria-labelledby=judul-kelengkapan]");
+    expect(await panel.locator("[role=alert]").textContent()).toContain("pasal.id sedang tidak memberi isi peraturan.");
+    const teks = await panel.textContent();
+    expect(teks).toContain("Catatan pasal.id: not_available_via_api — Teks lengkap hanya untuk pemakai yang masuk.");
+    expect(teks).toContain("diperiksa lagi");
+    expect(teks).toContain("pasal.id meminta jeda");
+  });
+});

@@ -484,11 +484,19 @@ function panelIsi(ctx, d, q, kelompok) {
   const l = d.law;
   const nama = sitasi(l);
   if (!d.articles.length) {
+    // Tautan sumber berasal dari data hulu: hanya http(s) yang dijadikan tautan.
+    const sumber = d.bpk_url ?? (l.sumber_url && /^https?:\/\//i.test(l.sumber_url) ? l.sumber_url : null);
     return {
       el: keadaanKosong(
         "Teks pasal belum tersedia di Lexa",
-        h("p", null, "Metadata peraturan ini sudah ada, tetapi isinya belum diekstrak. Naskah lengkap tersedia di situs resmi."),
-        d.bpk_url ? h("a", { class: "tombol tombol-utama", href: d.bpk_url, target: "_blank", rel: "noopener noreferrer" }, "Buka naskah resmi (BPK)") : null,
+        h(
+          "p",
+          null,
+          "Data peraturan ini (judul, nomor, dan status) sudah tercatat, tetapi pasal-pasalnya belum berhasil diambil. Lexa mengisi teks peraturan secara bertahap dari sumbernya, dan naskah yang berupa pindaian mungkin tidak pernah memiliki teks. Sementara itu, naskah resminya bisa dibaca di sumber.",
+        ),
+        sumber
+          ? h("a", { class: "tombol tombol-utama", href: sumber, target: "_blank", rel: "noopener noreferrer" }, d.bpk_url ? "Buka naskah resmi (BPK)" : "Buka naskah di sumber")
+          : null,
       ),
       saatTabBerubah() {},
     };

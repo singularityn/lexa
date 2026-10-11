@@ -497,6 +497,12 @@ main:focus { outline: none; }
 .prosa .kartu-judul { margin-top: 0; }
 
 .bagian { margin-top: 28px; }
+.bagian + .dua-sama { margin-top: 28px; }
+.kelengkapan-ringkas { margin: 0 0 10px; }
+.kelengkapan-catatan { font-size: 0.85rem; margin: 12px 0 0; }
+.meter { height: 8px; border-radius: 99px; background: var(--permukaan-2); overflow: hidden; margin-bottom: 16px; }
+.meter > span { display: block; height: 100%; min-width: 2px; border-radius: 99px; background: var(--tinta); }
+.tabel .angka-tabel { text-align: right; font-variant-numeric: tabular-nums; }
 .bagian > h2 { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 1.05rem; margin: 0 2px 10px; }
 .bagian > h2 a { font-size: 0.85rem; font-weight: 600; color: var(--teks); }
 .beranda > .bagian { margin-top: 0; }

@@ -8,8 +8,8 @@ URL pratinjau per branch/PR, dan check run di GitHub). Langkah di dashboard hany
 
 - Kode Worker identik byte-per-byte dengan produksi v0.1 (terverifikasi lewat sourcemap), ditambah perbaikan
   bug yang ditemukan lewat tes (lihat README, "Riwayat perubahan penting").
-- `wrangler.jsonc` sudah lengkap: Vectorize `lexa-index`, antrean `lexa-ingest`, D1/KV/R2/AI, cron harian,
-  dan aset statis dari `./public`. Tidak ada lagi placeholder yang membuat deploy ditolak.
+- `wrangler.jsonc` sudah lengkap: Vectorize `lexa-index`, antrean `lexa-ingest`, D1/KV/R2/AI, cron per menit dan
+  harian, `vars.TIK_CADANGAN`, dan aset statis dari `./public`. Tidak ada lagi placeholder yang membuat deploy ditolak.
 - Antarmuka (SPA) ada di `public/`. Frontend v0.1 tidak bisa dipulihkan (tidak ikut dalam bundel Worker),
   jadi repo ini membawa antarmuka baru.
 - `npm run check` (typecheck + tes) lolos, `npm run build` (`wrangler deploy --dry-run`) menampilkan 7
@@ -27,7 +27,7 @@ Deploy dari Git **menimpa pengaturan Worker dengan isi `wrangler.jsonc`**. Rinci
 | Binding `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` | ditetapkan sesuai berkas. **Binding lain yang hanya ada di dashboard akan terlepas** (kode tidak memakai yang lain) |
 | Variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `PASAL_API_BASE`, `SEARCH_CACHE_TTL`) | dipertahankan (`keep_vars: true`) |
 | Secret (`ADMIN_TOKEN`, `PASAL_API_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) | tidak tersentuh |
-| Cron | ditetapkan `0 19 * * *` (sesuai jam eksekusi di log sinkronisasi) |
+| Cron | ditetapkan `* * * * *` (tik pipeline) dan `0 19 * * *` (pemeliharaan harian). Deploy **mengganti** seluruh daftar pemicu dengan isi berkas |
 | Konsumer antrean (batch, retry, jeda, konkurensi, DLQ) | **tidak tersentuh**: sengaja tidak dideklarasikan |
 | Compatibility date | `2026-08-05` (diperkirakan dari tanggal pembuatan Worker) |
 | Observability, placement, limits, rute/domain khusus | tidak dicantumkan; periksa di dashboard setelah deploy |
@@ -97,12 +97,12 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Antarmuka | buka URL dasar | beranda Lexa tampil dengan statistik; `/tentang` dibuka langsung tanpa 404 |
 | Binding | Settings > Bindings | `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` utuh |
 | Variabel | Settings > Variables and secrets | kelima variabel teks dashboard dan keempat secret masih ada, ditambah `CAKUPAN_JENIS` (dari `wrangler.jsonc`) |
-| Cron | Settings > Trigger events | `0 19 * * *` |
+| Cron | Settings > Trigger events | `* * * * *` dan `0 19 * * *`. Di produksi pemicu per menit tak terbukti berjalan (tak ada `denyut:* * * * *` di `sync_state`); periksa daftarnya di sini. Pipeline tetap berjalan lewat rantai pesan antrean (`TIK_CADANGAN`), yang dimulai oleh satu kunjungan ke situs atau Cron harian |
 | Konsumer antrean | Queues > lexa-ingest | masih terhubung ke `lexa`, DLQ dan retry seperti sebelumnya |
 | API | `/api/stats`, `/api/search?q=pesangon`, `/robots.txt`, `/sitemap.xml` | 200 dengan data |
 | Pencarian kata bertanda hubung | `/cari?q=perundang-undangan&mode=keyword` | ada hasil (bug lama: nihil) |
 | Sitasi nama panjang | `/cari?q=Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022` | Perppu 2/2022 di urutan pertama berlabel "Sitasi" (bukan UU 2/2022) |
-| Cakupan | `/api/stats` | `cakupan: ["UUD","TAP_MPR","UU","PERPPU","PP"]`; `total_peraturan` hanya yang dalam cakupan (3.5xx, bukan 5.6xx) |
+| Cakupan | `/api/stats` | `cakupan: ["UUD","TAP_MPR","UU","PERPPU","PP"]`; `total_peraturan` hanya yang dalam cakupan (3.870 sesudah penghapusan 11 Okt 2026 dan naik bersama katalog; tak ada lagi PERPRES, POJK, PERMEN) |
 | Peraturan di luar cakupan | `/peraturan?uri=/akn/id/act/perpres/2022/1` (Perpres apa pun yang tersimpan) dan `/cari?q=Perpres 22/2015` | halaman "Peraturan ini di luar cakupan Lexa"; hasil pencarian dengan catatan "Lexa belum memuat peraturan jenis PERPRES" |
 | Sitemap | `/sitemap.xml` | hanya URL UU, PP, Perppu, dan Tap MPR |
 | Relasi ke Perppu | `/peraturan?uri=/akn/id/act/uu/1998/10`, tab Relasi | "PERPU No. 2 Tahun 2022" berupa tautan aktif ke halaman Perppu 2/2022 (dulu teks mati) |
@@ -110,32 +110,20 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Gambar pratinjau | `/og/lexa.png` | 200, `image/png` |
 | Token admin | `GET /api/admin/cek-token` dengan header `x-admin-token` | `secret_terpasang: true`, `cocok: true` |
 | Login Google (bila diaktifkan) | `/akun` > Masuk dengan Google | kembali ke Lexa dalam keadaan masuk |
-| Cron berjalan | D1: `SELECT * FROM sync_log ORDER BY id DESC LIMIT 5;` | entri `jadwal_sinkronisasi` baru sekitar 19:00 UTC |
+| Pipeline berjalan | D1: `SELECT key, value, updated_at FROM sync_state WHERE key LIKE 'denyut:%' OR key IN ('akses_isi','pasal_tunda_sampai','tik_antre_sampai');` dan `SELECT job, status, detail, created_at FROM sync_log ORDER BY id DESC LIMIT 10;` | `denyut:antrean` (atau `denyut:* * * * *`) segar dalam 5 menit; `/status` memuat panel "Kelengkapan isi" |
+| Akses isi pasal.id | `/status` dan `SELECT value FROM sync_state WHERE key = 'akses_isi';` | tak ada baris `akses_isi` (akses baik). Bila ada, catatan pasal.id dan langkahnya di [pipeline-data.md](pipeline-data.md#akses-isi-pasalid-temuan-11-okt-2026) |
 
-Setelah beberapa hari, lihat `sync_log` dan `/status`: entri `jadwal_sinkronisasi` hanya menyebut `UU,PERPPU,PP`
-(tidak ada lagi PERPRES, PERMEN, POJK, dan PBI), dan "rate limit pada PERPRES" tidak muncul lagi. Pesan lama untuk
-jenis di luar cakupan yang masih ada di antrean dibuang konsumer tanpa menyentuh pasal.id.
+### Pipeline isi: memeriksa dan mengendalikan
 
-### Pemulihan data sinkronisasi (opsional, SETELAH deploy ini aktif)
+Pengambilan isi peraturan (katalog, antrean per peraturan, tik per menit, cadangan antrean, arsip respons, daftar hapus,
+pemeliharaan harian) dan temuan akses pasal.id dijelaskan di [pipeline-data.md](pipeline-data.md), lengkap dengan SQL
+pemeriksaan dan `POST /api/admin/sync`. Yang perlu diingat saat men-deploy:
 
-Kode v0.1 membuang pesan yang sudah terkumpul setiap kali Cron kena batas laju, padahal kursor offset sudah
-maju. Di produksi (4 Okt 2026) kursor melampaui isi database: `offset:PP` = 4400 sedangkan hanya 1.422 PP yang
-tersimpan (pasal.id sedikitnya memuat ±4.400 PP). Kursor tidak mundur sendiri, jadi halaman yang terlewat baru
-terjangkau setelah kursor berputar penuh. Sesudah cakupan dibatasi, PERPRES tak lagi menghabiskan jatah laju
-sehingga PP bergerak setiap hari dan putarannya selesai dalam hitungan hari; mengulang dari awal tidak lagi
-perlu, hanya mempercepat. Perhatikan bebannya: itu berarti ±3.000 PP tambahan (peraturan, pasal, vektor, dan
-ringkasan AI), yang tetap dalam cakupan. Bila ingin memindai ulang sekarang, jalankan di D1 (dashboard > D1 >
-`lexa-db` > Console, atau `npx wrangler d1 execute lexa-db --remote`):
-
-```sql
-UPDATE sync_state SET value = '0' WHERE key IN ('offset:UU', 'offset:PERPPU', 'offset:PP');
-DELETE FROM sync_state WHERE key = 'jenis_awal';
-```
-
-Aman diulang: sapuan hanya mengantrekan peraturan yang belum ada, berubah status, atau masih kosong. Antrean
-diproses ≤60 permintaan/menit dan Cron berhenti mengantrekan bila lebih dari 400 peraturan dalam cakupan menunggu
-isinya, jadi pemulihan berjalan bertahap selama beberapa hari. Pantau lewat `/status` (jumlah peraturan naik) dan
-`SELECT COUNT(*) FROM laws WHERE jenis IN ('UUD','TAP_MPR','UU','PERPPU','PP');`.
+- Tik berjalan tiap menit selama ada kerja dan dijeda bila pasal.id minta jeda; kemajuan katalog dan antrean tersimpan di
+  D1 (`sync_state`, kolom `laws.isi_*`), jadi deploy atau rollback tidak mengulang dari awal.
+- Rantai cadangan dimulai oleh satu permintaan HTTP ke situs atau Cron harian sesudah deploy; bila `/status` menunjukkan
+  denyut yang basi, buka situsnya sekali.
+- Mengubah `PASAL_API_TOKEN` (secret) tidak memerlukan deploy: dalam 30 menit pemeriksaan akses berikutnya memakainya.
 
 ### Cakupan peraturan
 
@@ -143,17 +131,16 @@ Lexa hanya memuat UUD dan setara (Tap MPR), undang-undang termasuk Perppu, dan p
 `vars.CAKUPAN_JENIS` pada `wrangler.jsonc` (bawaan di `src/shared/cakupan.ts`, dijaga sama oleh tes). Cara kerjanya ada di
 [README](../README.md#cakupan-peraturan). Dua operasi yang perlu langkah sadar:
 
-**Melebarkan cakupan** (mis. menambah Perpres): tambahkan kodenya di `CAKUPAN_JENIS`, deploy, lalu jalankan
-sinkronisasi (Cron akan menyapunya bila kodenya dikenal pasal.id: `UU`, `PERPPU`, `PP`, `PERPRES`, `PERMEN`, `POJK`, `PBI`).
-Baris yang sudah tersimpan langsung tampil lagi. Hasil pencarian lama di KV tidak ikut terpakai karena cakupan menjadi
-bagian kunci cache. Kursor sapuan jenis tambahan (`offset:PERPRES`, dst.) masih menyimpan nilai lamanya; setel ke 0 bila
-ingin memindai dari awal.
+**Melebarkan cakupan** (mis. menambah Perpres): tambahkan kodenya di `CAKUPAN_JENIS` **dan** di `JENIS_KATALOG`
+(`src/worker/lib/katalog.ts`), deploy, lalu jalankan `POST /api/admin/sync {"jenis":["PERPRES"]}`. Sapuan hanya bekerja bila
+kode filternya dikenal pasal.id (`UU`, `PERPPU`, `PP`, `PERPRES`, `PERMEN`, `POJK`, `PBI`). Peraturan di luar cakupan
+sudah dihapus dari produksi (lihat berikut), jadi datanya harus diambil lagi dari sumber, dengan batas laju dan akses teks
+pasal.id yang sama. Hasil pencarian lama di KV tidak ikut terpakai karena cakupan menjadi bagian kunci cache.
 
-**Menghapus data di luar cakupan** (opsional, TIDAK dilakukan otomatis, tidak bisa dibatalkan kecuali lewat D1 Time
-Travel): baris-barisnya hanya disembunyikan. Menghapusnya mengecilkan D1 dan indeks FTS5 (±22% baris pasal pada
-4 Okt 2026), tetapi melebarkan cakupan kelak berarti menarik ulang dari pasal.id (≤360 peraturan per jam). Urutannya:
+**Penghapusan data di luar cakupan sudah dilakukan (11 Okt 2026)** atas permintaan pemilik. Urutannya, bila perlu diulang
+untuk jenis lain:
 
-1. Catat bookmark Time Travel: `npx wrangler d1 time-travel info lexa-db`.
+1. Catat bookmark Time Travel: `npx wrangler d1 time-travel info lexa-db` (Time Travel menyimpan 30 hari pada paket berbayar; pemulihan tak mengubah R2 maupun Vectorize).
 2. Lihat dulu yang akan dihapus (hanya baca):
 
    ```sql
@@ -161,8 +148,11 @@ Travel): baris-barisnya hanya disembunyikan. Menghapusnya mengecilkan D1 dan ind
     WHERE jenis NOT IN ('UUD','TAP_MPR','UU','PERPPU','PP') GROUP BY jenis;
    ```
 
-3. Hapus dari D1, anak lebih dulu, dalam potongan agar tiap pernyataan tidak terlalu berat (pemicu FTS5 ikut
-   menghapus entri indeks). Ulangi pasangan pertama sampai `changes` 0, lalu jalankan sisanya:
+3. Catat dulu objek R2 dan vektor yang akan yatim sebagai batu nisan di `daftar_hapus` (`jenis_objek` `'r2'` dengan kunci
+   dari `r2_text_key`/`r2_pdf_key`, dan `'vektor'` dengan id `frbr_uri`, `frbr_uri#pasal-…`, dan potongan `~n`). Tik
+   mengosongkannya bertahap (500 kunci R2 dan 1.000 id vektor per tik) dan melepas barisnya sesudah objeknya terhapus.
+4. Hapus dari D1, anak lebih dulu, dalam potongan agar tiap pernyataan tidak terlalu berat (pemicu FTS5 ikut menghapus
+   entri indeks). Ulangi pasangan pertama sampai `changes` 0, lalu jalankan sisanya:
 
    ```sql
    DELETE FROM articles WHERE rowid IN (
@@ -173,12 +163,7 @@ Travel): baris-barisnya hanya disembunyikan. Menghapusnya mengecilkan D1 dan ind
    DELETE FROM laws WHERE jenis NOT IN ('UUD','TAP_MPR','UU','PERPPU','PP');
    ```
 
-4. Berkas R2 (`teks/akn/id/act/<jenis>/…` dan, bila ada, `pdf/…`) dan vektor di Vectorize (id vektor =
-   `frbr_uri` atau `frbr_uri#pasal-…`, potongan lanjutan berakhiran `~n`) tidak ikut terhapus oleh langkah D1. Keduanya
-   tidak terlihat pengguna (pencarian menyaring kandidat vektor di luar cakupan) dan murah disimpan; hapus hanya bila
-   perlu: berkas R2 dengan `npx wrangler r2 object delete lexa-pdfs/<kunci>` (kuncinya ada di kolom `r2_text_key` dan
-   `r2_pdf_key`, simpan daftarnya sebelum langkah 3), vektor lewat `deleteByIds` pada binding `VECTORIZE` atau API REST
-   Vectorize (`wrangler vectorize list-vectors lexa-index` membantu mendaftar id). Minta bantuan menyusun skripnya bila perlu.
+Hasilnya: 2.131 peraturan dan 15.457 baris pasal terhapus; 6.393 berkas R2 dan 21.128 vektor dikosongkan oleh tik.
 
 ### Rollback
 
@@ -194,8 +179,9 @@ lalu deploy: halaman kembali dilayani sebagai aset statis seperti sebelumnya, ha
 
 Jangan menjalankan migrasi dari build. Terapkan secara sengaja sebelum men-deploy kode yang membutuhkannya:
 `npm run d1:migrate:remote`. Rancang migrasi agar kompatibel mundur (tambah dulu, hapus kemudian), supaya
-rollback kode tetap aman. Sebelum migrasi besar, catat bookmark D1 Time Travel. Perbaikan di v0.2 **tidak**
-memerlukan migrasi baru.
+rollback kode tetap aman. Sebelum migrasi besar, catat bookmark D1 Time Travel. Pipeline isi memerlukan migrasi
+`0005_antrean_isi_dan_daftar_hapus.sql` dan `0006_arsip_respons.sql`; keduanya sudah diterapkan di produksi (11 Okt 2026)
+sebelum kodenya di-deploy, dan hanya menambah (kolom, indeks, tabel), jadi rollback kode tetap aman.
 
 ## Rahasia
 

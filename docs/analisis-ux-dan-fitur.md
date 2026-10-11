@@ -8,7 +8,8 @@ Isi: [ringkasan](#1-ringkasan) · [cara menilai](#2-cara-menilai) · [temuan dan
 [fitur baru](#4-fitur-baru-dan-cara-memakainya) · [kualitas data](#5-kualitas-data-yang-memengaruhi-pengalaman) ·
 [peta jalan](#6-peta-jalan) · [Claude Design](#7-memakai-claude-design) ·
 [ke layar utama](#8-menambahkan-ke-layar-utama-dan-memeriksanya-di-perangkat-asli) ·
-[yang perlu keputusan Anda](#9-yang-perlu-keputusan-atau-tindakan-anda) · [pengujian](#10-pengujian)
+[yang perlu keputusan Anda](#9-yang-perlu-keputusan-atau-tindakan-anda) · [pengujian](#10-pengujian) ·
+[desain Claude Design diterapkan](#11-desain-claude-design-diterapkan-oktober-2026)
 
 ## 1. Ringkasan
 
@@ -231,3 +232,29 @@ node scripts/buat-og.mjs   # buat ulang gambar pratinjau tautan (public/og/lexa.
 Tes unit utama: `test/web.test.ts` (fungsi murni antarmuka),
 `test/pwa.test.ts` (service worker dengan Cache API tiruan), `test/tokens.test.ts` (kontras warna token di kedua
 tema), dan `test/browser/*.test.ts`.
+
+## 11. Desain Claude Design diterapkan (Oktober 2026)
+
+Pemilik menjalankan redesain di Claude Design (paket `Redesign UI aplikasi Lexa`, tidak bisa di-push langsung ke GitHub),
+lalu paketnya diterjemahkan ke `public/` seperti alur di bagian 7. Yang diterapkan:
+
+- **Token dan tipografi**: palet krem dan tinta (terang dan gelap) di `public/css/app.css`; Plus Jakarta Sans (400, 500,
+  600, 700) untuk antarmuka dan Newsreader (400, 400 miring, 600) untuk naskah dan merek, dilayani dari `public/fonts/`
+  (latin saja, 128 KB) sehingga CSP `font-src 'self'` tak berubah dan tak ada permintaan ke pihak ketiga.
+- **Bentuk**: kapsul navigasi mengambang di dasar layar ponsel (tepi bawah 14 px di atas dasar, ditambah area aman) dengan
+  sasaran ketuk 44 px, dan bilah samping pada layar ≥861 px; kartu pastel per jenis (UUD, Tap MPR, UU, Perppu, PP) lewat
+  `komponen/jenis.js`, papan beranda (`papanJenis.js`), progres baca (`progresBaca.js`), dan jejak yang baru dilihat
+  (`sisiDilihat.js`).
+- **Tanpa logo**: atas permintaan pemilik merek hanya teks "Lexa" (Newsreader 600) di bilah atas, bilah samping, dan layar
+  muat. Favicon (`favicon.svg`), ikon aplikasi (192, 512, maskable, apple-touch), dan gambar pratinjau tautan
+  (`og/lexa.png`) dibuat ulang bertipografi serupa oleh `scripts/buat-ikon.mjs` dan `scripts/buat-og.mjs`.
+- **Penyesuaian saat menerapkan**: aturan cetak untuk `main.bungkus`, `min-width: 44px` pada tautan bilah bawah di
+  layar sempit (target ketuk), `theme-color` mengikuti palet baru, dan pramuat Newsreader 600 agar merek tak berkedip.
+  Tes e2e disesuaikan (warna tema `#f4ecda`/`#14130f`, kapsul navigasi) dan axe-core tetap bersih di tema terang dan gelap.
+- **Tambahan setelahnya**: panel "Kelengkapan isi" di `/status` (per jenis: di sumber, tersimpan, berisi pasal, menunggu,
+  tanpa isi, gagal; kendala pasal.id yang berlaku), dan keadaan kosong halaman baca yang lebih jelas (judul, nomor, dan
+  status sudah tercatat tetapi pasal belum diambil; tautan ke naskah di sumber).
+
+Design System Lexa (bagian 7) dibangun dari kode lama dan belum disinkronkan ulang; minta "perbarui Design System Lexa dari
+repositori" bila ingin tokennya mengikuti palet baru.
+
