@@ -259,7 +259,11 @@ export async function arsipkanTeksDanIndeks(ctx: KonteksIngest, law: Law, articl
   await ctx.queue.send({ tipe: "indeks_vektor", frbr_uri: law.frbr_uri });
 }
 
-/** Catat satu percobaan yang gagal: giliran mundur, dan sesudah cukup percobaan statusnya menjadi 'gagal' (404: 'kosong'). */
+/**
+ * Catat satu percobaan yang gagal: giliran mundur, dan sesudah cukup percobaan statusnya menjadi 'gagal' (404: 'kosong').
+ * Peraturan yang sudah punya pasal tersimpan (diantrekan ulang untuk diperbaiki) kembali menjadi 'lengkap': teksnya
+ * tetap ada, dan percobaan berikutnya ditentukan pemeliharaan harian.
+ */
 export async function catatKegagalan(db: D1Database, uri: string, e: unknown): Promise<void> {
   const tidakAda = e instanceof PasalApiError && e.status === 404;
   const batas = tidakAda ? MAKS_PERCOBAAN_404 : MAKS_PERCOBAAN;
@@ -268,7 +272,7 @@ export async function catatKegagalan(db: D1Database, uri: string, e: unknown): P
     .prepare(
       `UPDATE laws SET isi_percobaan = isi_percobaan + 1, isi_dicoba_at = datetime('now'),
               isi_catatan = ?, isi_giliran = isi_giliran + ?,
-              isi_status = CASE WHEN isi_percobaan + 1 >= ? THEN ? ELSE 'menunggu' END
+              isi_status = CASE WHEN isi_percobaan + 1 >= ? THEN (CASE WHEN jumlah_pasal > 0 THEN 'lengkap' ELSE ? END) ELSE 'menunggu' END
         WHERE frbr_uri = ?`,
     )
     .bind(String(e).slice(0, 300), DENDA_GAGAL, batas, sudah, uri)

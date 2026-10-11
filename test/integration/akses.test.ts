@@ -372,6 +372,19 @@ describe.skipIf(!sqliteAda)("akses isi pasal.id", () => {
     });
   });
 
+  describe("GET /api/stats: peraturan berisi", () => {
+    it("berisi menghitung peraturan yang punya pasal tersimpan apa pun statusnya, termasuk yang diantrekan ulang untuk diperbaiki", async () => {
+      await sisipkanAntre(l, [
+        { uri: PEMBANDING, jenis: "UU", tahun: 2003, status: "lengkap", jumlahPasal: 5 },
+        { uri: ANTRE_UU, jenis: "UU", tahun: 2020, status: "menunggu", jumlahPasal: 3 }, // diantrekan ulang: teks sebagian tetap ada
+        { uri: ANTRE_PP, jenis: "PP", tahun: 2021, status: "menunggu" },
+      ]);
+      const b = await json<{ isi: { per_jenis: Record<string, Record<string, number>> } }>(await panggil(l, "/api/stats"));
+      expect(b.isi.per_jenis.UU).toMatchObject({ total: 2, berisi: 2, lengkap: 1, menunggu: 1, pasal: 8 });
+      expect(b.isi.per_jenis.PP).toMatchObject({ total: 1, berisi: 0, lengkap: 0, menunggu: 1 });
+    });
+  });
+
   describe("POST /api/admin/sync {uri}", () => {
     const sync = (badan: unknown) => panggil(l, "/api/admin/sync", kirim("POST", badan, adm));
     const URI_BARU = "/akn/id/act/uu/1999/8";

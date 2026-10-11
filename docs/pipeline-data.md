@@ -72,8 +72,14 @@ cakupan yang dihapus, pasal yang lenyap karena penggantian) dicatat sebagai batu
 500 kunci R2 dan 1.000 id vektor per tik. Barisnya baru dilepas sesudah objeknya terhapus.
 
 **Pemeliharaan harian** (`lib/pemeliharaan.ts`): 'kosong' lebih dari 30 hari dan 'gagal' lebih dari 3 hari diantrekan
-lagi (giliran dan percobaan diulang dari awal; hanya yang dalam cakupan), `sync_log` dipangkas 90 hari, dan statistik
-harian 14 hari.
+lagi (giliran dan percobaan diulang dari awal; hanya yang dalam cakupan); **peraturan 'lengkap' yang nomor pasalnya
+bercelah diantrekan untuk diambil ulang** (terparah dulu, paling banyak 150 sehari, giliran sebelum peraturan baru, hanya
+yang belum pernah diambil pipeline ini yaitu `isi_arsip = 0`, bukan peraturan perubahan, tidak baru dicoba dalam 14 hari,
+dan tidak selama akses isi dibatasi); `sync_log` dipangkas 90 hari, dan statistik harian 14 hari. Teks yang sudah
+tersimpan tetap terbaca selama antre, dan hasil pengambilan ulang hanya menggantikannya bila pasalnya tidak berkurang.
+Peraturan berpasal yang pengambilan ulangnya gagal terus kembali 'lengkap' (bukan 'kosong' atau 'gagal'). Di `/status`,
+"Berisi pasal" menghitung peraturan yang punya pasal tersimpan apa pun statusnya, dan "Menunggu" ikut menghitung yang teksnya
+sedang diambil ulang.
 
 ## Akses isi pasal.id (temuan 11 Okt 2026)
 
@@ -192,5 +198,6 @@ dipasang ke pasal di depannya; `ratakanPohonPasal` di `lib/pasal.ts`), dengan te
 pernah terlihat** karena pasal.id sudah menutup teksnya sebelum diagnosis sempat membacanya. Begitu pasal.id memberi naskah
 lagi, delapan peraturan pertama meninggalkan ringkasan struktur responsnya di `sync_state` kunci `diagisi:*` (tipe simpul,
 pasal tanpa teks, simpul yatim, nama field), tanpa permintaan tambahan. Dari situ pengurai bisa dibuktikan atau
-diperbaiki, lalu `{"perbaiki_celah": true}` mengantrekan peraturan yang tersimpan sebagian untuk diambil ulang. Karena
-setiap respons diarsipkan, perbaikan berikutnya cukup `{"ulang_arsip": true}`.
+diperbaiki. Peraturan yang tersimpan sebagian diantrekan sendiri oleh pemeliharaan harian (150 sehari; `{"perbaiki_celah":
+true}` melakukannya sekarang dan tanpa batas harian). Karena setiap respons diarsipkan, perbaikan pengurai berikutnya cukup
+`{"ulang_arsip": true}`.

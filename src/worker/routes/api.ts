@@ -360,9 +360,10 @@ api.get("/stats", async (c) => {
     // baca D1 tanpa menambah ketelitian.
     c.env.DB.prepare(
       `SELECT jenis, isi_status, COUNT(*) AS n, COALESCE(SUM(jumlah_pasal), 0) AS pasal,
+              COALESCE(SUM(CASE WHEN jumlah_pasal > 0 THEN 1 ELSE 0 END), 0) AS berisi,
               COALESCE(SUM(CASE WHEN indexed_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS terindeks
          FROM laws WHERE ${dalam} GROUP BY jenis, isi_status`,
-    ).all<{ jenis: string; isi_status: string; n: number; pasal: number; terindeks: number }>(),
+    ).all<{ jenis: string; isi_status: string; n: number; pasal: number; berisi: number; terindeks: number }>(),
 
     c.env.DB.prepare(
       `SELECT frbr_uri, jenis, nomor, tahun, judul FROM laws WHERE ${dalam}
@@ -389,9 +390,11 @@ api.get("/stats", async (c) => {
     articles += r.pasal;
     terindeks += r.terindeks;
     perJenisMap.set(r.jenis, (perJenisMap.get(r.jenis) ?? 0) + r.n);
-    const j = (isiPerJenis[r.jenis] ??= { total: 0, pasal: 0, ...Object.fromEntries(STATUS_ISI.map((st) => [st, 0])) });
+    // `berisi`: peraturan yang punya teks pasal tersimpan, apa pun statusnya (yang diantrekan ulang untuk diperbaiki tetap berisi).
+    const j = (isiPerJenis[r.jenis] ??= { total: 0, pasal: 0, berisi: 0, ...Object.fromEntries(STATUS_ISI.map((st) => [st, 0])) });
     j.total += r.n;
     j.pasal += r.pasal;
+    j.berisi += r.berisi;
     if ((STATUS_ISI as readonly string[]).includes(r.isi_status)) j[r.isi_status] += r.n;
   }
   const perJenis = [...perJenisMap.entries()].map(([jenis, n]) => ({ jenis, n })).sort((a, b) => b.n - a.n).slice(0, 15);

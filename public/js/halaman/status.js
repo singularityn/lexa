@@ -41,11 +41,11 @@ function panelKelengkapan(isi, cakupan) {
     jenis: j,
     sumber: isi.katalog[j]?.total_sumber ?? null,
     dukungan: isi.katalog[j]?.dukungan ?? null,
-    ...(isi.per_jenis[j] ?? { total: 0, pasal: 0, lengkap: 0, menunggu: 0, kosong: 0, gagal: 0 }),
+    ...(isi.per_jenis[j] ?? { total: 0, pasal: 0, berisi: 0, lengkap: 0, menunggu: 0, kosong: 0, gagal: 0 }),
   }));
   const total = baris.reduce((n, b) => n + b.total, 0);
-  const lengkap = baris.reduce((n, b) => n + b.lengkap, 0);
-  const persen = total ? Math.round((lengkap / total) * 100) : 0;
+  const berisi = baris.reduce((n, b) => n + b.berisi, 0);
+  const persen = total ? Math.round((berisi / total) * 100) : 0;
   const hariIni = isi.hari_ini;
   const terakhir = isi.denyut.antrean ?? isi.denyut.menit;
 
@@ -70,7 +70,7 @@ function panelKelengkapan(isi, cakupan) {
     h(
       "div",
       { class: "kartu" },
-      h("p", { class: "kelengkapan-ringkas" }, h("strong", null, `${angka(lengkap)} dari ${angka(total)}`), " peraturan sudah punya teks pasal"),
+      h("p", { class: "kelengkapan-ringkas" }, h("strong", null, `${angka(berisi)} dari ${angka(total)}`), " peraturan sudah punya teks pasal"),
       h(
         "div",
         { class: "meter", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(persen), "aria-label": "Peraturan yang sudah punya teks pasal" },
@@ -93,7 +93,7 @@ function panelKelengkapan(isi, cakupan) {
                 h("td", null, kodeJenis(b.jenis)),
                 h("td", { class: "angka-tabel" }, b.dukungan?.startsWith("tidak") ? "tak ada" : b.sumber === null ? "belum disapu" : angka(b.sumber)),
                 h("td", { class: "angka-tabel" }, angka(b.total)),
-                h("td", { class: "angka-tabel" }, angka(b.lengkap)),
+                h("td", { class: "angka-tabel" }, angka(b.berisi)),
                 h("td", { class: "angka-tabel" }, angka(b.menunggu)),
                 h("td", { class: "angka-tabel" }, angka(b.kosong)),
                 h("td", { class: "angka-tabel" }, angka(b.gagal)),
@@ -105,7 +105,7 @@ function panelKelengkapan(isi, cakupan) {
       h(
         "p",
         { class: "redup kelengkapan-catatan" },
-        "\"Di sumber\" adalah jumlah peraturan jenis itu di daftar pasal.id; \"Menunggu\" sudah tercatat tetapi pasalnya belum diambil. Lexa mengambil isi bertahap, UUD dan Tap MPR lebih dulu, lalu UU, Perppu, dan PP, yang terbaru lebih dulu.",
+        "\"Di sumber\" adalah jumlah peraturan jenis itu di daftar pasal.id; \"Menunggu\" sudah tercatat tetapi pasalnya belum diambil (atau teksnya yang tersimpan sebagian sedang diambil ulang). Lexa mengambil isi bertahap, UUD dan Tap MPR lebih dulu, lalu UU, Perppu, dan PP, yang terbaru lebih dulu.",
       ),
       h(
         "p",

@@ -15,7 +15,7 @@
  * @typedef {{ jenis: string, n: number }} JumlahJenis
  * @typedef {{ frbr_uri: string, jenis: string, nomor: string, tahun: number, judul: string }} RingkasPeraturan
  * @typedef {{ job: string, status: string, jumlah: number, detail: string | null, created_at: string }} CatatanSinkron
- * @typedef {{ total: number, pasal: number, lengkap: number, menunggu: number, kosong: number, gagal: number }} IsiJenis
+ * @typedef {{ total: number, pasal: number, berisi: number, lengkap: number, menunggu: number, kosong: number, gagal: number }} IsiJenis
  * @typedef {{ total_sumber: number | null, selesai: string | null, dukungan: string | null }} KatalogJenis
  * @typedef {{ sejak: string, terakhir: string, periksa_lagi: string, catatan: string }} AksesIsi
  * @typedef {{ per_jenis: Record<string, IsiJenis>, katalog: Record<string, KatalogJenis>, pasal_dijeda_sampai: string | null, akses: AksesIsi | null, hari_ini: Record<string, number>, denyut: { menit: string | null, harian: string | null, antrean: string | null } }} KemajuanIsi

@@ -326,7 +326,7 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
   lebih dari 20 nomor); halaman baca memberi tahu pembaca bila penomoran bercelah. Pengurai sudah diperbaiki untuk simpul
   yatim dan ayat/butir bersaudara (`ratakanPohonPasal`), tetapi bentuk respons nyata
   belum pernah terlihat; ringkasannya akan tersimpan di `sync_state` kunci `diagisi:*` begitu pasal.id memberi teks lagi,
-  dan `{"perbaiki_celah": true}` lalu mengantrekan ulang yang tersimpan sebagian.
+  dan pemeliharaan harian mengantrekan ulang yang tersimpan sebagian (150 sehari, terparah dulu) begitu akses pulih.
 - Teks hasil ekstraksi versi lama masih memuat sisa: 401 peraturan punya baris pasal ber-id `~n` (umumnya bagian
   Penjelasan yang memakai ulang nomor pasal; UU 13/2003 punya 72 baris seperti itu dan UU 11/2020 744) dan 289
   memuat teks "PENJELASAN" di dalam baris pasalnya. Parser saat ini berhenti di judul "PENJELASAN"; antarmuka

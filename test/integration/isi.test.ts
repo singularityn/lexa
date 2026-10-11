@@ -204,6 +204,21 @@ describe.skipIf(!sqliteAda)("isi peraturan", () => {
       expect(await satu(l, `SELECT isi_status, isi_percobaan FROM laws`)).toEqual({ isi_status: "kosong", isi_percobaan: 2 });
     });
 
+    it("peraturan yang sudah punya pasal (diantrekan ulang untuk diperbaiki) kembali 'lengkap', bukan 'kosong' atau 'gagal', bila pengambilannya gagal terus", async () => {
+      await sisipkanAntre(l, [
+        { uri: UU13, jenis: "UU", tahun: 2003, jumlahPasal: 6 },
+        { uri: PP35, jenis: "PP", tahun: 2021, jumlahPasal: 4 },
+        { uri: UU54, jenis: "UU", tahun: 1954 },
+      ]);
+      pasal = pasangPasalPalsu({ galat: (u) => (u.pathname.endsWith("/uu/2003/13") ? 404 : 500) });
+      for (let i = 0; i < 5; i++) await tik(l, menit(i));
+      expect(await baris(l, `SELECT frbr_uri, isi_status, jumlah_pasal FROM laws ORDER BY frbr_uri`)).toEqual([
+        { frbr_uri: PP35, isi_status: "lengkap", jumlah_pasal: 4 },
+        { frbr_uri: UU54, isi_status: "gagal", jumlah_pasal: 0 }, // tanpa pasal tersimpan: 'gagal' seperti biasa
+        { frbr_uri: UU13, isi_status: "lengkap", jumlah_pasal: 6 }, // 404 dua kali: bukan 'kosong'
+      ]);
+    });
+
     it("kena 429 di tengah: yang sudah selesai tersimpan, yang kena batas tanpa penalti, sisanya tak disentuh, dan jeda disimpan", async () => {
       const uris = [1, 2, 3].map((n) => `/akn/id/act/uu/2000/${n}`);
       await sisipkanAntre(l, uris.map((uri, i) => ({ uri, jenis: "UU", tahun: 2000 - i, nomor: String(i + 1), verifikasi: true })));
