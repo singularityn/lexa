@@ -67,9 +67,10 @@
     "producers": [{ "binding": "INGEST_QUEUE", "queue": "lexa-ingest" }]
   },
 
-  // Cron harian pukul 19:00 UTC (02:00 WIB): log sinkronisasi produksi menunjukkan
-  // eksekusi pada jam itu setiap hari.
-  "triggers": { "crons": ["0 19 * * *"] },
+  // Dua pemicu Cron. Harian pukul 19:00 UTC (02:00 WIB): sapuan daftar peraturan (log sinkronisasi produksi
+  // menunjukkan eksekusi pada jam itu setiap hari). Per menit: "tik" (src/worker/lib/tik.ts), pekerjaan kecil yang
+  // maju selangkah dan berhenti begitu pasal.id minta jeda; tik yang tak punya pekerjaan tidak menulis ke D1.
+  "triggers": { "crons": ["* * * * *", "0 19 * * *"] },
 
   // Antarmuka (SPA) ada di ./public dan tidak memerlukan langkah build. Rute yang
   // diselesaikan Worker lebih dulu: seluruh API, robots.txt, sitemap.xml, dan /peraturan

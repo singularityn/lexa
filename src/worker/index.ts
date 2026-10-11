@@ -24,6 +24,7 @@ import {
   type KonteksIngest,
   type PesanIngest,
 } from "./lib/ingest";
+import { jalankanTik } from "./lib/tik";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -83,6 +84,9 @@ app.get("/sitemap.xml", async (c) => {
   );
 });
 
+/** Pemicu harian di wrangler.jsonc (02:00 WIB). Pemicu lain, yaitu per menit, menjalankan tik. */
+const CRON_HARIAN = "0 19 * * *";
+
 function konteksIngest(env: Env): KonteksIngest {
   return {
     db: env.DB,
@@ -100,14 +104,23 @@ function konteksIngest(env: Env): KonteksIngest {
 export default {
   fetch: app.fetch,
 
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    if (!env.PASAL_API_TOKEN) {
-      console.warn("Lexa: PASAL_API_TOKEN belum diatur — sinkronisasi dilewati.");
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    // Dua pemicu di wrangler.jsonc: harian (sapuan lama) dan per menit (tik). Yang tak dikenal dianggap tik.
+    if (event.cron === CRON_HARIAN) {
+      if (!env.PASAL_API_TOKEN) {
+        console.warn("Lexa: PASAL_API_TOKEN belum diatur — sinkronisasi dilewati.");
+        return;
+      }
+      ctx.waitUntil(
+        jadwalkanSinkronisasi(konteksIngest(env)).catch((e) => {
+          console.error("Lexa: sinkronisasi terjadwal gagal", e);
+        }),
+      );
       return;
     }
     ctx.waitUntil(
-      jadwalkanSinkronisasi(konteksIngest(env)).catch((e) => {
-        console.error("Lexa: sinkronisasi terjadwal gagal", e);
+      jalankanTik(konteksIngest(env), { pasalSiap: Boolean(env.PASAL_API_TOKEN) }).catch((e) => {
+        console.error("Lexa: tik gagal", e);
       }),
     );
   },

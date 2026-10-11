@@ -170,6 +170,15 @@ export class R2Palsu {
     return { key: kunci, size: bytes.byteLength };
   }
 
+  /** Seperti R2: menghapus satu kunci atau larik (maksimal 1000), dan kunci yang tak ada bukan galat. */
+  readonly panggilanHapus: string[][] = [];
+  async delete(kunci: string | string[]): Promise<void> {
+    const daftar = Array.isArray(kunci) ? kunci : [kunci];
+    if (daftar.length > 1000) throw new Error("R2: tidak boleh menghapus lebih dari 1000 kunci sekali jalan");
+    this.panggilanHapus.push(daftar);
+    for (const k of daftar) this.objek.delete(k);
+  }
+
   /**
    * Meniru R2: `opsi.range` bisa berupa `Headers` (dibaca dari header Range) atau
    * `{ offset, length }`. Seperti R2 asli, `range` terisi bahkan pada GET utuh.
@@ -313,6 +322,16 @@ export class VektorPalsu {
   async upsert(vektor: Array<{ id: string; values: number[]; metadata?: Record<string, unknown> }>) {
     for (const v of vektor) this.simpan.set(v.id, { values: v.values, metadata: v.metadata ?? {} });
     return { mutationId: "uji", count: vektor.length };
+  }
+
+  /** Id yang membuat deleteByIds menolak seluruh panggilannya (menguji isolasi id bermasalah). */
+  readonly idRacun = new Set<string>();
+  readonly panggilanHapus: string[][] = [];
+  async deleteByIds(ids: string[]) {
+    this.panggilanHapus.push(ids);
+    if (ids.some((id) => this.idRacun.has(id))) throw new Error("VECTOR_DELETE_ERROR: id ditolak");
+    for (const id of ids) this.simpan.delete(id);
+    return { mutationId: "uji-hapus", ids, count: ids.length };
   }
 
   async query(
@@ -507,10 +526,14 @@ export async function jalankanAntrean(l: Lingkungan, pesan: unknown[]): Promise<
   return hasil;
 }
 
-/** Jalankan handler `scheduled` (cron) Worker dan tunggu pekerjaan latar. */
-export async function jalankanCron(l: Lingkungan): Promise<void> {
+/** Pemicu harian (sapuan daftar) dan per menit (tik), seperti di wrangler.jsonc. */
+export const CRON_HARIAN = "0 19 * * *";
+export const CRON_MENIT = "* * * * *";
+
+/** Jalankan handler `scheduled` (cron) Worker dan tunggu pekerjaan latar. Bawaannya pemicu harian. */
+export async function jalankanCron(l: Lingkungan, cron: string = CRON_HARIAN): Promise<void> {
   const { ctx, selesai } = buatCtx();
-  await worker.scheduled({ cron: "0 19 * * *", scheduledTime: Date.now(), type: "scheduled", noRetry() {} } as never, l.env, ctx);
+  await worker.scheduled({ cron, scheduledTime: Date.now(), type: "scheduled", noRetry() {} } as never, l.env, ctx);
   await selesai();
 }
 

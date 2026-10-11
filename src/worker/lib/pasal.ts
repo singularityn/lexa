@@ -40,6 +40,30 @@ export class PasalRateLimitError extends Error {
   }
 }
 
+/**
+ * Jeda dari header Retry-After, dalam milidetik. Header ini boleh berisi detik ("120") atau tanggal HTTP
+ * ("Wed, 21 Oct 2026 07:28:00 GMT"); bentuk kedua dulu menghasilkan NaN yang merambat ke penundaan antrean.
+ * Yang tak terbaca atau negatif dianggap 60 detik.
+ */
+export function bacaRetryAfter(nilai: string | null | undefined, sekarang = Date.now()): number {
+  const bawaan = 60_000;
+  if (nilai === null || nilai === undefined || nilai.trim() === "") return bawaan;
+  const detik = Number(nilai);
+  if (Number.isFinite(detik)) return detik >= 0 ? Math.round(detik * 1000) : bawaan;
+  const tanggal = Date.parse(nilai);
+  return Number.isNaN(tanggal) ? bawaan : Math.max(tanggal - sekarang, 0);
+}
+
+/** Jawaban apa adanya dari pasal.id, untuk diagnosis. */
+export interface JawabanMentah {
+  status: number;
+  json: unknown;
+  /** Hanya header yang menyangkut laju, kuota, atau penomoran (nama dalam huruf kecil). */
+  header: Record<string, string>;
+}
+
+const POLA_HEADER_LAJU = /rate|limit|quota|retry|remaining|reset|total|count|page|link|cursor/i;
+
 export class PasalApiError extends Error {
   constructor(
     public status: number,
@@ -76,7 +100,7 @@ const KUNCI_NAMA = ["name", "nama", "title", "judul", "label", "uraian", "value"
  * peraturan produksi. Objek diambil nama-nya; yang bentuknya tak dikenal dianggap kosong,
  * karena nilai kosong lebih jujur daripada teks sampah.
  */
-function keTeks(v: unknown): string | null {
+export function keTeks(v: unknown): string | null {
   if (v === undefined || v === null) return null;
   if (typeof v === "string") {
     const s = v.trim();
@@ -367,7 +391,8 @@ export class PasalClient {
 
   constructor(private opts: PasalClientOptions) {}
 
-  private async request(path: string, params?: Record<string, string | number | undefined>) {
+  /** Kirim permintaan; 429 dan galat HTTP lain dilempar, sisanya dikembalikan sebagai Response. */
+  private async kirim(path: string, params?: Record<string, string | number | undefined>): Promise<Response> {
     const url = new URL(this.opts.base.replace(/\/$/, "") + path);
     for (const [k, v] of Object.entries(params ?? {})) {
       if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
@@ -384,7 +409,7 @@ export class PasalClient {
     });
 
     if (res.status === 429) {
-      const retryAfter = Number(res.headers.get("retry-after") ?? "60") * 1000;
+      const retryAfter = bacaRetryAfter(res.headers.get("retry-after"));
       this.opts.onRateLimit?.(retryAfter);
       throw new PasalRateLimitError(retryAfter);
     }
@@ -392,7 +417,25 @@ export class PasalClient {
       const body = await res.text().catch(() => "");
       throw new PasalApiError(res.status, `pasal.id ${res.status} pada ${path}`, body.slice(0, 500));
     }
-    return res.json();
+    return res;
+  }
+
+  private async request(path: string, params?: Record<string, string | number | undefined>) {
+    return (await this.kirim(path, params)).json();
+  }
+
+  /**
+   * Jawaban mentah beserta header laju/kuota, tanpa pemetaan apa pun. Hanya untuk diagnosis (lib/diagnosa.ts):
+   * bentuk respons produksi tidak terlihat dari luar, dan menebaknya sudah pernah menghasilkan data yang
+   * tampak sukses tetapi tak utuh.
+   */
+  async ambilMentah(path: string, params?: Record<string, string | number | undefined>): Promise<JawabanMentah> {
+    const res = await this.kirim(path, params);
+    const header: Record<string, string> = {};
+    for (const [k, v] of res.headers) {
+      if (POLA_HEADER_LAJU.test(k) && Object.keys(header).length < 20) header[k.toLowerCase()] = v.slice(0, 120);
+    }
+    return { status: res.status, json: await res.json(), header };
   }
 
   /**
