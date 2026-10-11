@@ -45,8 +45,25 @@ describe("pelabelan", () => {
     expect(sitasi({ jenis: "PP", nomor: "1-pojk-03-2019", tahun: 2019 })).toBe("PP 1-pojk-03-2019/2019");
   });
 
+  it("UUD dari pasal.id (nomor 1945 dan 1945/P4) ditulis sebagai UUD 1945 dan perubahannya", () => {
+    const asli = { jenis: "UUD", nomor: "1945", tahun: 1945 };
+    const p4 = { jenis: "UUD", nomor: "1945/P4", tahun: 1945 };
+    expect(sitasi(asli)).toBe("UUD 1945");
+    expect(sitasi(p4)).toBe("UUD 1945 Perubahan 4");
+    expect(namaLengkap(asli)).toBe("Undang-Undang Dasar 1945");
+    expect(namaLengkap(p4)).toBe("Undang-Undang Dasar 1945 Perubahan 4");
+    expect(sitasiPasal(p4, "28D", "1")).toBe("UUD 1945 Perubahan 4 Pasal 28D ayat (1)");
+    // Penomoran lain tidak disentuh, dan pola itu hanya berlaku untuk UUD.
+    expect(sitasi({ jenis: "UUD", nomor: "2", tahun: 1950 })).toBe("UUD 2/1950");
+    expect(sitasi({ jenis: "UU", nomor: "1945", tahun: 1945 })).toBe("UU 1945/1945");
+    expect(namaLengkap({ jenis: "UU", nomor: "1945/P4", tahun: 1945 })).toBe("Undang-Undang Nomor 1945/P4 Tahun 1945");
+  });
+
   it("pemformat label di Worker (src/shared/label.ts) dan antarmuka (format.js) selalu sama", () => {
     const kasus = [
+      { jenis: "UUD", nomor: "1945", tahun: 1945 },
+      { jenis: "UUD", nomor: "1945/P4", tahun: 1945 },
+      { jenis: "UUD", nomor: "2", tahun: 1950 },
       { jenis: "UU", nomor: "13", tahun: 2003 },
       { jenis: "POJK", nomor: "48-pojk-04-2016", tahun: 2016 },
       { jenis: "POJK", nomor: "1-POJK-05-2019", tahun: 2019 },

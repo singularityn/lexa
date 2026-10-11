@@ -64,6 +64,8 @@ export function sitasi(l) {
 }
 
 const POLA_SLUG_POJK = /^(\d+)-pojk-(\d{2})-(\d{4})$/i;
+/** UUD di pasal.id: nomor "1945" (naskah asli) dan "1945/P4" (Perubahan Keempat). Salinan POLA_NOMOR_UUD di src/shared/label.ts. */
+const POLA_NOMOR_UUD = /^(\d{4})(?:\/P(\d+))?$/i;
 
 /**
  * "13/2003"; untuk POJK bernomor slug ("48-pojk-04-2016") penulisan resminya "48/POJK.04/2016".
@@ -73,6 +75,8 @@ const POLA_SLUG_POJK = /^(\d+)-pojk-(\d{2})-(\d{4})$/i;
  * @param {number} tahun
  */
 export function nomorTahun(jenis, nomor, tahun) {
+  const uud = jenis === "UUD" ? POLA_NOMOR_UUD.exec(nomor) : null;
+  if (uud) return uud[2] ? `${uud[1]} Perubahan ${uud[2]}` : uud[1];
   const m = jenis === "POJK" ? POLA_SLUG_POJK.exec(nomor) : null;
   return m ? `${m[1]}/POJK.${m[2]}/${m[3]}` : `${nomor}/${tahun}`;
 }
@@ -104,6 +108,8 @@ export function sitasiPasal(l, pasal, ayat) {
 
 /** "Undang-Undang Nomor 13 Tahun 2003" @param {{ jenis: string, nomor: string, tahun: number }} l */
 export function namaLengkap(l) {
+  // UUD: "Undang-Undang Dasar 1945" dan "Undang-Undang Dasar 1945 Perubahan 4", bukan "... Nomor 1945/P4 Tahun 1945".
+  if (l.jenis === "UUD" && POLA_NOMOR_UUD.test(l.nomor)) return `${labelJenis(l.jenis)} ${nomorTahun(l.jenis, l.nomor, l.tahun)}`;
   const resmi = l.jenis === "POJK" && POLA_SLUG_POJK.test(l.nomor);
   return `${labelJenis(l.jenis)} Nomor ${resmi ? nomorTahun(l.jenis, l.nomor, l.tahun) : `${l.nomor} Tahun ${l.tahun}`}`;
 }

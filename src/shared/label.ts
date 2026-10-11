@@ -2,15 +2,21 @@
  * Label sitasi peraturan untuk ditampilkan: "UU 13/2003", "POJK 48/POJK.04/2016".
  *
  * POJK terbitan lama tersimpan dengan nomor slug "48-pojk-04-2016" (lihat laws.nomor);
- * penulisan resminya "48/POJK.04/2016", sehingga tahun tidak perlu diulang.
+ * penulisan resminya "48/POJK.04/2016", sehingga tahun tidak perlu diulang. UUD bernomor "1945" atau "1945/P4"
+ * ditulis "UUD 1945" dan "UUD 1945 Perubahan 4".
  * Antarmuka (public/js/format.js) punya salinan fungsi yang sama dan dijaga lewat
  * test/web.test.ts; ubah keduanya bersamaan.
  */
 
 const POLA_SLUG_POJK = /^(\d+)-pojk-(\d{2})-(\d{4})$/i;
 
-/** "13/2003"; untuk POJK bernomor slug "48/POJK.04/2016". */
+/** UUD di pasal.id: nomor "1945" untuk naskah asli dan "1945/P4" untuk Perubahan Keempat (tahunnya sama, 1945). */
+export const POLA_NOMOR_UUD = /^(\d{4})(?:\/P(\d+))?$/i;
+
+/** "13/2003"; untuk POJK bernomor slug "48/POJK.04/2016"; untuk UUD "1945" dan "1945 Perubahan 4". */
 export function nomorTahun(jenis: string, nomor: string, tahun: number): string {
+  const uud = jenis === "UUD" ? POLA_NOMOR_UUD.exec(nomor) : null;
+  if (uud) return uud[2] ? `${uud[1]} Perubahan ${uud[2]}` : uud[1];
   const m = jenis === "POJK" ? POLA_SLUG_POJK.exec(nomor) : null;
   return m ? `${m[1]}/POJK.${m[2]}/${m[3]}` : `${nomor}/${tahun}`;
 }
