@@ -2,7 +2,7 @@
 import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
-  angka, bacaIsiPasal, bersihkanArtefak, daftarCakupan, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, labelJenis, labelRelasi,
+  angka, bacaIsiPasal, bersihkanArtefak, celahNomorPasal, daftarCakupan, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, labelJenis, labelRelasi,
   hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, peraturanPerubahan, pratinjauPeraturan, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
 import { bacaPref, HURUF, simpanPref, terapkanPref, UKURAN } from "../bacaan.js";
@@ -145,6 +145,8 @@ function tampilkan(ctx, d, q) {
   const nama = sitasi(l);
   const topik = judulRingkas(l.judul);
   const kelompok = kelompokkanPasal(d.articles);
+  // Penomoran yang bercelah: teks tersimpan sebagian (pasal yang punya ayat kerap lenyap saat ekstraksi lama).
+  const celah = celahNomorPasal(kelompok, l.judul);
   riwayat.catatDilihat({ uri: l.frbr_uri, sitasi: nama, judul: l.judul });
   const halaman = pratinjauPeraturan(l);
   ctx.setJudul(halaman.judul, halaman.deskripsi);
@@ -306,7 +308,7 @@ function tampilkan(ctx, d, q) {
     ["naskah", "Naskah"],
   ];
   const tabAwal = tabTersedia.some(([k]) => k === ctx.params.get("tab")) ? /** @type {string} */ (ctx.params.get("tab")) : "isi";
-  const isiPanel = panelIsi(ctx, d, q, kelompok);
+  const isiPanel = panelIsi(ctx, d, q, kelompok, celah);
   /** @type {Record<string, HTMLElement>} */
   const panel = {
     isi: h("div", { role: "tabpanel", id: "panel-isi", "aria-labelledby": "tab-isi" }, isiPanel.el),
@@ -372,6 +374,23 @@ function tampilkan(ctx, d, q) {
       { class: "meta-baris" },
       lencanaStatus(l.status),
       jumlahPasal ? h("span", { class: "redup" }, `${angka(jumlahPasal)} pasal${adaPenjelasan ? " dan penjelasannya" : ""}`) : null,
+      celah
+        ? h(
+            "button",
+            {
+              type: "button",
+              class: "lencana lencana-diubah lencana-tombol",
+              "aria-label": "Teks belum lengkap, buka penjelasannya di akhir teks",
+              onclick: () => {
+                pilihTab("isi");
+                const catatan = document.getElementById("catatan-celah");
+                catatan?.scrollIntoView({ block: "center" });
+                catatan?.focus({ preventScroll: true });
+              },
+            },
+            "Teks belum lengkap",
+          )
+        : null,
       lencanaLuring,
       l.tanggal_penetapan ? h("span", { class: "redup" }, `Ditetapkan ${tanggalIndonesia(l.tanggal_penetapan)}`) : null,
     ),
@@ -478,9 +497,10 @@ function renderBlok(b, peta) {
  * @param {Detail} d
  * @param {string} q
  * @param {ReturnType<typeof kelompokkanPasal>} kelompok
+ * @param {ReturnType<typeof celahNomorPasal>} celah
  * @returns {{ el: HTMLElement, saatTabBerubah: (aktif: boolean) => void }}
  */
-function panelIsi(ctx, d, q, kelompok) {
+function panelIsi(ctx, d, q, kelompok, celah) {
   const l = d.law;
   const nama = sitasi(l);
   if (!d.articles.length) {
@@ -650,7 +670,27 @@ function panelIsi(ctx, d, q, kelompok) {
     h("div", { class: "alat-baca-tombol" }, daftarIsi?.tombol ?? null, tombolTampilan),
   );
 
-  const isiBaca = h("div", { class: "isi-baca" }, daftar);
+  // Penjelasan lengkapnya di akhir teks (lencana di kepala halaman menautkannya): di atas teks ia mendorong pasal pertama
+  // keluar dari layar ponsel.
+  const sumberAsli = d.bpk_url ?? (l.sumber_url && /^https?:\/\//i.test(l.sumber_url) ? l.sumber_url : null);
+  const catatanCelah = celah
+    ? h(
+        "div",
+        { id: "catatan-celah", tabindex: "-1", class: "catatan-celah" },
+        peringatan(
+          "info",
+          h("p", null, h("strong", null, "Teks peraturan ini tampaknya belum lengkap.")),
+          h(
+            "p",
+            null,
+            `Nomor pasal berhenti di ${angka(celah.maks)}, tetapi ${angka(celah.hilang)} nomor di antaranya tidak ada di Lexa (mis. Pasal ${celah.contoh.join(", ")}). Lexa melengkapi teks dari sumber secara bertahap; untuk keperluan resmi rujuk naskah aslinya.`,
+            sumberAsli ? [" ", h("a", { href: sumberAsli, target: "_blank", rel: "noopener noreferrer" }, "Buka naskah di sumber")] : null,
+          ),
+        ),
+      )
+    : null;
+
+  const isiBaca = h("div", { class: "isi-baca" }, daftar, catatanCelah);
   const lanjut = buatLanjutBaca(l.frbr_uri, indeks, { tanpa: Boolean(location.hash) || Boolean(q), keJangkar: keJangkarPasal });
   const akar = h("div", { class: ["baca-tata", daftarIsi ? "dengan-daftar-isi" : ""] }, daftarIsi?.el ?? null, h("div", { class: "baca-utama" }, lanjut, alat, isiBaca), daftarIsi?.tombolMengambang ?? null);
   pantauPosisiBaca(ctx, l.frbr_uri, daftar, indeks);

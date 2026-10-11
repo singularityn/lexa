@@ -885,3 +885,55 @@ describe("status: kelengkapan isi", () => {
     expect(teks).toContain("pasal.id meminta jeda");
   });
 });
+
+describe("halaman peraturan: teks yang tersimpan sebagian", () => {
+  const detail = async () => (await (await fetch(`${BASE}/api/laws/detail?uri=${encodeURIComponent(UU13)}`)).json());
+  const artikel = (nomor) => ({ id: `${UU13}#pasal-${nomor}`, frbr_uri: UU13, nomor_pasal: String(nomor), ayat: null, bab: null, bagian: null, judul: null, isi: `Isi pasal ${nomor}.`, urutan: nomor });
+
+  it("memberi tahu pembaca bila nomor pasal bercelah, dengan contoh nomor dan tautan ke naskah di sumber", async () => {
+    const d = await detail();
+    d.articles = [1, 2, 3, 40, 41, 42, 90].map(artikel);
+    d.law.sumber_url = "https://peraturan.go.id/id/uu-no-13-tahun-2003";
+    d.bpk_url = null;
+    await page.route((url) => url.pathname === "/api/laws/detail", (route) => route.fulfill({ json: d }));
+    await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
+    await page.waitForSelector(".isi-peraturan");
+    // Lencana di kepala halaman (tidak mendorong teks), penjelasannya di akhir teks.
+    const lencana = page.locator(".meta-baris button", { hasText: "Teks belum lengkap" });
+    expect(await lencana.count()).toBe(1);
+    await lencana.click();
+    const catatan = page.locator("#catatan-celah");
+    expect(await catatan.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; })).toBe(true);
+    expect(await catatan.textContent()).toContain("Teks peraturan ini tampaknya belum lengkap.");
+    expect(await catatan.textContent()).toContain("Nomor pasal berhenti di 90, tetapi 83 nomor di antaranya tidak ada di Lexa (mis. Pasal 4, 5, 6, 7)");
+    expect(await catatan.locator("a").getAttribute("href")).toBe("https://peraturan.go.id/id/uu-no-13-tahun-2003");
+  });
+
+  it("peraturan dengan penomoran utuh tidak diberi peringatan", async () => {
+    const d = await detail();
+    d.articles = [1, 2, 3, 4, 5, 6].map(artikel);
+    await page.route((url) => url.pathname === "/api/laws/detail", (route) => route.fulfill({ json: d }));
+    await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
+    await page.waitForSelector(".isi-peraturan");
+    expect(await page.locator("#catatan-celah").count()).toBe(0);
+    expect(await page.locator(".meta-baris button", { hasText: "Teks belum lengkap" }).count()).toBe(0);
+  });
+
+  it("peraturan yang pasalnya belum diambil menjelaskan keadaannya dan menautkan sumber (hanya http/https)", async () => {
+    const d = await detail();
+    d.articles = [];
+    d.bpk_url = null;
+    d.law.sumber_url = "javascript:alert(1)";
+    await page.route((url) => url.pathname === "/api/laws/detail", (route) => route.fulfill({ json: d }));
+    await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
+    await page.waitForSelector("text=Teks pasal belum tersedia di Lexa");
+    expect(await page.textContent("main")).toContain("pasal-pasalnya belum berhasil diambil");
+    expect(await page.locator("main a[href^='javascript:']").count()).toBe(0);
+
+    d.law.sumber_url = "https://peraturan.go.id/id/uu-no-13-tahun-2003";
+    await page.goto(BASE + "/tentang", { waitUntil: "networkidle" });
+    await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
+    await page.waitForSelector("text=Teks pasal belum tersedia di Lexa");
+    expect(await page.locator("main a", { hasText: "Buka naskah di sumber" }).getAttribute("href")).toBe("https://peraturan.go.id/id/uu-no-13-tahun-2003");
+  });
+});

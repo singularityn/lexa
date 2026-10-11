@@ -317,11 +317,14 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
   (UU 1.950, PP 1.750, Perppu 168, Tap MPR 2) dengan 53.119 baris pasal; 3.456 berstatus 'lengkap' (punya teks pasal,
   sebagian mungkin tersimpan tak utuh, lihat berikut) dan 414 'menunggu'. Katalog masih menyapu: UU di daftar pasal.id
   berjumlah 1.901 dan PP jauh lebih banyak daripada 1.750 (kursor lama menandakan ±5.000), sehingga angka ini naik, dengan
-  status 'menunggu'. Belum ada UUD 1945 di D1: sapuan UUD dan Tap MPR mencoba kode filternya di pasal.id (hasilnya di
-  `katalog_dukungan:*`); bila tak didukung, UUD 1945 masuk lewat impor BPK.
+  status 'menunggu'. Belum ada UUD 1945 di D1: pasal.id mengenali `type=UUD` (5 dokumen, mis. `/akn/id/act/uud/1945/perubahan-4`), jadi
+  sapuan katalog akan mencatatnya (teksnya menunggu akses pasal.id); `TAP_MPR` dicoba oleh sapuan (hasilnya di
+  `katalog_dukungan:*`), dan yang tak tersedia masuk lewat impor BPK.
 - **Ekstraksi pasal sebagian.** Sebelum teksnya ditutup, banyak undang-undang besar tersimpan sebagian (UU 17/2023: 59 dari
   458 pasal; UU 27/2009: Pasal 1 dan 400-408 dari 408; KUHAP 39 dari 286), polanya pasal yang punya ayat lenyap.
-  Pengurai sudah diperbaiki untuk simpul yatim dan ayat/butir bersaudara (`ratakanPohonPasal`), tetapi bentuk respons nyata
+  Ukurannya: 2.190 dari 3.456 peraturan 'lengkap' bernomor pasal bercelah (perkiraan 63.888 pasal hilang; 574 dengan celah
+  lebih dari 20 nomor); halaman baca memberi tahu pembaca bila penomoran bercelah. Pengurai sudah diperbaiki untuk simpul
+  yatim dan ayat/butir bersaudara (`ratakanPohonPasal`), tetapi bentuk respons nyata
   belum pernah terlihat; ringkasannya akan tersimpan di `sync_state` kunci `diagisi:*` begitu pasal.id memberi teks lagi,
   dan `{"perbaiki_celah": true}` lalu mengantrekan ulang yang tersimpan sebagian.
 - Teks hasil ekstraksi versi lama masih memuat sisa: 401 peraturan punya baris pasal ber-id `~n` (umumnya bagian

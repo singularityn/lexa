@@ -28,7 +28,9 @@ pada 50 walau diminta 100; kursor (`katalog_offset:<jenis>`) maju sebanyak yang 
 halamannya tersimpan, jadi 429 di tengah jalan tidak melewatkan apa pun. Peraturan baru masuk `INSERT OR IGNORE`
 dengan status 'menunggu'; yang sudah ada hanya diperbarui metadatanya (isi tak pernah tertimpa). Kode filter `type`
 untuk UUD dan TAP_MPR belum terbukti di pasal.id, yang mengabaikan filter tak dikenal dan menjawab SEMUA peraturan; sapuan
-memeriksa bahwa halaman pertama memuat jenis yang diminta dan mencatat hasilnya di `katalog_dukungan:<jenis>`.
+memeriksa bahwa halaman pertama memuat jenis yang diminta dan mencatat hasilnya di `katalog_dukungan:<jenis>`. Hasil
+pemeriksaan 11 Okt 2026: **`type=UUD` dikenali** (5 dokumen, semua terverifikasi, mis. `/akn/id/act/uud/1945/perubahan-4`
+dengan nomor "1945/P4"); `TAP_MPR` baru diketahui dari sapuan.
 
 **Antrean isi** (`lib/isi.ts`, kolom `laws.isi_*` dari migrasi 0005 dan 0006).
 
@@ -179,7 +181,12 @@ Atas permintaan pemilik (cakupan UUD, Tap MPR, UU, Perppu, PP; data di luar caku
 ## Ekstraksi pasal: yang diketahui dan yang belum
 
 Sebelum temuan akses di atas, data produksi menunjukkan pola tersimpan sebagian: UU 17/2023 (458 pasal) hanya 59 baris,
-UU 27/2009 (408 pasal) hanya Pasal 1 dan 400-408, KUHAP 39 dari 286; polanya selalu pasal yang punya ayat lenyap.
+UU 27/2009 (408 pasal) hanya Pasal 1 dan 400-408, KUHAP 39 dari 286; polanya selalu pasal yang punya ayat lenyap. Ukuran
+luasnya (11 Okt 2026, atas 3.456 peraturan 'lengkap'; celah = nomor pasal tertinggi dikurangi jumlah nomor berbeda):
+**2.190 peraturan bercelah dengan perkiraan 63.888 pasal hilang, 574 di antaranya dengan celah lebih dari 20 nomor**
+(UU perubahan mengutip nomor peraturan lain sehingga sebagian celah wajar). Halaman baca kini memberi tahu pembaca bila
+penomoran pasal bercelah ("Teks peraturan ini tampaknya belum lengkap", `celahNomorPasal` di `public/js/format.js`),
+sehingga teks yang tersimpan sebagian tak terbaca sebagai teks utuh.
 Pengurai sudah diperbaiki untuk dua bentuk yang masuk akal (simpul yatim dijadikan akar, dan ayat/butir bersaudara pasal
 dipasang ke pasal di depannya; `ratakanPohonPasal` di `lib/pasal.ts`), dengan tes, tetapi **bentuk respons nyata belum
 pernah terlihat** karena pasal.id sudah menutup teksnya sebelum diagnosis sempat membacanya. Begitu pasal.id memberi naskah

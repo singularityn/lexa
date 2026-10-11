@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, daftarCakupan, istilahDariKueri, jangkarDariId,
   hitungPasal, judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, namaPasal, nomorTahun, pisahJudul,
-  bacaIsiPasal, pecahRujukan, peraturanPerubahan, pisahPenjelasanTertanam, pratinjauPeraturan, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
+  bacaIsiPasal, celahNomorPasal, pecahRujukan, peraturanPerubahan, pisahPenjelasanTertanam, pratinjauPeraturan, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
 } from "../public/js/format.js";
 import { labelSitasi, nomorTahun as nomorTahunServer, rapikanNomorPasal as rapikanNomorPasalServer } from "../src/shared/label";
 
@@ -121,6 +121,42 @@ describe("URL", () => {
     expect(istilahDariKueri("perundang-undangan")).toEqual(["perundang-undangan"]);
     expect(istilahDariKueri("a di")).toEqual([]);
     expect(istilahDariKueri(null)).toEqual([]);
+  });
+});
+
+describe("celahNomorPasal", () => {
+  const nomor = (...n: Array<number | string>) => kelompokkanPasal(n.map((x, i) => artikel(String(x), null, null, i)));
+
+  it("penomoran utuh, atau celah kecil (satu nomor, atau di bawah 5%), tidak dilaporkan", () => {
+    expect(celahNomorPasal(nomor(1, 2, 3, 4, 5), "Ketenagakerjaan")).toBeNull();
+    expect(celahNomorPasal(nomor(1, 2, 4, 5), "Ketenagakerjaan")).toBeNull(); // satu nomor hilang
+    const panjang = Array.from({ length: 200 }, (_, i) => i + 1).filter((n) => n !== 50 && n !== 51 && n !== 52 && n !== 53 && n !== 54 && n !== 55 && n !== 56 && n !== 57 && n !== 58 && n !== 59);
+    expect(celahNomorPasal(nomor(...panjang), "Ketenagakerjaan")).toMatchObject({ hilang: 10 }); // 5% tepat: dilaporkan
+    expect(celahNomorPasal(nomor(...panjang.filter((n) => n !== 60 && n !== 61)), "Ketenagakerjaan")).toMatchObject({ hilang: 12 });
+    expect(celahNomorPasal(nomor(...Array.from({ length: 100 }, (_, i) => i + 1).filter((n) => n !== 7 && n !== 8)), "Ketenagakerjaan")).toBeNull(); // 2 dari 100
+  });
+
+  it("pola data produksi: UU 17/2023 hanya 59 dari 458 pasal, hanya Pasal 1 dan 400-408 dari 408", () => {
+    const sebagian = celahNomorPasal(nomor(...Array.from({ length: 59 }, (_, i) => i * 7 + 1)), "Kesehatan");
+    expect(sebagian).toMatchObject({ maks: 407, hilang: 407 - 59 });
+    expect(sebagian?.contoh).toEqual([2, 3, 4, 5]);
+    expect(celahNomorPasal(nomor(1, ...Array.from({ length: 9 }, (_, i) => 400 + i)), "Pemerintahan Daerah")).toMatchObject({ maks: 408, hilang: 398 });
+  });
+
+  it("pasal bernomor huruf (12A) dihitung sebagai nomornya, dan nomor non-angka (Pasal I) dilewati", () => {
+    expect(celahNomorPasal(nomor(1, 2, "2A", 3, "3B", 4), "Perlindungan Konsumen")).toBeNull();
+    expect(celahNomorPasal(nomor("I", "II", "III"), "Perlindungan Konsumen")).toBeNull();
+  });
+
+  it("peraturan perubahan tidak diperiksa (mengutip pasal peraturan lain), dan Penjelasan tidak dihitung", () => {
+    expect(celahNomorPasal(nomor(1, 2, 90, 120), "Perubahan Atas Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan")).toBeNull();
+    // Batang tubuh utuh 1-30, lalu Penjelasan yang memakai ulang nomor 1-12: nomor Penjelasan tak menutupi celah dan tak menambahnya.
+    const utuh = Array.from({ length: 30 }, (_, i) => i + 1);
+    expect(celahNomorPasal(nomor(...utuh, ...Array.from({ length: 12 }, (_, i) => i + 1)), "Perkawinan")).toBeNull();
+  });
+
+  it("tanpa pasal sama sekali tidak ada yang dilaporkan", () => {
+    expect(celahNomorPasal([], "Perkawinan")).toBeNull();
   });
 });
 

@@ -442,6 +442,8 @@ label.bidang { display: block; font-weight: 600; margin-bottom: 4px; font-size: 
 .lencana-berlaku { background: var(--berlaku-bg); color: var(--berlaku-fg); }
 .lencana-dicabut { background: var(--dicabut-bg); color: var(--dicabut-fg); }
 .lencana-diubah { background: var(--diubah-bg); color: var(--diubah-fg); }
+.lencana-tombol { border: 0; font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; min-height: 28px; text-decoration: underline; text-underline-offset: 2px; }
+.catatan-celah { margin-top: 24px; outline: none; }
 .lencana-jenis { background: var(--c-bg, var(--aksen-lembut)); color: var(--c-fg, var(--aksen)); }
 .lencana-jenis::before { display: none; }
 .sumber-chip { font-size: 0.7rem; border: 1px solid var(--garis-kuat); border-radius: 999px; padding: 0 8px; color: var(--teks-redup); text-transform: uppercase; letter-spacing: 0.03em; }

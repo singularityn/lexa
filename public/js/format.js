@@ -691,6 +691,38 @@ function tandaiPenjelasan(kelompok) {
 }
 
 /**
+ * Celah penomoran pasal batang tubuh: nomor dari 1 sampai nomor tertinggi yang tidak ada. Teks yang tersimpan sebagian
+ * (pasal berayat yang lenyap saat ekstraksi, dst.) ketahuan dari sini, dan pembaca berhak diberi tahu. Peraturan
+ * perubahan tak diperiksa (ia mengutip pasal peraturan lain), Penjelasan tak dihitung, dan celah kecil (kurang dari dua
+ * nomor atau di bawah 5%) dianggap wajar. Mengembalikan null bila penomoran utuh.
+ * @param {ReturnType<typeof kelompokkanPasal>} kelompok
+ * @param {string | null | undefined} judul
+ * @returns {{ maks: number, hilang: number, contoh: number[] } | null}
+ */
+export function celahNomorPasal(kelompok, judul) {
+  if (peraturanPerubahan(judul)) return null;
+  /** @type {Set<number>} */
+  const ada = new Set();
+  let maks = 0;
+  for (const g of kelompok) {
+    if (g.penjelasan) continue;
+    const v = nilaiNomor(g.nomor);
+    if (Number.isNaN(v) || v <= 0) continue;
+    ada.add(v);
+    maks = Math.max(maks, v);
+  }
+  /** @type {number[]} */
+  const contoh = [];
+  let hilang = 0;
+  for (let n = 1; n <= maks; n++) {
+    if (ada.has(n)) continue;
+    hilang++;
+    if (contoh.length < 4) contoh.push(n);
+  }
+  return hilang >= 2 && hilang / maks >= 0.05 ? { maks, hilang, contoh } : null;
+}
+
+/**
  * Daftar isi: pasal dikelompokkan menurut BAB menurut urutan kemunculannya. Pasal yang tidak punya BAB
  * (peraturan tanpa struktur BAB, atau sebelum BAB pertama) masuk ke kelompok tanpa judul.
  * @param {ReturnType<typeof kelompokkanPasal>} kelompok
