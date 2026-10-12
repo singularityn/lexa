@@ -13,6 +13,7 @@ import {
   idSesiBaru, simpanSesi, hapusSesi, bacaSesi, idSesiDariCookie,
   cookieSesi, cookieHapus, tujuanAman,
 } from "../lib/sesi";
+import { uriCallback } from "../lib/google";
 
 type Bindings = Env;
 
@@ -35,9 +36,13 @@ function asalAman(url: string): boolean {
 // ---------------------------------------------------------------------------
 auth.get("/status", async (c) => {
   const sesi = await bacaSesi(c.env.CACHE, c.req.header("cookie"));
+  const tersedia = terkonfigurasi(c.env);
   return c.json({
     masuk: Boolean(sesi),
-    login_tersedia: terkonfigurasi(c.env),
+    login_tersedia: tersedia,
+    // Alamat yang harus terdaftar PERSIS di Google Cloud Console (lib/google.ts); halaman Akun menampilkannya untuk
+    // pengelola yang menemui "redirect_uri_mismatch". Bukan rahasia: Google menampilkannya juga pada setiap alur masuk.
+    redirect_uri: tersedia ? uriCallback(c.req.url) : null,
     pengguna: sesi
       ? { id: sesi.pengguna_id, email: sesi.email, nama: sesi.nama, foto_url: sesi.foto_url }
       : null,
@@ -60,7 +65,6 @@ auth.get("/google", async (c) => {
     );
   }
 
-  const asal = new URL(c.req.url).origin;
   // `state` mengikat permintaan ini dengan callback-nya. Tanpa itu, penyerang
   // bisa memancing korban menyelesaikan alur OAuth milik akun penyerang.
   const state = idSesiBaru();
@@ -74,7 +78,7 @@ auth.get("/google", async (c) => {
 
   const url = new URL(GOOGLE_AUTH);
   url.searchParams.set("client_id", c.env.GOOGLE_CLIENT_ID);
-  url.searchParams.set("redirect_uri", `${asal}/api/auth/google/callback`);
+  url.searchParams.set("redirect_uri", uriCallback(c.req.url));
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", "openid email profile");
   url.searchParams.set("state", state);
@@ -134,8 +138,15 @@ async function verifikasiIdToken(idToken: string, clientId: string): Promise<{
 auth.get("/google/callback", async (c) => {
   const kode = c.req.query("code");
   const state = c.req.query("state");
-  const asal = new URL(c.req.url).origin;
   const aman = asalAman(c.req.url);
+
+  // Google mengembalikan peramban ke sini dengan `error` bila pengguna membatalkan atau menolak (access_denied) atau
+  // ada galat lain. "redirect_uri_mismatch" TIDAK sampai di sini: Google menampilkannya sendiri dan tak mengalihkan.
+  const galatGoogle = c.req.query("error");
+  if (galatGoogle) {
+    if (state) await c.env.CACHE.delete(`oauth:${state}`).catch(() => {});
+    return c.redirect(`/akun?galat=${galatGoogle === "access_denied" ? "ditolak" : "google"}`, 302);
+  }
 
   if (!kode || !state) return c.redirect("/akun?galat=parameter", 302);
 
@@ -150,7 +161,7 @@ auth.get("/google/callback", async (c) => {
       code: kode,
       client_id: c.env.GOOGLE_CLIENT_ID,
       client_secret: c.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: `${asal}/api/auth/google/callback`,
+      redirect_uri: uriCallback(c.req.url),
       grant_type: "authorization_code",
     }),
   });

@@ -86,7 +86,7 @@ describe("klien API: penanda salinan dari service worker", () => {
 });
 
 describe("sesi.muat", () => {
-  const tamu = { masuk: false, login_tersedia: false, pengguna: null };
+  const tamu = { masuk: false, login_tersedia: false, redirect_uri: null, pengguna: null };
 
   it("bentuk jawaban yang salah dianggap tanpa sesi; sesi.data tidak pernah null", async () => {
     for (const rusak of [null, undefined, "", "bukan objek", 42, {}, { masuk: "ya" }]) {
@@ -104,6 +104,17 @@ describe("sesi.muat", () => {
     balasDengan("");
     await sesi.muat();
     expect(sesi.data).toEqual(tamu);
+  });
+
+  it("keluar mempertahankan ketersediaan login dan alamat pengalihannya (bantuan masuk tetap tampil bagi tamu)", async () => {
+    vi.spyOn(api, "statusAuth").mockResolvedValueOnce({
+      masuk: true, login_tersedia: true, redirect_uri: "https://lexa.test/api/auth/google/callback",
+      pengguna: { id: "1", email: "a@b.c", nama: "A", foto_url: null },
+    });
+    await sesi.muat();
+    vi.spyOn(api, "keluar").mockResolvedValueOnce(undefined as never);
+    await sesi.keluar();
+    expect(sesi.data).toEqual({ masuk: false, login_tersedia: true, redirect_uri: "https://lexa.test/api/auth/google/callback", pengguna: null });
   });
 
   it("jawaban yang sah diterima", async () => {

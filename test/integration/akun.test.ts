@@ -3,6 +3,7 @@
  * kunci RSA buatan tes), profil, keluar, dan koleksi tersinkron.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import worker from "../../src/worker/index";
 import {
   buatLingkungan, json, kirim, KORPUS, masukSebagai, panggil, sisipkan, sqliteAda, type Lingkungan,
 } from "./harness";
@@ -10,6 +11,7 @@ import {
 interface Status {
   masuk: boolean;
   login_tersedia: boolean;
+  redirect_uri: string | null;
   pengguna: { id: string; email: string; nama: string | null; foto_url: string | null } | null;
 }
 
@@ -33,7 +35,7 @@ describe.skipIf(!sqliteAda)("akun", () => {
     it("tamu: belum masuk, login tidak tersedia bila Google belum dikonfigurasi", async () => {
       const res = await panggil(l, "/api/auth/status");
       expect(res.headers.get("cache-control")).toBe("no-store");
-      expect(await res.json()).toEqual({ masuk: false, login_tersedia: false, pengguna: null });
+      expect(await res.json()).toEqual({ masuk: false, login_tersedia: false, redirect_uri: null, pengguna: null });
     });
 
     it("login_tersedia true bila GOOGLE_CLIENT_ID dan GOOGLE_CLIENT_SECRET terpasang", async () => {
@@ -43,12 +45,28 @@ describe.skipIf(!sqliteAda)("akun", () => {
       expect((await json<Status>(await panggil(l, "/api/auth/status"))).login_tersedia).toBe(false);
     });
 
+    it("redirect_uri: alamat yang harus terdaftar persis di Google Cloud Console; null selama login belum tersedia", async () => {
+      expect((await json<Status>(await panggil(l, "/api/auth/status"))).redirect_uri).toBeNull();
+      Object.assign(l.env, { GOOGLE_CLIENT_ID: "cid", GOOGLE_CLIENT_SECRET: "rahasia" });
+      expect((await json<Status>(await panggil(l, "/api/auth/status"))).redirect_uri).toBe("https://lexa.test/api/auth/google/callback");
+    });
+
+    it("redirect_uri mengikuti host yang dipakai pengunjung (workers.dev dan domain sendiri perlu entri masing-masing); jalur dan kueri tak ikut", async () => {
+      Object.assign(l.env, { GOOGLE_CLIENT_ID: "cid", GOOGLE_CLIENT_SECRET: "rahasia" });
+      const dari = async (url: string) =>
+        (await (await worker.fetch(new Request(url), l.env, { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext)).json() as Status).redirect_uri;
+      expect(await dari("https://lexa.fariqhfebrian18.workers.dev/api/auth/status?x=1#y")).toBe("https://lexa.fariqhfebrian18.workers.dev/api/auth/google/callback");
+      expect(await dari("https://hukum.example.id/api/auth/status")).toBe("https://hukum.example.id/api/auth/google/callback");
+      expect(await dari("http://localhost:8787/api/auth/status")).toBe("http://localhost:8787/api/auth/google/callback");
+    });
+
     it("pengguna yang masuk: profil dikembalikan tanpa membocorkan data sesi lain", async () => {
       const { cookie } = await masukSebagai(l, { id: "u7", email: "tujuh@example.test", nama: "Tujuh" });
       const b = await json<Status>(await panggil(l, "/api/auth/status", dengan(cookie)));
       expect(b).toEqual({
         masuk: true,
         login_tersedia: false,
+        redirect_uri: null,
         pengguna: { id: "u7", email: "tujuh@example.test", nama: "Tujuh", foto_url: null },
       });
     });
@@ -147,6 +165,38 @@ describe.skipIf(!sqliteAda)("akun", () => {
       expect(state).toMatch(/^[0-9a-f]{64}$/);
       expect(JSON.parse(l.kv.isi.get(`oauth:${state}`)!.nilai)).toEqual({ kembaliKe: "/peraturan?uri=x" });
       expect(l.kv.isi.get(`oauth:${state}`)!.kedaluwarsa).toBeGreaterThan(Date.now());
+    });
+
+    it("alamat di /api/auth/status sama persis dengan yang dikirim ke Google di awal alur dan saat menukar kode (selisih sekecil apa pun = redirect_uri_mismatch)", async () => {
+      aktifkan();
+      const kunci = await kunciRsa();
+      const panggilan = stubGoogle({ idToken: await buatIdToken(kunci), jwk: kunci.jwk });
+      const terdaftar = (await json<Status>(await panggil(l, "/api/auth/status"))).redirect_uri;
+      const { lokasi, state } = await mulai();
+      expect(lokasi.searchParams.get("redirect_uri")).toBe(terdaftar);
+      await panggil(l, `/api/auth/google/callback?code=kode-uji&state=${state}`);
+      const tukar = new URLSearchParams(panggilan.find((p) => p.url.endsWith("/token"))!.body);
+      expect(tukar.get("redirect_uri")).toBe(terdaftar);
+      // Bentuk yang selalu dituntut Google: https (atau localhost), tanpa garis miring penutup, tanpa kueri atau fragmen.
+      expect(terdaftar).toMatch(/^https:\/\/[^/?#]+\/api\/auth\/google\/callback$/);
+    });
+
+    it("pembatalan atau penolakan dari Google (error=access_denied) -> /akun?galat=ditolak; state hangus, tanpa cookie", async () => {
+      aktifkan();
+      const { state } = await mulai();
+      const res = await panggil(l, `/api/auth/google/callback?error=access_denied&state=${state}`);
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("/akun?galat=ditolak");
+      expect(res.headers.get("set-cookie")).toBeNull();
+      expect(l.kv.isi.has(`oauth:${state}`)).toBe(false);
+    });
+
+    it("galat lain dari Google, dengan atau tanpa state -> /akun?galat=google", async () => {
+      aktifkan();
+      const { state } = await mulai();
+      expect((await panggil(l, `/api/auth/google/callback?error=server_error&state=${state}`)).headers.get("location")).toBe("/akun?galat=google");
+      expect((await panggil(l, "/api/auth/google/callback?error=temporarily_unavailable")).headers.get("location")).toBe("/akun?galat=google");
+      expect(l.kv.isi.has(`oauth:${state}`)).toBe(false);
     });
 
     it("callback sukses: pengguna dibuat, sesi disimpan, cookie aman dipasang, state hangus", async () => {

@@ -574,6 +574,30 @@ describe("koleksi dan akun", () => {
     expect(await page.textContent(".kosong")).toContain("Koleksi masih kosong");
   });
 
+  it("bantuan masuk: alamat pengalihan Google yang harus didaftarkan tampil persis dan bisa disalin (anti redirect_uri_mismatch)", async () => {
+    await page.goto(BASE + "/akun", { waitUntil: "networkidle" });
+    const bantuan = page.locator("details.bantuan-masuk");
+    // Tertutup secara bawaan: pengunjung biasa tak perlu melihatnya.
+    expect(await bantuan.evaluate((d) => d.open)).toBe(false);
+    expect(await bantuan.locator("summary").textContent()).toContain("redirect_uri_mismatch");
+    await bantuan.locator("summary").click();
+    const uri = await bantuan.locator("code.uri-callback").textContent();
+    expect(uri).toBe(`${BASE}/api/auth/google/callback`);
+    await bantuan.locator("button:has-text('Salin')").click();
+    await page.locator(".toast", { hasText: "Alamat disalin." }).waitFor();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(uri);
+    // Tak ada yang meluap di layar sempit.
+    await page.setViewportSize({ width: 360, height: 740 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+
+  it("kembali dari Google dengan galat: pesan yang sesuai tampil di halaman Akun", async () => {
+    for (const [galat, teks] of [["ditolak", "Masuk dibatalkan"], ["google", "Google mengembalikan galat"]]) {
+      await page.goto(`${BASE}/akun?galat=${galat}`, { waitUntil: "networkidle" });
+      expect(await page.locator(".peringatan, .catatan-hasil, [role=alert]").first().textContent()).toContain(teks);
+    }
+  });
+
   it("masuk: koleksi tamu digabung ke akun, tersimpan di server, dan hilang dari perangkat", async () => {
     await reset();
     // Tamu menyimpan dua peraturan.

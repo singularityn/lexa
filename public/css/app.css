@@ -693,6 +693,12 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
 .kelompok-jumlah { flex: none; padding: 0 8px; border-radius: 999px; background: var(--netral-bg); color: var(--netral-fg); font-size: 0.75rem; font-weight: 700; }
 .istilah { font-size: 0.88rem; color: var(--teks-redup); }
 .istilah code { background: var(--permukaan-2); padding: 1px 6px; border-radius: 5px; margin-inline-end: 4px; display: inline-block; }
+/* Bantuan masuk (alamat pengalihan Google) di halaman Akun. */
+.bantuan-masuk { margin-top: 12px; }
+.bantuan-masuk summary { cursor: pointer; }
+.bantuan-masuk .baris { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; }
+.bantuan-masuk .uri-callback { overflow-wrap: anywhere; word-break: break-all; }
+.bantuan-masuk ol { margin: 6px 0 0; padding-inline-start: 1.2em; }
 
 /* Catatan di atas hasil: pencarian longgar, filter aktif. */
 .catatan-hasil { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin: 0 0 12px; border-radius: 16px; font-size: 0.9rem; background: var(--aksen-lembut); border: 1px solid color-mix(in srgb, var(--aksen) 25%, transparent); }

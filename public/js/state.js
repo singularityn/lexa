@@ -79,7 +79,7 @@ export const tema = {
 // --- Sesi ---------------------------------------------------------------------
 
 /** @type {import("./api.js").StatusAuth} */
-const sesiAwal = { masuk: false, login_tersedia: false, pengguna: null };
+const sesiAwal = { masuk: false, login_tersedia: false, redirect_uri: null, pengguna: null };
 
 export const sesi = {
   /** @type {import("./api.js").StatusAuth} */
@@ -102,7 +102,7 @@ export const sesi = {
     try {
       await api.keluar();
     } finally {
-      this.data = { ...sesiAwal, login_tersedia: this.data.login_tersedia };
+      this.data = { ...sesiAwal, login_tersedia: this.data.login_tersedia, redirect_uri: this.data.redirect_uri };
       koleksi.setelahSesiBerubah();
       siarkan("sesi", this.data);
     }

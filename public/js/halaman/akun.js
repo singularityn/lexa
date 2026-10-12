@@ -1,5 +1,5 @@
 // @ts-check
-import { h, isi } from "../dom.js";
+import { h, isi, salin } from "../dom.js";
 import { api, GalatApi } from "../api.js";
 import { koleksi, sesi, siap } from "../state.js";
 import { toast } from "../komponen/toast.js";
@@ -16,7 +16,37 @@ const PESAN_GALAT = /** @type {Record<string, string>} */ ({
   state: "Sesi masuk sudah kedaluwarsa atau tidak dikenali. Silakan mulai lagi.",
   token: "Google menolak pertukaran kode masuk. Silakan coba lagi.",
   verifikasi: "Identitas dari Google tidak dapat diverifikasi, sehingga Anda tidak dimasukkan.",
+  ditolak: "Masuk dibatalkan, atau Google tidak mengizinkan akun itu masuk. Coba lagi, atau pakai akun Google lain.",
+  google: "Google mengembalikan galat saat masuk. Silakan coba lagi.",
 });
+
+/**
+ * Bantuan untuk PENGELOLA situs: bila Google menampilkan "Error 400: redirect_uri_mismatch", alamat pengalihan yang
+ * dipakai Lexa belum terdaftar persis di Google Cloud Console. Halaman galat itu milik Google dan tidak mengembalikan
+ * pengguna ke Lexa, jadi alamat yang benar ditampilkan di sini, sebelum masuk dicoba. Tertutup secara bawaan.
+ * @param {string} uri
+ */
+function bantuanMasuk(uri) {
+  return h(
+    "details",
+    { class: "istilah bantuan-masuk" },
+    h("summary", null, "Pengelola situs: Google menampilkan “redirect_uri_mismatch”?"),
+    h("p", { class: "bantu" }, "Alamat pengalihan di Google Cloud Console harus sama persis dengan yang dikirim Lexa (huruf, garis miring, dan https):"),
+    h(
+      "p",
+      { class: "baris" },
+      h("code", { class: "uri-callback" }, uri),
+      h("button", { type: "button", class: "tombol tombol-kecil", onclick: async () => toast((await salin(uri)) ? "Alamat disalin." : "Penyalinan gagal") }, ikon("salin"), "Salin"),
+    ),
+    h(
+      "ol",
+      { class: "bantu" },
+      h("li", null, "Buka Google Cloud Console > APIs & Services > Credentials, lalu pilih klien OAuth jenis “Web application” yang Client ID-nya terpasang di Lexa."),
+      h("li", null, "Pada “Authorized redirect URIs”, tambahkan alamat di atas dan simpan. Perubahan bisa butuh beberapa menit."),
+      h("li", null, "Bila situs dibuka lewat domain lain, daftarkan alamat untuk domain itu juga."),
+    ),
+  );
+}
 
 /** Riwayat (peraturan yang dibuka, kata yang dicari) hanya ada di perangkat ini; pengguna bisa menghapusnya. */
 function kartuRiwayat() {
@@ -124,6 +154,7 @@ export default async function akun(ctx) {
             ? [
                 h("p", null, h("a", { class: "tombol tombol-utama", href: `/api/auth/google?kembali=${encodeURIComponent("/koleksi")}`, "data-luar": "" }, "Masuk dengan Google")),
                 h("p", { class: "bantu" }, "Lexa hanya meminta identitas dasar (nama, email, foto), bukan akses ke Gmail atau Drive."),
+                sesi.data.redirect_uri ? bantuanMasuk(sesi.data.redirect_uri) : null,
               ]
             : h("p", { class: "redup" }, "Masuk dengan Google belum diaktifkan di instalasi ini. Mode tamu tetap berfungsi penuh."),
           koleksi.jumlah ? h("p", { class: "bantu" }, `${koleksi.jumlah} peraturan di koleksi perangkat ini akan dibawa ke akun saat Anda masuk.`) : null,

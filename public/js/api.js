@@ -11,7 +11,7 @@
 /**
  * @typedef {{ frbr_uri: string, sitasi: string, judul: string, nomor_pasal: string | null, ayat: string | null, status: string }} SitasiJawaban
  * @typedef {{ jawaban?: string, sitasi: SitasiJawaban[], cukup_dasar: boolean, percakapan_id?: string | null }} BalasanTanya
- * @typedef {{ masuk: boolean, login_tersedia: boolean, pengguna: { id: string, email: string, nama: string | null, foto_url: string | null } | null }} StatusAuth
+ * @typedef {{ masuk: boolean, login_tersedia: boolean, redirect_uri?: string | null, pengguna: { id: string, email: string, nama: string | null, foto_url: string | null } | null }} StatusAuth
  * @typedef {{ jenis: string, n: number }} JumlahJenis
  * @typedef {{ frbr_uri: string, jenis: string, nomor: string, tahun: number, judul: string }} RingkasPeraturan
  * @typedef {{ job: string, status: string, jumlah: number, detail: string | null, created_at: string }} CatatanSinkron

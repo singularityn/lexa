@@ -187,6 +187,13 @@ cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignor
 | `PASAL_API_TOKEN` | secret | token pribadi pasal.id (`Authorization: Bearer`) untuk daftar `/laws` (katalog); tanpa ini pipeline tak memanggil pasal.id. Teks pasal tak lagi dilayani API-nya untuk token mana pun (lihat [docs/pipeline-data.md](docs/pipeline-data.md#akses-isi-pasalid-temuan-11-okt-2026)) |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | secret | login Google; tanpa ini aplikasi berjalan sebagai tamu |
 
+Login Google memerlukan alamat pengalihan yang terdaftar **persis** di Google Cloud Console, yaitu
+`https://<host-situs>/api/auth/google/callback` (untuk produksi:
+`https://lexa.fariqhfebrian18.workers.dev/api/auth/google/callback`). Tanpa itu Google menjawab "Error 400:
+redirect_uri_mismatch" dan tidak mengembalikan pengguna ke Lexa. Alamat yang sedang dikirim Lexa tampil di halaman
+Akun (bagian bantuan, tertutup) dan pada `redirect_uri` di `GET /api/auth/status`. Langkah lengkap dan daftar galat:
+[docs/hubungkan-github-cloudflare.md](docs/hubungkan-github-cloudflare.md#login-google-oauth).
+
 Secret dipasang dengan `npx wrangler secret put NAMA` (jangan lewat pipa, newline ikut tersimpan) atau
 lewat dashboard. Nilainya tidak pernah masuk Git. Variabel teks lain saat ini dipertahankan dari dashboard
 (`keep_vars` di `wrangler.jsonc`); `CAKUPAN_JENIS` ditetapkan di `wrangler.jsonc` dan ikut setiap deploy.

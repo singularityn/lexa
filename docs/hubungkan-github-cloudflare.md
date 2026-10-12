@@ -190,6 +190,43 @@ Rahasia tidak pernah masuk Git. Karena deploy dilakukan oleh Workers Builds di s
 Actions **tidak** membutuhkan token Cloudflare; CI di repo ini (`.github/workflows/ci.yml`) hanya menjalankan
 typecheck, tes, bundling, migrasi pada D1 kosong, dan tes e2e.
 
+## Login Google (OAuth)
+
+Login Google bersifat opsional: tanpa `GOOGLE_CLIENT_ID` dan `GOOGLE_CLIENT_SECRET` aplikasi berjalan sebagai tamu. Untuk
+mengaktifkannya:
+
+1. **Google Cloud Console** (console.cloud.google.com) > pilih atau buat proyek > **APIs & Services > OAuth consent screen**:
+   isi nama aplikasi dan email dukungan. Selama berstatus *Testing*, hanya akun yang didaftarkan di "Test users" yang bisa
+   masuk (yang lain melihat "Error 403: access_denied"); ubah ke *In production* bila semua orang boleh masuk. Lexa hanya
+   meminta `openid email profile`, jadi tak perlu verifikasi cakupan sensitif.
+2. **APIs & Services > Credentials > Create credentials > OAuth client ID**, jenis **Web application** (bukan Desktop, Android, atau
+   iOS: jenis itu tidak menerima alamat pengalihan web).
+3. **Authorized redirect URIs**: tambahkan alamat berikut, **persis**, satu per host yang dipakai pengunjung:
+
+   | Host | Alamat yang didaftarkan |
+   |---|---|
+   | Produksi (`workers.dev`) | `https://lexa.fariqhfebrian18.workers.dev/api/auth/google/callback` |
+   | Domain sendiri, bila dipasang | `https://<domain>/api/auth/google/callback` |
+   | Pengembangan lokal (`npx wrangler dev`) | `http://localhost:8787/api/auth/google/callback` |
+
+   Isi "Authorized JavaScript origins" tidak dipakai alur ini (kodenya dipertukarkan di server), boleh dikosongkan.
+4. Salin **Client ID** dan **Client secret** ke Worker: `npx wrangler secret put GOOGLE_CLIENT_ID` dan
+   `npx wrangler secret put GOOGLE_CLIENT_SECRET` (atau dashboard: Settings > Variables and secrets). Tidak perlu deploy ulang.
+5. Buka `/akun`: tombol "Masuk dengan Google" tampil. Di bawahnya ada bagian tertutup "Pengelola situs: Google menampilkan
+   redirect_uri_mismatch?" yang memuat alamat pengalihan yang **dikirim Lexa saat itu** (sama dengan
+   `redirect_uri` pada `GET /api/auth/status`), lengkap dengan tombol salin. Daftarkan alamat itu.
+
+### Galat yang lazim
+
+| Yang tampil | Penyebab | Perbaikan |
+|---|---|---|
+| **Error 400: redirect_uri_mismatch** (halaman Google) | Alamat pengalihan yang dikirim Lexa tidak terdaftar persis di klien OAuth. Google menampilkannya sendiri dan tidak mengembalikan pengguna ke Lexa, jadi Lexa tak bisa menjelaskannya pada saat itu | Daftarkan alamat yang tampil di `/akun` (bagian bantuan). Harus sama huruf demi huruf: `https`, host, `/api/auth/google/callback`, tanpa garis miring penutup. Salah umum: mendaftarkan hanya `https://lexa.fariqhfebrian18.workers.dev/`, jalur gaya NextAuth (`/api/auth/callback/google`), atau `http://`. Klik "error details" di halaman Google untuk melihat `redirect_uri` yang dikirim. Perubahan di Google bisa butuh beberapa menit |
+| Alamat berbeda dari yang diharapkan | Alamat mengikuti host yang dibuka pengunjung: lewat `workers.dev` dan lewat domain sendiri menghasilkan dua alamat | Daftarkan keduanya, atau arahkan pengunjung ke satu host |
+| **Error 403: access_denied** / "app not verified" | Layar persetujuan berstatus *Testing* dan akun belum jadi "Test user" | Tambahkan akunnya di OAuth consent screen > Test users, atau ubah ke *In production* |
+| **Error 401: invalid_client** | Client ID salah/terhapus, atau jenis klien bukan Web application | Periksa `GOOGLE_CLIENT_ID`; buat klien jenis Web application |
+| Kembali ke `/akun?galat=token` | Client secret salah (kode tak bisa ditukar) | Pasang ulang `GOOGLE_CLIENT_SECRET`; jangan lewat pipa (newline ikut tersimpan) |
+| Kembali ke `/akun?galat=ditolak` atau `galat=google` | Pengguna membatalkan, atau Google mengembalikan galat lain | Coba lagi |
+
 ## Jebakan yang perlu diingat
 
 - Nama Worker di dashboard harus sama dengan `name` di `wrangler.jsonc`.
