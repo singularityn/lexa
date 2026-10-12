@@ -145,27 +145,150 @@ naskah di sumbernya (BPK, atau halaman pasal.id) untuk peraturan yang teksnya be
 
 ## Panen BPK (melengkapi teks)
 
-Kodenya: `GET /api/impor/butuh-teks` (daftar kerja), `PUT /api/impor/pdf` (unggah PDF), dan `scripts/bpk-console-harvest.js`
-(dijalankan di konsol peramban pada situs BPK). Alurnya:
+Teks UUD, Tap MPR, UU, Perppu, dan PP yang belum ada hanya bisa datang dari naskah resmi BPK. Seluruh peraturan.bpk.go.id
+di balik Cloudflare managed challenge dan Worker Lexa tidak pernah menghubunginya, jadi pengambilannya dikerjakan **dari
+peramban Anda sendiri** oleh `scripts/bpk-console-harvest.js`, yang berbicara dengan Lexa lewat `/api/impor/*` (header
+`x-admin-token`, secret `ADMIN_TOKEN`; origin BPK diizinkan CORS).
 
-1. Buka https://peraturan.bpk.go.id/ di peramban, selesaikan tantangan Cloudflare bila muncul, buka DevTools > Console.
-2. Setel opsi uji lebih dulu, lalu tempel isi `scripts/bpk-console-harvest.js`:
-   `window.LEXA_PANEN = { batas: 3, kering: true }` (mengunduh PDF tanpa mengunggah). Isi alamat Lexa dan `ADMIN_TOKEN` pada
-   kotak dialog (tidak disimpan di mana pun).
-3. Bila tautan PDF tak ditemukan, buka satu halaman rincian peraturan di BPK dan jalankan `window.LEXA_PANEN = { periksa: true }`
-   sebelum menempel skrip: ia mencetak tabel metadata dan semua tautan unduhan halaman itu (kirim hasilnya agar pemilih di skrip
-   disesuaikan; skrip ditulis menurut susunan halaman BPK yang diketahui dan **belum pernah dijalankan pada situs sungguhan**).
-4. Jalankan sungguhan (tanpa `kering`, `batas` sampai 200): skrip memproses satu peraturan per ±4-6 detik, berhenti sendiri
-   sesudah 5 kegagalan beruntun (sesi kedaluwarsa), dan mencetak ringkasan. Jalankan lagi untuk melanjutkan; yang PDF-nya sudah
-   terunggah tidak muncul lagi.
-5. Lexa mengekstrak PDF menjadi pasal di latar belakang (`ekstrak_pdf`: Workers AI `toMarkdown`, lalu pengurai pasal dengan
-   penilaian mutu); hasil yang lebih sedikit dari pasal yang sudah tersimpan tidak menggantikannya. Pantau di `/status` dan
-   `sync_log` (`ekstrak_pdf`).
+### Mengapa dua tahap
 
-Daftar kerja diurutkan: yang berbpk_id lebih dulu, lalu menurut `isi_giliran` (UUD, Tap MPR, UU, Perppu, PP; terbaru dulu).
-Jawabannya memuat `total` dan `tanpa_bpk`: peraturan baru dari katalog pasal.id umumnya hanya punya tautan pasal.id atau
-peraturan.go.id, bukan BPK, sehingga tak bisa dipanen oleh skrip ini; jumlahnya terlihat di `tanpa_bpk`. `?celah=1` menyertakan
-peraturan yang teksnya baru sebagian (nomor pasal bercelah), `?jenis=UU,PP` menyaring.
+Daftar kerja (`GET /api/impor/butuh-teks`) hanya bisa menyebut peraturan yang alamatnya di BPK diketahui. Keadaan produksi
+12 Okt 2026:
+
+| Jenis | Baris | Punya `bpk_id` | Alamat sumber lain | Tanpa pasal |
+|---|---:|---:|---|---:|
+| PP | 5.011 | **3** | peraturan.go.id 1.442; pasal.id 220; BPK 88; **kosong 3.261** | 3.502 |
+| UU | 1.950 | 1.361 | peraturan.go.id 481; pasal.id 89 | 158 |
+| Perppu | 170 | 5 (138 beralamat BPK) | | 17 |
+| Tap MPR | 41 | 2 | | 39 |
+| UUD | 5 | 0 | | 5 |
+
+Jadi tanpa tahap pertama, skrip tak tahu ke mana harus pergi untuk hampir semua PP. Dua tahap:
+
+1. **Penjelajahan** (`jelajah: true`): skrip membuka daftar BPK per jenis, halaman demi halaman (`/Search?jenis=<n>&page=<n>`;
+   jenis dalam cakupan dicari dari halaman `/Jenis`), mengumpulkan tiap tautan `/Details/<id>/<slug>` beserta teks judul dan
+   tautan PDF di kartunya, dan mengirimnya ke `POST /api/impor/tautan`. Lexa mengenali sitasinya dari slug dan teks tautan
+   ("pp-no-5-tahun-2021", "Undang-undang (UU) No. 8 Tahun 1982", "tap-mpr-no-xvimpr1998"), mencocokkannya dengan peraturan
+   Lexa, dan menyimpan `bpk_id` serta alamat rinciannya (bukan metadata lain). Cukup sekali.
+2. **Panen PDF**: skrip bertanya `GET /api/impor/butuh-teks`, mengunduh PDF tiap peraturan, dan mengunggahnya
+   (`PUT /api/impor/pdf`). Lexa mengekstraknya menjadi pasal di latar belakang (`ekstrak_pdf`: Workers AI `toMarkdown`, lalu
+   pengurai pasal dengan penilaian mutu; hasil yang lebih sedikit dari pasal yang sudah tersimpan tidak menggantikannya).
+
+### Endpoint
+
+| Endpoint | Kegunaan |
+|---|---|
+| `GET /api/impor/butuh-teks?batas=50&jenis=UU,PP&celah=1&semua=1` | daftar kerja: peraturan tanpa teks dan tanpa PDF; yang bertaut BPK didahulukan, lalu menurut `isi_giliran`. Menjawab `total`, `tanpa_bpk`, `tanpa_berkas`. `celah=1` menyertakan teks yang baru sebagian; `semua=1` menyertakan yang ditandai tanpa berkas |
+| `GET /api/impor/ringkasan` | per jenis: `total`, `bertaut_bpk`, `ber_pdf`, `berpasal`, `pdf_belum_berpasal`, `perlu_pdf`; plus `tanpa_berkas` |
+| `POST /api/impor/tautan` | `{ tautan: [{ url, teks, slug?, konteks?, uri? }], buat? }` (maks 200). Jawabannya memuat status tiap entri: `ditautkan`, `sudah`, `dibuat`, `tidak_ada`, `luar_cakupan`, `tidak_dikenali`, `ambigu`, `bentrok`, `gagal`. `uri` memetakan manual ke peraturan Lexa (mis. UUD 1945 ke `/akn/id/act/uud/1945/original`) |
+| `POST /api/impor/manifest` | metadata + relasi halaman rincian. Dicocokkan menurut sitasi, bukan URI turunan; `lexa_uri` mengikat dokumen ke satu peraturan (hanya memperbarui; ditolak bila sitasinya tak cocok) |
+| `PUT /api/impor/pdf?uri=` | berkas PDF; ke R2 `pdf/…`, lalu diantrekan `ekstrak_pdf` |
+| `POST /api/impor/tanpa-berkas` | `{ uris: [...] }`: peraturan yang di BPK tak punya berkas (naskah lama hanya metadata); tak muncul lagi di daftar kerja |
+| `POST /api/impor/ekstrak-ulang` | `{ uri?, batas?, jenis? }`: antrekan ulang ekstraksi PDF yang tersimpan tetapi belum berpasal (mis. setelah pengurai diperbaiki) |
+
+Beberapa hal yang dijaga di sisi server karena data produksi menuntutnya:
+
+- **Pencocokan menurut sitasi**, bukan teks nomor atau URI: "01" = "1" (PP 1/2022 ada dua baris), "perpu" = "perppu" (URI
+  produksi memakai keduanya, sedangkan indeks unik `(jenis, nomor, tahun)` tak memeriksa URI), dan Tap MPR "XVI/MPR/1998" =
+  "XVI-MPR-1998" = "xvi-mpr-1998" (tiga baris untuk satu ketetapan). Sebelumnya manifest dengan URI turunan yang berbeda dari
+  yang tersimpan melanggar indeks unik dan menggagalkan SELURUH kiriman (batch D1 atomik); kini kegagalan satu dokumen
+  terpisah dari yang lain.
+- **Jenis tak pernah ditukar**: BPK pernah menamai Perppu 7/1964 "uu-no-7-tahun-1964". Bila slug dan teks tautan menunjuk
+  dua peraturan yang berbeda, data Lexa yang memutuskan; bila dua-duanya ada di Lexa, hasilnya `ambigu` dan tak ada yang ditulis.
+- **Tautan yang keliru berarti PDF yang keliru**, dan PDF yang keliru menimpa pasal yang benar. Karena itu teks kartu hasil
+  hanya dipakai untuk tahun Tap MPR, bukan untuk mengenali sitasi.
+- Halaman rincian tanpa `Status` tidak menjadikan peraturan "berlaku"; judul BPK tanpa pokok (" tentang ") tidak menggantikan
+  judul lama yang memilikinya, tetapi menggantikan judul bersampah yang berpokok (mis. UU 4/2026 yang judulnya hasil salin PDF).
+
+### Cara menjalankan
+
+Buka https://peraturan.bpk.go.id/ di peramban, selesaikan tantangan Cloudflare bila muncul, lalu DevTools > Console (F12).
+Setel opsi dengan `window.LEXA_PANEN = { ... }` (Enter), tempel isi `scripts/bpk-console-harvest.js` (Enter), dan isi alamat Lexa
+dan `ADMIN_TOKEN` pada kotak dialog (hanya di memori halaman). Kotak status di pojok kanan bawah menunjukkan kemajuan dan
+punya tombol **Berhenti** (atau `lexaPanenBerhenti()` di konsol). Biarkan tab terbuka dan terlihat: peramban memperlambat
+tab yang tersembunyi. Urutan yang dianjurkan:
+
+| Langkah | Opsi | Apa yang terjadi |
+|---|---|---|
+| a. Uji penjelajahan | `{ jelajah: true, kering: true, halamanMaks: 2 }` | dua halaman per jenis dijelajahi, tak ada yang ditulis; konsol mencetak jenis yang ditemukan, jumlah entri, dan contoh entri bermasalah |
+| b. Penjelajahan | `{ jelajah: true, hanyaJelajah: true }` | seluruh daftar UUD, Tap MPR, UU, Perppu, PP ditautkan (PP ±250-500 permintaan; jeda ±3 detik) |
+| c. Uji PDF | `{ kering: true, batas: 3 }` | tiga PDF diunduh dan dibuang |
+| d. Panen | `{ batas: 200, terus: true }` | putaran demi putaran sampai daftar kerja habis, tak ada kemajuan, 5 kegagalan beruntun, atau Anda menghentikannya |
+
+Jalankan lagi kapan saja untuk melanjutkan: yang sudah tertaut dan yang PDF-nya sudah terunggah tak muncul lagi. Penjelajahan
+yang terputus dilanjutkan dengan `halamanAwal` (alamat daftar dan nomor halaman tercetak di konsol).
+
+Opsi lengkap (semuanya opsional):
+
+| Opsi | Arti |
+|---|---|
+| `lexa`, `token` | alamat Lexa dan token admin (bila kosong, ditanyakan lewat kotak dialog) |
+| `jelajah`, `hanyaJelajah` | jelajahi daftar BPK sebelum panen PDF; hanya jelajahi |
+| `awal` | alamat daftar yang dijelajahi, mis. `["https://peraturan.bpk.go.id/Search?jenis=10"]`. Bila kosong: jenis dicari dari `/Jenis` BPK, atau dari halaman yang sedang dibuka bila sudah berupa daftar |
+| `halamanMaks`, `halamanAwal` | batas halaman per daftar (600) dan halaman mulai (1) |
+| `buat` | `false`: jangan membuat baris untuk peraturan BPK yang belum ada di Lexa (bawaan: dibuat, hanya bila sitasinya tak meragukan) |
+| `batas`, `terus` | peraturan per putaran panen (50, maks 200); ulangi putaran sampai selesai |
+| `jenis`, `celah` | saring jenis `"UU,PP"`; sertakan teks yang baru sebagian |
+| `jeda` | jeda minimum antarpermintaan ke BPK, ms (4000; minimum 2000, jangan dikecilkan) |
+| `kering` | tidak menulis apa pun ke Lexa |
+| `rincian` | buka halaman rincian walau tautan PDF langsung dari daftar diketahui (metadata ikut diperbarui; dua kali lipat permintaan) |
+| `periksa` | hanya menganalisis halaman yang sedang dibuka dan mencetaknya |
+| `papan` | `false`: tanpa kotak status |
+
+### Bila tidak berjalan seperti yang diharapkan
+
+Skrip ditulis menurut susunan BPK yang diketahui (alamat `/Details/<id>/<slug>` dan `/Download/<id>/<berkas>`, daftar
+`/Search?jenis=<n>&page=<n>`) dan **belum pernah dijalankan pada situs sungguhan** (situs itu tak terjangkau dari lingkungan
+pengembangan). Yang berguna dikirim balik:
+
+- Di halaman daftar BPK (mis. `https://peraturan.bpk.go.id/Search?jenis=10`): `window.LEXA_PANEN = { periksa: true }` lalu
+  tempel skrip. Ia mencetak jumlah hasil yang disebut BPK, sepuluh entri pertama (id, slug, teks, tautan PDF di kartu),
+  tautan halaman berikutnya yang akan diikuti, dan tautan jenis yang dikenali.
+- Di halaman rincian: hal yang sama untuk tabel metadata dan semua tautan unduhan.
+- Setelah penjelajahan: tabel "contoh entri berstatus tidak_dikenali / tidak_ada / ambigu / bentrok" yang dicetak konsol
+  (teks, slug, kartu, dan alasan dari Lexa). `tidak_dikenali` berarti pengenalan sitasi perlu disesuaikan dengan bentuk
+  teks BPK yang sebenarnya; itu perbaikan kecil di `src/worker/lib/tautanBpk.ts` (tanpa menempel ulang skrip).
+
+Pesan galat yang lazim:
+
+| Pesan | Arti dan tindakan |
+|---|---|
+| `Lexa 401` | token salah; skrip berhenti sebelum menyentuh BPK |
+| `Lexa tak terjangkau … CORS` | alamat Lexa salah, atau Lexa belum men-deploy versi yang mengizinkan origin BPK |
+| `Lexa belum menjalankan versi yang mendukung penjelajahan` | deploy terbaru belum selesai (404 pada `/api/impor/ringkasan`) |
+| `tantangan_cloudflare` | sesi BPK kedaluwarsa atau diblokir; muat ulang tab, selesaikan tantangan, jalankan lagi |
+| `yang terunduh bukan PDF` | idem (halaman tantangan menggantikan berkasnya) |
+| `tautan PDF tak ditemukan di halaman rincian` | halaman tak berformat yang dikenal (tanpa tabel metadata maupun tautan unduhan); jalankan `periksa` di halaman itu |
+| `5 kegagalan beruntun` | skrip berhenti sendiri; periksa sesi BPK |
+
+### Biaya dan batas
+
+- **Waktu**: ±4-6 detik per PDF (jeda yang sopan), jadi 3.900 peraturan memakan ±5-7 jam; dibagi beberapa sesi dengan `batas` dan
+  `terus`. Penjelajahan PP sendiri ±250-500 permintaan.
+- **R2**: PDF disimpan di `pdf/…` (rata-rata mungkin ratusan KB; 3.900 berkas bisa beberapa GB).
+- **D1**: tiap peraturan menulis puluhan baris pasal ditambah indeks FTS; bila akun Anda di paket gratis (100.000 baris tulis
+  per hari), bagi panen ke beberapa hari.
+- **Workers AI**: konversi PDF, penyematan semua pasal (bge-m3), dan ringkasan tiap peraturan memakai kuota neuron harian;
+  pesan antrean yang kehabisan kuota diulang otomatis. Pantau di `/status` dan `sync_log` (`ekstrak_pdf`).
+- **PDF hasil pindaian** (tanpa lapisan teks) menghasilkan `tanpa_pasal` di `ekstraksi_log`; mereka tetap tersimpan dan terbaca
+  di tab PDF, tetapi pasalnya menunggu OCR (lihat analisis lanjutan). Setelah pengurai pasal diperbaiki, antrekan ulang dengan
+  `POST /api/impor/ekstrak-ulang`.
+
+### Memantau dan memeriksa
+
+```sql
+-- Kemajuan per jenis (atau GET /api/impor/ringkasan)
+SELECT jenis, COUNT(*) AS total, SUM(bpk_id IS NOT NULL AND bpk_id <> '') AS bertaut_bpk,
+       SUM(r2_pdf_key IS NOT NULL) AS ber_pdf, SUM(jumlah_pasal > 0) AS berpasal
+  FROM laws GROUP BY jenis;
+-- Hasil ekstraksi PDF terakhir
+SELECT vonis, COUNT(*) FROM ekstraksi_log GROUP BY vonis;
+SELECT job, status, detail, jumlah, created_at FROM sync_log WHERE job LIKE 'impor_bpk%' OR job = 'ekstrak_pdf' ORDER BY id DESC LIMIT 20;
+-- Penanda tanpa berkas
+SELECT COUNT(*) FROM sync_state WHERE key LIKE 'bpk_tanpa_berkas:%';
+-- Duplikat data (satu peraturan, beberapa baris): Tap MPR ditulis tiga cara, PP "01" dan "1"
+SELECT frbr_uri, nomor, tahun, jumlah_pasal FROM laws WHERE jenis = 'TAP_MPR' ORDER BY tahun, lower(nomor);
+```
 
 ## Mengendalikan pipeline
 

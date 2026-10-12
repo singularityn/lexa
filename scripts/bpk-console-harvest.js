@@ -1,51 +1,145 @@
 /**
- * Panen PDF peraturan dari peraturan.bpk.go.id untuk Lexa.
+ * Panen peraturan dari peraturan.bpk.go.id untuk Lexa.
  *
  * KENAPA ADA: pasal.id sejak 11 Okt 2026 hanya memberi metadata lewat API-nya, jadi teks UUD, Tap MPR, UU, Perppu, dan
  * PP yang belum ada di Lexa hanya bisa datang dari naskah resmi. Seluruh situs BPK berada di balik Cloudflare managed
  * challenge dan Worker Lexa tidak pernah menghubunginya, jadi pengambilan dikerjakan DARI PERAMBAN ANDA SENDIRI, dengan
- * sesi yang sudah lolos challenge: skrip ini menanyakan ke Lexa peraturan mana yang perlu teksnya, membuka halaman
- * rinciannya di BPK, mengunduh PDF-nya, dan mengunggahnya ke Lexa, yang mengekstraknya menjadi pasal
- * (PUT /api/impor/pdf, lalu antrean ekstrak_pdf).
+ * sesi yang sudah lolos challenge. Skrip ini punya dua tahap:
+ *
+ *  1. PENJELAJAHAN (opsi `jelajah`): membuka daftar peraturan BPK per jenis (UUD, Tap MPR, UU, Perppu, PP), halaman demi
+ *     halaman, dan mengirim tiap entri ke Lexa (POST /api/impor/tautan) yang mencocokkannya dengan peraturan di Lexa dan
+ *     menyimpan alamat dokumennya di BPK. Perlu SEKALI: di produksi hampir semua PP belum punya tautan BPK, jadi tanpa
+ *     tahap ini skrip tidak tahu ke mana harus pergi.
+ *  2. PANEN PDF: menanyakan ke Lexa peraturan mana yang perlu teksnya (GET /api/impor/butuh-teks), mengunduh PDF-nya dari
+ *     BPK (langsung dari tautan di daftar bila ada, selain itu lewat halaman rincian), dan mengunggahnya ke Lexa
+ *     (PUT /api/impor/pdf). Lexa mengekstraknya menjadi pasal di latar belakang. Metadata halaman rincian (judul resmi,
+ *     status, tanggal) ikut diperbarui.
  *
  * CARA PAKAI
  *  1. Buka https://peraturan.bpk.go.id/ di peramban, selesaikan tantangan "Verify you are human" bila muncul.
- *  2. Buka DevTools > Console (F12), tempel seluruh isi berkas ini, tekan Enter.
+ *  2. Buka DevTools > Console (F12). Setel opsi (lihat di bawah), mis. `window.LEXA_PANEN = { kering: true, batas: 3 }`
+ *     dan tekan Enter. Lalu tempel seluruh isi berkas ini dan tekan Enter.
  *  3. Isi alamat Lexa (mis. https://lexa.nama-akun.workers.dev) dan token admin (secret ADMIN_TOKEN; hanya disimpan di
  *     memori halaman, tidak ditulis ke mana pun) pada kotak yang muncul.
- *  Skrip memproses peraturan satu per satu dengan jeda beberapa detik, berhenti sendiri bila berulang kali gagal (mis.
- *  sesi BPK kedaluwarsa), dan mencetak ringkasan. Jalankan lagi untuk melanjutkan: yang PDF-nya sudah terunggah tidak
- *  muncul lagi di daftar kerja.
+ *  Biarkan tab ini terbuka dan terlihat selama berjalan (peramban memperlambat tab yang tersembunyi). Kotak status di
+ *  pojok kanan bawah menunjukkan kemajuan dan punya tombol Berhenti (atau jalankan `lexaPanenBerhenti()` di konsol).
+ *  Skrip memproses satu permintaan sekali dengan jeda beberapa detik, berhenti sendiri bila berulang kali gagal (mis.
+ *  sesi BPK kedaluwarsa), dan mencetak ringkasan. Jalankan lagi untuk melanjutkan: yang sudah selesai tak muncul lagi.
  *
- * OPSI (opsional; setel sebelum menempel, mis. `window.LEXA_PANEN = { batas: 20, kering: true }`)
+ * URUTAN YANG DIANJURKAN
+ *   a. Uji:        { jelajah: true, kering: true, halamanMaks: 2 }        (jelajah dua halaman, tak menulis ke Lexa)
+ *   b. Jelajah:    { jelajah: true, hanyaJelajah: true }                  (sekali; ±250-500 permintaan untuk PP)
+ *   c. Uji PDF:    { kering: true, batas: 3 }                             (unduh 3 PDF tanpa mengunggah)
+ *   d. Panen:      { batas: 200, terus: true }                            (sampai habis atau dihentikan)
+ *
+ * OPSI (opsional; setel sebelum menempel: `window.LEXA_PANEN = { ... }`)
  *   lexa, token   alamat dan token admin (bila tidak diisi, ditanyakan lewat kotak dialog)
- *   batas         paling banyak berapa peraturan dalam satu putaran (bawaan 50, maksimum 200)
+ *   jelajah       true: jelajahi daftar BPK dan tautkan ke Lexa sebelum memanen PDF
+ *   hanyaJelajah  true: berhenti sesudah penjelajahan
+ *   awal          alamat daftar yang dijelajahi, mis. ["https://peraturan.bpk.go.id/Search?jenis=10"]. Bila kosong, daftar
+ *                 jenis dicari dari halaman /Jenis BPK; atau, bila halaman yang sedang dibuka sudah berupa daftar, dari sana
+ *   halamanMaks   batas halaman per daftar (bawaan 600)
+ *   halamanAwal   mulai dari halaman ini (bawaan 1), untuk melanjutkan penjelajahan yang terputus
+ *   buat          false: jangan membuat peraturan baru di Lexa untuk entri BPK yang belum ada di sana (bawaan: membuat)
+ *   batas         paling banyak berapa peraturan dalam satu putaran panen PDF (bawaan 50, maksimum 200)
+ *   terus         true: ulangi putaran panen PDF sampai daftar kerja habis, atau tak ada kemajuan, atau dihentikan
  *   jenis         "UU,PP" untuk menyaring jenis (bawaan: seluruh cakupan Lexa)
  *   celah         true: sertakan juga peraturan yang teksnya baru sebagian (nomor pasal bercelah)
- *   jeda          jeda minimum antarperaturan dalam milidetik (bawaan 4000; jangan dikecilkan)
- *   kering        true: hanya mengecek (cari tautan PDF dan mengunduhnya) tanpa mengunggah ke Lexa
- *   periksa       true: hanya menganalisis halaman yang sedang dibuka (tabel metadata dan tautan unduhan) dan mencetaknya;
- *                 berguna bila BPK mengubah susunan halamannya, supaya pemilih di bawah bisa disesuaikan
+ *   jeda          jeda minimum antarpermintaan ke BPK dalam milidetik (bawaan 4000; minimum 2000; jangan dikecilkan)
+ *   kering        true: tidak menulis apa pun ke Lexa (penjelajahan tak mengirim tautan, PDF diunduh tetapi tak diunggah)
+ *   rincian       true: buka halaman rincian walau tautan PDF langsung dari daftar diketahui (metadata ikut diperbarui,
+ *                 tetapi dua kali lipat permintaan)
+ *   periksa       true: hanya menganalisis halaman yang sedang dibuka (tabel metadata, tautan unduhan, entri daftar, tautan
+ *                 halaman berikutnya, tautan jenis) dan mencetaknya; untuk menyesuaikan pemilih bila BPK mengubah susunan
+ *   papan         false: tanpa kotak status
  *
- * CATATAN: skrip ini ditulis berdasarkan susunan halaman rincian BPK (tabel metadata dan tautan /Download/) dan belum
- * pernah dijalankan pada situs sungguhan dari lingkungan pengembangan Lexa (situs itu tak terjangkau di sana). Coba dengan
- * `kering: true` dan `batas: 3` dulu; bila tautan PDF tak ditemukan, jalankan dengan `periksa: true` di halaman rincian
- * dan kirim hasilnya agar pemilihnya diperbaiki. Hormati ketentuan situs BPK: satu permintaan sekali, jeda tetap.
+ * CATATAN: skrip ini ditulis menurut susunan situs BPK yang diketahui (alamat /Details/<id>/<slug>, /Download/<id>/<berkas>,
+ * daftar /Search?jenis=<n>&page=<n>) dan belum pernah dijalankan pada situs sungguhan dari lingkungan pengembangan Lexa
+ * (situs itu tak terjangkau di sana). Coba dengan langkah (a) dan (c) di atas dulu. Bila yang ditemukan tak sesuai, jalankan
+ * `window.LEXA_PANEN = { periksa: true }` di halaman daftar atau rincian dan kirim hasilnya agar pemilihnya diperbaiki.
+ * Hormati ketentuan situs BPK: satu permintaan sekali, jeda tetap.
  */
 (function () {
   "use strict";
 
-  /** Tautan unduhan PDF di halaman rincian BPK: /Download/<id>/<nama>.pdf, atau tautan apa pun yang berujung .pdf. */
+  /** Tautan unduhan PDF di halaman BPK: /Download/<id>/<nama>.pdf, atau tautan apa pun yang berujung .pdf. */
   var POLA_TAUTAN_PDF = /\/download\/|\.pdf(?:[?#]|$)/i;
   /** Teks tautan yang lazim untuk unduhan. */
   var POLA_TEKS_UNDUH = /unduh|download|pdf|dokumen|naskah/i;
-  /** Tanda halaman tantangan Cloudflare (bukan halaman rincian). */
+  /** Berkas pendamping, bukan naskah peraturannya. */
+  var POLA_PENDAMPING = /lampiran|abstrak|terjemah|translation|english/i;
+  /** Tanda halaman tantangan Cloudflare (bukan halaman BPK yang sebenarnya). */
   var POLA_TANTANGAN = /just a moment|cf-chl|challenge-platform|verify you are human/i;
+  /** Tautan ke halaman rincian sebuah dokumen: /Details/<id>/<slug> atau /Home/Details/<id>/<slug>. */
+  var POLA_RINCIAN = /\/(?:Home\/)?Details\/(\d+)(?:\/([^\/?#"]+))?/i;
   /** Berapa kegagalan beruntun sebelum putaran dihentikan. */
   var MAKS_GAGAL_BERUNTUN = 5;
+  /** Jenis dalam cakupan Lexa dan nama yang dipakai BPK pada daftar jenisnya (urutan penting: Perppu sebelum UU dan PP). */
+  var JENIS_CAKUPAN = [
+    { kode: "UUD", pola: /^undang[\s-]*undang dasar\b/ },
+    { kode: "TAP_MPR", pola: /^(?:ketetapan (?:mprs?|majelis permusyawaratan rakyat)|tap[\s-]*mprs?)\b/ },
+    { kode: "PERPPU", pola: /^(?:peraturan pemerintah pengganti undang[\s-]*undang|perp?pu)\b/ },
+    { kode: "UU", pola: /^undang[\s-]*undang\b(?!\s*dasar)/ },
+    { kode: "PP", pola: /^peraturan pemerintah\b(?!\s+pengganti)/ },
+  ];
+
+  var berhenti = false;
+  globalThis.lexaPanenBerhenti = function () { berhenti = true; };
 
   var tunggu = function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); };
   var teks = function (el) { return (el && el.textContent ? el.textContent : "").replace(/\s+/g, " ").trim(); };
+  var pesan = function (e) { return e && e.message ? e.message : String(e); };
+  var angka = function (n) { return Number(n || 0).toLocaleString("id-ID"); };
+
+  /** Menunggu sambil memeriksa tombol berhenti tiap 250 ms. */
+  async function tungguSopan(ms) {
+    var sampai = Date.now() + ms;
+    while (!berhenti && Date.now() < sampai) await tunggu(Math.max(0, Math.min(250, sampai - Date.now())));
+  }
+  function jedaAcak(dasar) { return dasar + Math.round(Math.random() * dasar * 0.5); }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Kotak status
+  // ---------------------------------------------------------------------------------------------------------------
+
+  /** Kotak kecil di pojok halaman (gaya lewat CSSOM, jadi lolos CSP yang melarang atribut style). Gagal diam-diam. */
+  function buatPapan() {
+    var papan = { tulis: function () {}, tutup: function () {} };
+    try {
+      var kotak = document.createElement("div");
+      var gaya = function (el, nilai) { Object.keys(nilai).forEach(function (k) { el.style[k] = nilai[k]; }); };
+      gaya(kotak, {
+        position: "fixed", right: "12px", bottom: "12px", zIndex: "2147483647", maxWidth: "380px", padding: "10px 12px",
+        background: "#12301f", color: "#fff", font: "12px/1.45 system-ui, sans-serif", borderRadius: "8px",
+        boxShadow: "0 4px 16px rgba(0,0,0,.35)",
+      });
+      var judul = document.createElement("div");
+      judul.textContent = "Lexa panen BPK";
+      gaya(judul, { fontWeight: "600" });
+      var isi = document.createElement("div");
+      gaya(isi, { whiteSpace: "pre-wrap", margin: "4px 0 6px", wordBreak: "break-word" });
+      var tombol = document.createElement("button");
+      tombol.type = "button";
+      tombol.textContent = "Berhenti";
+      gaya(tombol, { font: "inherit", padding: "3px 10px", borderRadius: "6px", border: "0", cursor: "pointer" });
+      tombol.addEventListener("click", function () {
+        berhenti = true;
+        tombol.textContent = "Menghentikan…";
+        tombol.disabled = true;
+      });
+      kotak.appendChild(judul);
+      kotak.appendChild(isi);
+      kotak.appendChild(tombol);
+      document.body.appendChild(kotak);
+      papan.tulis = function (t) { isi.textContent = t; };
+      papan.tutup = function (tundaMs) { setTimeout(function () { if (kotak.parentNode) kotak.parentNode.removeChild(kotak); }, tundaMs || 0); };
+    } catch (e) { /* CSP atau dokumen tanpa body: tanpa kotak */ }
+    return papan;
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Membaca halaman BPK
+  // ---------------------------------------------------------------------------------------------------------------
 
   /** Pasangan label -> nilai dari tabel metadata halaman rincian (baris dengan dua sel). */
   function bacaMetadata(doc) {
@@ -61,7 +155,7 @@
     return meta;
   }
 
-  /** Semua tautan yang tampak seperti unduhan PDF, yang paling meyakinkan lebih dulu. */
+  /** Semua tautan yang tampak seperti unduhan PDF, yang paling meyakinkan lebih dulu (lampiran dan terjemahan paling akhir). */
   function cariTautanPdf(doc, dasar) {
     var kandidat = [];
     doc.querySelectorAll("a[href]").forEach(function (a) {
@@ -69,33 +163,461 @@
       if (!POLA_TAUTAN_PDF.test(href)) return;
       var mutlak;
       try { mutlak = new URL(href, dasar).href; } catch (e) { return; }
-      kandidat.push({ url: mutlak, teks: teks(a), skor: (POLA_TEKS_UNDUH.test(teks(a)) ? 2 : 0) + (/\.pdf(?:[?#]|$)/i.test(href) ? 1 : 0) });
+      var skor = (POLA_TEKS_UNDUH.test(teks(a)) ? 2 : 0) + (/\.pdf(?:[?#]|$)/i.test(href) ? 1 : 0);
+      if (POLA_PENDAMPING.test(teks(a) + " " + decodeURIComponentAman(href))) skor -= 3;
+      kandidat.push({ url: mutlak, teks: teks(a), skor: skor });
     });
     kandidat.sort(function (a, b) { return b.skor - a.skor; });
     return kandidat;
   }
 
-  /** Halaman rincian sebagai dokumen. Melempar bila galat HTTP atau yang diterima halaman tantangan. */
-  async function bacaHalaman(url) {
-    var res = await fetch(url, { credentials: "include", headers: { Accept: "text/html" } });
-    var html = await res.text();
-    if (!res.ok) throw new Error("HTTP " + res.status + " pada halaman rincian");
-    var doc = new DOMParser().parseFromString(html, "text/html");
-    if (POLA_TANTANGAN.test(html) && !doc.querySelector("a[href*='ownload']")) {
-      throw new Error("tantangan_cloudflare: selesaikan tantangan di tab ini (muat ulang halaman), lalu jalankan lagi");
+  function decodeURIComponentAman(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
+
+  /** Alamat mutlak dari href relatif; null bila tak sah. */
+  function mutlak(href, dasar) { try { return new URL(href, dasar).href; } catch (e) { return null; } }
+
+  /**
+   * Entri dokumen pada halaman daftar: setiap tautan ke /Details/<id>, digabung per id. Teks tautan terpanjang menjadi
+   * judul entri; teks kartu di sekitarnya (naik dari tautan sampai sebelum melingkupi entri lain) menjadi `konteks`; tautan
+   * unduhan PDF di kartu yang sama menjadi `pdf_url`.
+   */
+  function kumpulkanEntri(doc, dasar) {
+    var semua = Array.prototype.slice.call(doc.querySelectorAll("a[href]"));
+    var idDi = function (el) {
+      var ids = {};
+      el.querySelectorAll("a[href]").forEach(function (a) { var m = POLA_RINCIAN.exec(a.getAttribute("href") || ""); if (m) ids[m[1]] = true; });
+      return Object.keys(ids).length;
+    };
+    var peta = {};
+    var urut = [];
+    semua.forEach(function (a) {
+      var href = a.getAttribute("href") || "";
+      var m = POLA_RINCIAN.exec(href);
+      var url = m ? mutlak(href, dasar) : null;
+      if (!m || !url) return;
+      var e = peta[m[1]];
+      if (!e) {
+        e = peta[m[1]] = { bpk_id: m[1], url: url, slug: m[2] ? decodeURIComponentAman(m[2]) : null, teks: "", konteks: "", pdf_url: null, _a: a };
+        urut.push(e);
+      }
+      var t = teks(a);
+      if (t.length > e.teks.length && t.length <= 300) { e.teks = t; e._a = a; }
+      if (m[2] && !e.slug) e.slug = decodeURIComponentAman(m[2]);
+    });
+    urut.forEach(function (e) {
+      var kartu = e._a;
+      for (var i = 0; i < 6 && kartu.parentElement; i++) {
+        var induk = kartu.parentElement;
+        if (idDi(induk) > 1) break;
+        kartu = induk;
+      }
+      e.konteks = teks(kartu).slice(0, 500);
+      var pdf = cariTautanPdf({ querySelectorAll: function (s) { return kartu.querySelectorAll(s); } }, dasar);
+      e.pdf_url = pdf.length && pdf[0].skor >= 0 ? pdf[0].url : null;
+      delete e._a;
+    });
+    return urut;
+  }
+
+  /** Nomor halaman pada alamat daftar (parameter page, bawaan 1). */
+  function nomorHalaman(url) {
+    try { return Math.max(parseInt(new URL(url).searchParams.get("page"), 10) || 1, 1); } catch (e) { return 1; }
+  }
+
+  /**
+   * Alamat halaman berikutnya pada daftar: tautan rel=next, atau tautan "Selanjutnya/Next/›/»" yang tidak nonaktif; bila
+   * tak ada, parameter page dinaikkan satu. Penghentian dilakukan pemanggil (halaman tanpa entri baru).
+   */
+  function halamanBerikut(doc, url, kini) {
+    var rel = doc.querySelector("a[rel~='next'][href]");
+    if (rel && rel.getAttribute("href") !== "#") return mutlak(rel.getAttribute("href"), url);
+    var dipilih = null;
+    doc.querySelectorAll("a[href]").forEach(function (a) {
+      if (dipilih) return;
+      var t = teks(a).toLowerCase();
+      var label = ((a.getAttribute("aria-label") || "") + " " + (a.getAttribute("title") || "")).toLowerCase();
+      if (!/^(?:selanjutnya|berikutnya|next|»|›|>|>>)$/.test(t) && !/next|selanjutnya|berikutnya/.test(label)) return;
+      var li = a.closest ? a.closest("li") : null;
+      if ((li && /disabled/.test(li.className || "")) || /disabled/.test(a.className || "") || a.getAttribute("aria-disabled") === "true") return;
+      var href = a.getAttribute("href") || "";
+      if (!href || href === "#" || /^javascript:/i.test(href)) return;
+      dipilih = a;
+    });
+    if (dipilih) return mutlak(dipilih.getAttribute("href"), url);
+    try {
+      var u = new URL(url);
+      u.searchParams.set("page", String(kini + 1));
+      return u.href;
+    } catch (e) { return null; }
+  }
+
+  /** Jumlah hasil yang disebut halaman daftar ("Menemukan 4.991 peraturan dalam 0,002 detik"); null bila tak ada. */
+  function bacaTotalDaftar(doc) {
+    var m = /menemukan\s+([\d.,]+)\s+peraturan/i.exec(doc && doc.body ? doc.body.textContent.replace(/\s+/g, " ") : "");
+    return m ? parseInt(m[1].replace(/[.,]/g, ""), 10) || null : null;
+  }
+
+  /** Nama jenis tanpa jumlah di ujungnya: "Peraturan Pemerintah (PP) 4.991" -> "peraturan pemerintah (pp)". */
+  function namaJenis(t) {
+    return t.toLowerCase().replace(/\s+/g, " ").replace(/\s*\(?\d[\d.,]*\)?\s*$/, "").trim();
+  }
+
+  /** Tautan ke daftar jenis dalam cakupan Lexa pada sebuah halaman (biasanya /Jenis). Satu per jenis, yang berparameter jenis dulu. */
+  function temukanJenis(doc, dasar) {
+    var hasil = {};
+    doc.querySelectorAll("a[href]").forEach(function (a) {
+      var href = a.getAttribute("href") || "";
+      if (!/search|jenis/i.test(href)) return;
+      var nama = namaJenis(teks(a));
+      for (var i = 0; i < JENIS_CAKUPAN.length; i++) {
+        if (!JENIS_CAKUPAN[i].pola.test(nama)) continue;
+        var url = mutlak(href, dasar);
+        var ada = hasil[JENIS_CAKUPAN[i].kode];
+        if (url && (!ada || (!/jenis=\d/.test(ada.url) && /jenis=\d/.test(url)))) hasil[JENIS_CAKUPAN[i].kode] = { kode: JENIS_CAKUPAN[i].kode, nama: teks(a), url: url };
+        return;
+      }
+    });
+    return JENIS_CAKUPAN.map(function (j) { return hasil[j.kode]; }).filter(Boolean);
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Jaringan
+  // ---------------------------------------------------------------------------------------------------------------
+
+  /**
+   * fetch ke BPK dengan pengulangan untuk gangguan sementara (429/502/503/504 dan galat jaringan): menunggu sesuai Retry-After
+   * atau berlipat. Halaman tantangan Cloudflare (403) tidak diulang: butuh manusia.
+   */
+  async function ambil(ctx, url, init) {
+    var maks = 3;
+    for (var i = 1; ; i++) {
+      if (berhenti) throw new Error("dihentikan");
+      var res;
+      try {
+        res = await fetch(url, init);
+      } catch (e) {
+        if (i >= maks) throw new Error("jaringan: " + pesan(e));
+        await tungguSopan(ctx.jedaUlang * i);
+        continue;
+      }
+      if ([429, 502, 503, 504].indexOf(res.status) >= 0 && i < maks) {
+        var tunda = (Number(res.headers.get("retry-after")) || 0) * 1000;
+        await tungguSopan(Math.min(Math.max(tunda, ctx.jedaUlang * i), 120000));
+        continue;
+      }
+      return res;
     }
+  }
+
+  /** Halaman HTML sebagai dokumen. Melempar bila galat HTTP atau yang diterima halaman tantangan. */
+  async function bacaHalaman(ctx, url) {
+    var res = await ambil(ctx, url, { credentials: "include", headers: { Accept: "text/html" } });
+    var html = await res.text();
+    var tantangan = "tantangan_cloudflare: selesaikan tantangan di tab ini (muat ulang halaman), lalu jalankan lagi";
+    if (res.status === 403 || (res.status === 503 && POLA_TANTANGAN.test(html))) throw new Error(tantangan);
+    if (!res.ok) throw new Error("HTTP " + res.status + " pada " + jalur(url));
+    var doc = new DOMParser().parseFromString(html, "text/html");
+    if (POLA_TANTANGAN.test(html) && !doc.querySelector("a[href*='ownload']") && !doc.querySelector("a[href*='Details']")) throw new Error(tantangan);
     return doc;
   }
 
+  function jalur(url) { try { var u = new URL(url); return u.pathname + u.search; } catch (e) { return url; } }
+
   /** Unduh PDF sebagai ArrayBuffer; menolak yang bukan PDF (mis. halaman tantangan). */
-  async function unduhPdf(url) {
-    var res = await fetch(url, { credentials: "include" });
+  async function unduhPdf(ctx, url) {
+    var res = await ambil(ctx, url, { credentials: "include" });
+    if (res.status === 403) throw new Error("tantangan_cloudflare: selesaikan tantangan di tab ini (muat ulang halaman), lalu jalankan lagi");
     if (!res.ok) throw new Error("HTTP " + res.status + " saat mengunduh PDF");
     var isi = await res.arrayBuffer();
     var kepala = String.fromCharCode.apply(null, new Uint8Array(isi.slice(0, 5)));
     if (kepala !== "%PDF-") throw new Error("yang terunduh bukan PDF (sesi BPK kedaluwarsa atau halaman tantangan)");
     return isi;
   }
+
+  /** Coba tiga tautan PDF teratas sampai ada yang benar-benar PDF; kegagalan sesi (tantangan, 429) langsung dilaporkan. */
+  async function unduhDariDaftar(ctx, tautan) {
+    var galat = null;
+    for (var k = 0; k < Math.min(tautan.length, 3); k++) {
+      try { return await unduhPdf(ctx, tautan[k].url); } catch (e) {
+        galat = e;
+        if (/tantangan|dihentikan|HTTP (?:401|403|429)/.test(pesan(e))) break;
+      }
+    }
+    throw galat;
+  }
+
+  /** Klien Lexa: JSON masuk dan keluar; galat membawa `status`, dan 401/403/jaringan ditandai `fatal` (menghentikan semuanya). */
+  function buatKlienLexa(lexa, token) {
+    return async function lexaMinta(path, init) {
+      init = init || {};
+      var headers = Object.assign({ "x-admin-token": token }, init.headers || {});
+      var res;
+      try {
+        res = await fetch(lexa + path, Object.assign({}, init, { headers: headers }));
+      } catch (e) {
+        var g = new Error("Lexa tak terjangkau dari halaman ini (" + pesan(e) + "). Periksa alamat Lexa, dan bahwa Lexa mengizinkan origin BPK (CORS).");
+        g.fatal = true;
+        throw g;
+      }
+      var badan = null;
+      try { badan = await res.json(); } catch (e) { /* bukan JSON */ }
+      if (!res.ok) {
+        var galat = new Error("Lexa " + res.status + (badan && badan.message ? ": " + badan.message : ""));
+        galat.status = res.status;
+        galat.fatal = res.status === 401 || res.status === 403;
+        throw galat;
+      }
+      return badan;
+    };
+  }
+  function kirimJson(lexaMinta, path, objek) {
+    return lexaMinta(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(objek) });
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Tahap 1: penjelajahan daftar BPK
+  // ---------------------------------------------------------------------------------------------------------------
+
+  /** Daftar yang dijelajahi: dari opsi `awal`, atau halaman /Jenis BPK, atau halaman yang sedang dibuka bila sudah berupa daftar. */
+  async function tentukanDaftarAwal(ctx) {
+    var opsi = ctx.opsi;
+    if (opsi.awal) {
+      var daftar = [].concat(opsi.awal);
+      return daftar.map(function (u) { return { kode: "?", nama: String(u), url: mutlak(String(u), location.href) }; }).filter(function (d) { return d.url; });
+    }
+    var asal = location.origin;
+    var jenis = [];
+    var coba = [asal + "/Jenis", asal + "/"];
+    for (var i = 0; i < coba.length && !jenis.length; i++) {
+      try { jenis = temukanJenis(await bacaHalaman(ctx, coba[i]), coba[i]); } catch (e) {
+        if (/tantangan|dihentikan/.test(pesan(e))) throw e;
+        console.warn("[Lexa panen] " + jalur(coba[i]) + " tak terbaca: " + pesan(e));
+      }
+    }
+    if (jenis.length) return jenis;
+    if (kumpulkanEntri(document, location.href).length) return [{ kode: "?", nama: "halaman ini", url: location.href }];
+    return [];
+  }
+
+  async function jelajahi(ctx) {
+    var opsi = ctx.opsi;
+    var daftar = await tentukanDaftarAwal(ctx);
+    var jel = {
+      daftar: [], halaman: 0, entri: 0, ditautkan: 0, sudah: 0, dibuat: 0, tidak_ada: 0, luar_cakupan: 0, tidak_dikenali: 0,
+      ambigu: 0, bentrok: 0, gagal: 0, contoh: { tidak_ada: [], tidak_dikenali: [], ambigu: [], bentrok: [], gagal: [] }, berhentiKarena: "",
+    };
+    if (!daftar.length) {
+      jel.berhentiKarena = "daftar jenis tak ditemukan";
+      console.error("[Lexa panen] Daftar jenis peraturan BPK tak ditemukan di /Jenis maupun beranda. Buka halaman daftar (mis. pilih Peraturan Pemerintah di situs BPK), lalu jalankan dengan { jelajah: true } di halaman itu, atau berikan { awal: [\"https://peraturan.bpk.go.id/Search?jenis=10\"] }. Untuk menganalisis halaman: { periksa: true }.");
+      return jel;
+    }
+    console.log("[Lexa panen] penjelajahan: " + daftar.map(function (d) { return d.kode + " " + jalur(d.url); }).join(", "));
+
+    for (var d = 0; d < daftar.length && !berhenti; d++) {
+      var seed = daftar[d];
+      var url = seed.url;
+      var halaman = Math.max(Number(opsi.halamanAwal) || 1, 1);
+      if (halaman > 1) { var u = new URL(url); u.searchParams.set("page", String(halaman)); url = u.href; }
+      var terlihat = {};
+      var kunjungan = {};
+      var ringkasDaftar = { nama: seed.nama, kode: seed.kode, halaman: 0, entri: 0 };
+      jel.daftar.push(ringkasDaftar);
+      var maks = Math.max(Number(opsi.halamanMaks) || 600, 1);
+
+      for (var n = 0; n < maks && url && !berhenti; n++) {
+        if (kunjungan[url]) break;
+        kunjungan[url] = true;
+        var doc;
+        try { doc = await bacaHalaman(ctx, url); } catch (e) {
+          if (/dihentikan/.test(pesan(e))) break;
+          jel.berhentiKarena = pesan(e) + " (" + seed.kode + ", halaman " + halaman + ")";
+          console.error("[Lexa panen] " + jel.berhentiKarena);
+          return jel;
+        }
+        var entri = kumpulkanEntri(doc, url);
+        if (n === 0) ringkasDaftar.total = bacaTotalDaftar(doc);
+        var baru = entri.filter(function (e) { return !terlihat[e.bpk_id]; });
+        if (!entri.length) {
+          console.warn("[Lexa panen] " + seed.kode + " halaman " + halaman + ": tidak ada tautan /Details/<id>. " + (n === 0 ? "Susunan BPK mungkin berbeda; jalankan { periksa: true } di halaman daftar ini." : "Daftar ini selesai."));
+          break;
+        }
+        if (!baru.length) break; // halaman yang sama berulang: akhir daftar
+        baru.forEach(function (e) { terlihat[e.bpk_id] = true; });
+        ringkasDaftar.halaman++;
+        ringkasDaftar.entri += baru.length;
+        jel.halaman++;
+        jel.entri += baru.length;
+
+        var hasilHalaman = await kirimTautan(ctx, baru, jel);
+        var papanTeks = "Penjelajahan " + (seed.kode === "?" ? seed.nama : seed.kode) + ": halaman " + halaman + ", " + angka(ringkasDaftar.entri) + (ringkasDaftar.total ? " dari " + angka(ringkasDaftar.total) : "") + " entri\n" +
+          "ditautkan " + angka(jel.ditautkan) + " · sudah " + angka(jel.sudah) + " · dibuat " + angka(jel.dibuat) + " · tak ada di Lexa " + angka(jel.tidak_ada) + " · tak dikenali " + angka(jel.tidak_dikenali);
+        if (ctx.papan) ctx.papan.tulis(papanTeks);
+        console.log("[Lexa panen] " + seed.kode + " halaman " + halaman + ": " + baru.length + " entri" + (hasilHalaman ? " (" + hasilHalaman + ")" : ""));
+
+        url = halamanBerikut(doc, url, nomorHalaman(url));
+        halaman = url ? nomorHalaman(url) : halaman;
+        if (url) await tungguSopan(jedaAcak(ctx.jedaDaftar));
+      }
+      if (!berhenti) console.log("[Lexa panen] " + seed.nama + ": " + angka(ringkasDaftar.entri) + (ringkasDaftar.total ? " dari " + angka(ringkasDaftar.total) + " yang disebut BPK" : "") + " entri di " + ringkasDaftar.halaman + " halaman.");
+    }
+    if (berhenti) jel.berhentiKarena = "dihentikan";
+    return jel;
+  }
+
+  /** Kirim entri ke Lexa (maks 100 per permintaan) dan catat hasilnya; mengisi peta PDF langsung. Mengembalikan ringkasan teks. */
+  async function kirimTautan(ctx, entri, jel) {
+    if (ctx.opsi.kering) return "kering: tidak dikirim";
+    var hitung = {};
+    for (var i = 0; i < entri.length; i += 100) {
+      var potong = entri.slice(i, i + 100);
+      var jawab = await kirimJson(ctx.lexaMinta, "/api/impor/tautan", {
+        buat: ctx.opsi.buat !== false,
+        tautan: potong.map(function (e) { return { bpk_id: e.bpk_id, url: e.url, slug: e.slug, teks: e.teks, konteks: e.konteks }; }),
+      });
+      (jawab.hasil || []).forEach(function (h, k) {
+        var e = potong[k];
+        hitung[h.status] = (hitung[h.status] || 0) + 1;
+        if (typeof jel[h.status] === "number") jel[h.status]++;
+        if (h.status === "ditautkan" || h.status === "sudah" || h.status === "dibuat") {
+          (h.uris || (h.uri ? [h.uri] : [])).forEach(function (uri) { if (e.pdf_url) ctx.pdfPerUri[uri] = e.pdf_url; });
+        } else if (jel.contoh[h.status] && jel.contoh[h.status].length < 15) {
+          jel.contoh[h.status].push({ id: e.bpk_id, teks: e.teks.slice(0, 120), slug: e.slug, konteks: e.konteks.slice(0, 160), sitasi: h.sitasi || null, alasan: h.alasan || null });
+        }
+      });
+    }
+    return Object.keys(hitung).map(function (s) { return hitung[s] + " " + s; }).join(", ");
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Tahap 2: panen PDF
+  // ---------------------------------------------------------------------------------------------------------------
+
+  /** Metadata halaman rincian dikirim sebagai pembaruan atas peraturan yang dituju (lexa_uri); kegagalan tak menghentikan panen. */
+  async function kirimRincian(ctx, item, doc) {
+    if (ctx.opsi.kering) return;
+    var meta = bacaMetadata(doc);
+    if (Object.keys(meta).length < 2) return;
+    try {
+      await kirimJson(ctx.lexaMinta, "/api/impor/manifest", {
+        versi: 1,
+        dokumen: [{ bpk_id: item.bpk_id || (POLA_RINCIAN.exec(item.detail_url || "") || [])[1] || "", lexa_uri: item.frbr_uri, detail_url: item.detail_url, meta: meta }],
+      });
+    } catch (e) {
+      if (e && e.fatal) throw e;
+      console.warn("[Lexa panen] metadata " + item.frbr_uri + " tak tersimpan: " + pesan(e));
+    }
+  }
+
+  /**
+   * Ambil PDF sebuah peraturan. Mengembalikan { pdf }, { tanpaBerkas: true } (halaman rincian dimuat dan lengkap tetapi tak
+   * punya berkas), atau { lewati } (tak ada alamat BPK untuk peraturan ini).
+   */
+  async function ambilPdfUntuk(ctx, item) {
+    var langsung = ctx.pdfPerUri[item.frbr_uri];
+    if (langsung && !ctx.opsi.rincian) {
+      try { return { pdf: await unduhPdf(ctx, langsung) }; } catch (e) {
+        // Tautan dari daftar usang atau ditolak: coba lewat halaman rincian, kecuali yang menandakan sesi bermasalah.
+        if (!item.detail_url || /tantangan|dihentikan|HTTP (?:401|403|429)/.test(pesan(e))) throw e;
+      }
+    }
+    if (!item.detail_url) return { lewati: "tak ada tautan BPK" };
+    var doc = await bacaHalaman(ctx, item.detail_url);
+    await kirimRincian(ctx, item, doc);
+    var tautan = cariTautanPdf(doc, item.detail_url);
+    if (!tautan.length) {
+      // Halaman rincian yang lengkap tetapi tanpa berkas: naskah lama yang di BPK hanya metadata. Bukan kegagalan sesi.
+      if (Object.keys(bacaMetadata(doc)).length >= 2) return { tanpaBerkas: true };
+      throw new Error("tautan PDF tak ditemukan di halaman rincian (jalankan dengan periksa: true di halaman itu)");
+    }
+    return { pdf: await unduhDariDaftar(ctx, tautan) };
+  }
+
+  async function panenPdf(ctx) {
+    var opsi = ctx.opsi;
+    var batas = Math.min(Math.max(Number(opsi.batas) || 50, 1), 200);
+    var query = "?batas=" + batas + (opsi.jenis ? "&jenis=" + encodeURIComponent(opsi.jenis) : "") + (opsi.celah ? "&celah=1" : "");
+    var hasil = [];
+    var gagalBeruntun = 0;
+    var terakhir = null;
+    var berhentiKarena = "";
+
+    for (var putaran = 1; !berhenti; putaran++) {
+      var kerja = await ctx.lexaMinta("/api/impor/butuh-teks" + query);
+      terakhir = kerja;
+      if (putaran === 1) {
+        console.log("[Lexa panen] " + angka(kerja.total) + " peraturan masih perlu teks (" + angka(kerja.tanpa_bpk) + " di antaranya tanpa tautan BPK" +
+          (kerja.tanpa_berkas ? ", " + angka(kerja.tanpa_berkas) + " ditandai tanpa berkas di BPK" : "") + "); memproses " + kerja.daftar.length + (opsi.terus ? " per putaran." : "."));
+        if (kerja.tanpa_bpk > 0 && !opsi.jelajah) console.log("[Lexa panen] Yang tanpa tautan BPK baru bisa dipanen sesudah penjelajahan daftar BPK: jalankan dengan { jelajah: true }.");
+      }
+      if (!kerja.daftar.length) { berhentiKarena = "daftar kerja habis"; break; }
+
+      var kemajuan = 0;
+      for (var i = 0; i < kerja.daftar.length && !berhenti; i++) {
+        var item = kerja.daftar[i];
+        var baris = { uri: item.frbr_uri, hasil: "", ukuran: 0 };
+        hasil.push(baris);
+        try {
+          var ambilan = await ambilPdfUntuk(ctx, item);
+          if (ambilan.lewati) {
+            baris.hasil = "lewati: " + ambilan.lewati;
+          } else if (ambilan.tanpaBerkas) {
+            baris.hasil = "tanpa berkas di BPK";
+            if (!opsi.kering) await kirimJson(ctx.lexaMinta, "/api/impor/tanpa-berkas", { uris: [item.frbr_uri] });
+            kemajuan++;
+            gagalBeruntun = 0;
+          } else {
+            baris.ukuran = ambilan.pdf.byteLength;
+            if (opsi.kering) {
+              baris.hasil = "kering: PDF terunduh, tak diunggah";
+            } else {
+              var jawab = await ctx.lexaMinta("/api/impor/pdf?uri=" + encodeURIComponent(item.frbr_uri), { method: "PUT", body: ambilan.pdf });
+              baris.hasil = "diunggah (" + (jawab && jawab.status ? jawab.status : "ok") + ")";
+              kemajuan++;
+            }
+            gagalBeruntun = 0;
+          }
+        } catch (e) {
+          if (e && e.fatal) throw e;
+          if (pesan(e) === "dihentikan") { baris.hasil = "dihentikan"; break; }
+          baris.hasil = "GAGAL: " + pesan(e);
+          gagalBeruntun++;
+          console.warn("[Lexa panen] " + item.frbr_uri + ": " + baris.hasil);
+          if (gagalBeruntun >= MAKS_GAGAL_BERUNTUN) {
+            berhentiKarena = MAKS_GAGAL_BERUNTUN + " kegagalan beruntun";
+            console.error("[Lexa panen] " + MAKS_GAGAL_BERUNTUN + " kegagalan beruntun: putaran dihentikan. Periksa sesi BPK (muat ulang halaman dan selesaikan tantangan), lalu jalankan lagi.");
+            break;
+          }
+        }
+        var diunggah = hasil.filter(function (b) { return b.hasil.indexOf("diunggah") === 0; }).length;
+        if (ctx.papan) ctx.papan.tulis("Panen PDF: " + angka(diunggah) + " diunggah dari " + angka(hasil.length) + " diproses\nTerakhir: " + item.frbr_uri + "\n" + baris.hasil);
+        console.log("[Lexa panen] " + (i + 1) + "/" + kerja.daftar.length + " " + item.frbr_uri + " — " + baris.hasil);
+        if (i < kerja.daftar.length - 1 && !berhentiKarena) await tungguSopan(jedaAcak(ctx.jeda));
+        if (berhentiKarena) break;
+      }
+      if (berhentiKarena) break;
+      if (!opsi.terus) break;
+      if (!kemajuan) { berhentiKarena = "tidak ada kemajuan pada putaran ini"; break; }
+      await tungguSopan(jedaAcak(ctx.jeda));
+    }
+    if (berhenti && !berhentiKarena) berhentiKarena = "dihentikan";
+
+    var hitung = function (awalan) { return hasil.filter(function (b) { return b.hasil.indexOf(awalan) === 0; }).length; };
+    var ringkas = {
+      diproses: hasil.length,
+      diunggah: hitung("diunggah"),
+      kering: hitung("kering"),
+      dilewati: hitung("lewati"),
+      tanpaBerkas: hitung("tanpa berkas"),
+      gagal: hitung("GAGAL"),
+      sisaDiLexa: terakhir ? Math.max(terakhir.total - hitung("diunggah") - hitung("tanpa berkas"), 0) : null,
+      berhentiKarena: berhentiKarena,
+    };
+    return { ringkas: ringkas, hasil: hasil };
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Analisis halaman yang sedang dibuka
+  // ---------------------------------------------------------------------------------------------------------------
 
   function periksaHalamanIni() {
     var meta = bacaMetadata(document);
@@ -104,6 +626,15 @@
     document.querySelectorAll("a[href]").forEach(function (a) {
       if (/ownload|unduh|\.pdf/i.test(a.getAttribute("href") + " " + teks(a))) semuaUnduh.push({ href: a.getAttribute("href"), teks: teks(a) });
     });
+    var entri = kumpulkanEntri(document, location.href);
+    var jenis = temukanJenis(document, location.href);
+    var halaman = {
+      total: bacaTotalDaftar(document),
+      nomor: nomorHalaman(location.href),
+      relNext: !!document.querySelector("a[rel~='next'][href]"),
+      berikut: halamanBerikut(document, location.href, nomorHalaman(location.href)),
+      tautanHalaman: Array.prototype.slice.call(document.querySelectorAll("a[href*='page=']")).slice(0, 12).map(function (a) { return { href: a.getAttribute("href"), teks: teks(a) }; }),
+    };
     console.log("[Lexa panen] halaman:", location.href, "\njudul:", document.title);
     console.log("[Lexa panen] tabel metadata (" + Object.keys(meta).length + " baris):");
     console.table(meta);
@@ -111,8 +642,18 @@
     console.table(tautan);
     console.log("[Lexa panen] semua tautan yang menyebut unduh/download/pdf (" + semuaUnduh.length + "):");
     console.table(semuaUnduh);
-    return { meta: meta, tautanPdf: tautan, tautanUnduh: semuaUnduh };
+    console.log("[Lexa panen] entri daftar (tautan /Details/<id>): " + entri.length + (entri.length ? "; 10 pertama:" : ""));
+    if (entri.length) console.table(entri.slice(0, 10).map(function (e) { return { bpk_id: e.bpk_id, slug: e.slug, teks: e.teks.slice(0, 80), pdf_url: e.pdf_url, konteks: e.konteks.slice(0, 80) }; }));
+    console.log("[Lexa panen] halaman berikutnya yang akan diikuti:", halaman.berikut, "(rel=next: " + halaman.relNext + ")");
+    if (halaman.tautanHalaman.length) console.table(halaman.tautanHalaman);
+    console.log("[Lexa panen] tautan jenis dalam cakupan Lexa di halaman ini (" + jenis.length + "):");
+    console.table(jenis);
+    return { meta: meta, tautanPdf: tautan, tautanUnduh: semuaUnduh, entri: entri.slice(0, 20), jumlahEntri: entri.length, halaman: halaman, jenis: jenis };
   }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Titik masuk
+  // ---------------------------------------------------------------------------------------------------------------
 
   async function lexaPanenBpk(opsi) {
     opsi = opsi || {};
@@ -121,70 +662,60 @@
     var lexa = String(opsi.lexa || prompt("Alamat Lexa (mis. https://lexa.nama-akun.workers.dev)") || "").trim().replace(/\/+$/, "");
     var token = String(opsi.token || prompt("Token admin Lexa (ADMIN_TOKEN)") || "").trim();
     if (!lexa || !token) { console.warn("[Lexa panen] dibatalkan: alamat atau token kosong."); return null; }
-    var jeda = Math.max(Number(opsi.jeda) || 4000, 2000);
-    var batas = Math.min(Math.max(Number(opsi.batas) || 50, 1), 200);
 
-    var lexaMinta = async function (path, init) {
-      var headers = Object.assign({ "x-admin-token": token }, (init && init.headers) || {});
-      var res = await fetch(lexa + path, Object.assign({}, init, { headers: headers }));
-      var badan = null;
-      try { badan = await res.json(); } catch (e) { /* bukan JSON */ }
-      if (!res.ok) throw new Error("Lexa " + res.status + (badan && badan.message ? ": " + badan.message : ""));
-      return badan;
+    berhenti = false;
+    var jedaMin = typeof opsi._jedaMin === "number" ? opsi._jedaMin : 2000; // _jedaMin: hanya untuk uji otomatis
+    var jeda = Math.max(Number(opsi.jeda) || 4000, jedaMin);
+    var ctx = {
+      opsi: opsi, lexaMinta: buatKlienLexa(lexa, token), papan: opsi.papan === false ? null : buatPapan(),
+      jeda: jeda, jedaDaftar: Math.max(Math.round(jeda * 0.75), jedaMin), jedaUlang: typeof opsi._jedaUlang === "number" ? opsi._jedaUlang : 15000,
+      pdfPerUri: {},
     };
+    var kunci = null;
+    try { if (navigator.wakeLock) kunci = await navigator.wakeLock.request("screen"); } catch (e) { /* tidak wajib */ }
 
-    var query = "?batas=" + batas + (opsi.jenis ? "&jenis=" + encodeURIComponent(opsi.jenis) : "") + (opsi.celah ? "&celah=1" : "");
-    var kerja = await lexaMinta("/api/impor/butuh-teks" + query);
-    console.log("[Lexa panen] " + kerja.total + " peraturan masih perlu teks (" + kerja.tanpa_bpk + " di antaranya tanpa tautan BPK); memproses " + kerja.daftar.length + ".");
-
-    var hasil = [];
-    var gagalBeruntun = 0;
-    for (var i = 0; i < kerja.daftar.length; i++) {
-      var item = kerja.daftar[i];
-      var baris = { uri: item.frbr_uri, hasil: "", ukuran: 0 };
-      hasil.push(baris);
-      if (!item.detail_url) { baris.hasil = "lewati: tak ada tautan BPK"; continue; }
+    try {
+      // Memeriksa token, alamat, dan CORS sejak awal, dan memberi gambaran keadaan sebelum mulai.
       try {
-        var doc = await bacaHalaman(item.detail_url);
-        var tautan = cariTautanPdf(doc, item.detail_url);
-        if (!tautan.length) throw new Error("tautan PDF tak ditemukan di halaman rincian (jalankan dengan periksa: true di halaman itu)");
-        var pdf = await unduhPdf(tautan[0].url);
-        baris.ukuran = pdf.byteLength;
-        if (opsi.kering) {
-          baris.hasil = "kering: PDF terunduh, tak diunggah";
-        } else {
-          var jawab = await lexaMinta("/api/impor/pdf?uri=" + encodeURIComponent(item.frbr_uri), { method: "PUT", body: pdf });
-          baris.hasil = "diunggah (" + (jawab && jawab.status ? jawab.status : "ok") + ")";
-        }
-        gagalBeruntun = 0;
+        var awal = await ctx.lexaMinta("/api/impor/ringkasan");
+        console.log("[Lexa panen] keadaan Lexa:");
+        console.table((awal.per_jenis || []).map(function (r) { return { jenis: r.jenis, total: r.total, bertaut_BPK: r.bertaut_bpk, ber_PDF: r.ber_pdf, berpasal: r.berpasal, perlu_PDF: r.perlu_pdf }; }));
       } catch (e) {
-        baris.hasil = "GAGAL: " + (e && e.message ? e.message : e);
-        gagalBeruntun++;
-        console.warn("[Lexa panen] " + item.frbr_uri + ": " + baris.hasil);
-        if (gagalBeruntun >= MAKS_GAGAL_BERUNTUN) {
-          console.error("[Lexa panen] " + MAKS_GAGAL_BERUNTUN + " kegagalan beruntun: putaran dihentikan. Periksa sesi BPK (muat ulang halaman dan selesaikan tantangan), lalu jalankan lagi.");
-          break;
-        }
+        if (!e || e.status !== 404) throw e;
+        // Lexa lama (belum punya /ringkasan dan /tautan): panen PDF biasa tetap jalan, penjelajahan tidak.
+        if (opsi.jelajah || opsi.hanyaJelajah) throw new Error("Lexa belum menjalankan versi yang mendukung penjelajahan (404 pada /api/impor/ringkasan). Tunggu deploy terbaru selesai, lalu coba lagi.");
+        console.warn("[Lexa panen] Lexa belum menjalankan versi terbaru (tanpa /api/impor/ringkasan); panen PDF tetap dilanjutkan.");
       }
-      console.log("[Lexa panen] " + (i + 1) + "/" + kerja.daftar.length + " " + item.frbr_uri + " — " + baris.hasil);
-      if (i < kerja.daftar.length - 1) await tunggu(jeda + Math.round(Math.random() * jeda * 0.5));
-    }
+      if (document.hidden) console.warn("[Lexa panen] Tab ini tersembunyi; peramban memperlambat tab semacam itu. Biarkan tab terlihat selama berjalan.");
 
-    var ringkas = {
-      diproses: hasil.length,
-      diunggah: hasil.filter(function (b) { return b.hasil.indexOf("diunggah") === 0; }).length,
-      kering: hasil.filter(function (b) { return b.hasil.indexOf("kering") === 0; }).length,
-      dilewati: hasil.filter(function (b) { return b.hasil.indexOf("lewati") === 0; }).length,
-      gagal: hasil.filter(function (b) { return b.hasil.indexOf("GAGAL") === 0; }).length,
-      sisaDiLexa: Math.max(kerja.total - hasil.filter(function (b) { return b.hasil.indexOf("diunggah") === 0; }).length, 0),
-    };
-    console.table(hasil);
-    console.log("[Lexa panen] selesai:", ringkas, "\nLexa mengekstrak PDF menjadi pasal di latar belakang; hasilnya tampak di /status dalam beberapa menit.");
-    return { ringkas: ringkas, hasil: hasil };
+      var jel = null;
+      if (opsi.jelajah || opsi.hanyaJelajah) {
+        jel = await jelajahi(ctx);
+        console.log("[Lexa panen] penjelajahan selesai:", jel);
+        var perhatian = ["tidak_ada", "tidak_dikenali", "ambigu", "bentrok", "gagal"].filter(function (s) { return jel.contoh[s].length; });
+        perhatian.forEach(function (s) { console.log("[Lexa panen] contoh entri berstatus " + s + " (maks 15):"); console.table(jel.contoh[s]); });
+      }
+      if (opsi.hanyaJelajah || berhenti) return { jelajah: jel, ringkas: null, hasil: [] };
+
+      var panen = await panenPdf(ctx);
+      console.table(panen.hasil);
+      console.log("[Lexa panen] selesai:", panen.ringkas, "\nLexa mengekstrak PDF menjadi pasal di latar belakang; hasilnya tampak di /status dalam beberapa menit.");
+      if (ctx.papan) ctx.papan.tulis("Selesai: " + angka(panen.ringkas.diunggah) + " diunggah, " + panen.ringkas.gagal + " gagal" + (panen.ringkas.berhentiKarena ? "\n(" + panen.ringkas.berhentiKarena + ")" : ""));
+      return { jelajah: jel, ringkas: panen.ringkas, hasil: panen.hasil };
+    } catch (e) {
+      if (ctx.papan) ctx.papan.tulis("Berhenti: " + pesan(e));
+      throw e;
+    } finally {
+      try { if (kunci) await kunci.release(); } catch (e) { /* abaikan */ }
+      if (ctx.papan) ctx.papan.tutup(opsi._papanTutup === undefined ? 30000 : opsi._papanTutup);
+    }
   }
 
   globalThis.lexaPanenBpk = lexaPanenBpk;
-  globalThis.lexaPanenBpkBantu = { bacaMetadata: bacaMetadata, cariTautanPdf: cariTautanPdf };
+  globalThis.lexaPanenBpkBantu = {
+    bacaMetadata: bacaMetadata, cariTautanPdf: cariTautanPdf, kumpulkanEntri: kumpulkanEntri, halamanBerikut: halamanBerikut,
+    temukanJenis: temukanJenis, namaJenis: namaJenis, nomorHalaman: nomorHalaman, bacaTotalDaftar: bacaTotalDaftar,
+  };
   if (globalThis.LEXA_PANEN_OTOMATIS !== false) {
     lexaPanenBpk(globalThis.LEXA_PANEN || {}).catch(function (e) { console.error("[Lexa panen] galat:", e); });
   }

@@ -81,7 +81,7 @@ selama denyut Cron segar. Lihat [docs/pipeline-data.md](docs/pipeline-data.md). 
 | Akun | `GET /api/auth/status`, `GET /api/auth/google`, `GET /api/auth/google/callback`, `PATCH /api/auth/profil`, `POST /api/auth/keluar`; koleksi: `GET/PUT/DELETE /api/koleksi`, `POST /api/koleksi/gabung` |
 | Laporan | `POST /api/laporan` |
 | Admin (header `x-admin-token`) | `POST /api/admin/sync`, `GET /api/admin/ukur`, `GET /api/admin/laporan`, `GET /api/admin/kueri-nihil`, `GET /api/admin/cek-token` (diagnosis, hanya boolean) |
-| Impor dari BPK (header `x-admin-token`) | `POST /api/impor/manifest`, `PUT /api/impor/pdf` |
+| Impor dari BPK (header `x-admin-token`) | `GET /api/impor/butuh-teks`, `GET /api/impor/ringkasan`, `POST /api/impor/tautan`, `POST /api/impor/manifest`, `PUT /api/impor/pdf`, `POST /api/impor/tanpa-berkas`, `POST /api/impor/ekstrak-ulang` |
 
 Rute memakai mode ketat: `/api/tanya/` dan `/api/koleksi/` (dengan garis miring penutup) dijawab 404.
 
@@ -215,8 +215,8 @@ Ringkasannya (rincian, SQL pemeriksaan, dan temuan produksi ada di [docs/pipelin
 - **Akses pasal.id**: sejak 11 Okt 2026 detail dijawab tanpa teks (`content: "not_available_via_api"`, "Pasal.id's API
   provides discovery metadata only"). Pipeline tidak menganggapnya 'kosong': peraturan dibiarkan menunggu, pengambilan detail
   dijeda dan diperiksa tiap 30 menit lewat peraturan pembanding, dan berjalan lagi sendiri begitu teks kembali. Keadaannya
-  tampil di `/status`. Teks baru kini datang dari **panen BPK** (`scripts/bpk-console-harvest.js` di peramban Anda,
-  `GET /api/impor/butuh-teks`, `PUT /api/impor/pdf`).
+  tampil di `/status`. Teks baru kini datang dari **panen BPK** (`scripts/bpk-console-harvest.js` di peramban Anda:
+  menjelajahi daftar BPK dan menautkan tiap entri ke peraturan Lexa, lalu mengunggah PDF-nya; lihat bagian "Yang belum ada").
 - **Pemicu**: Cron `* * * * *` bila berjalan, selain itu rantai pesan di antrean (`TIK_CADANGAN`), disemai Cron harian
   dan permintaan HTTP. Cron harian menjalankan pemeliharaan.
 - **Kontrol**: `POST /api/admin/sync` (`tik`, `uri`, `jenis`, `perbaiki_celah`, `ulang_arsip`, `ringkas_kosong`).
@@ -379,14 +379,19 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 ## Yang belum ada
 
 - **Skrip panen BPK sudah ada tetapi belum pernah dicoba pada situs BPK sungguhan.** `scripts/bpk-console-harvest.js`
-  (ditulis ulang karena skrip aslinya tak ikut dipulihkan) dijalankan di konsol peramban pada peraturan.bpk.go.id, bertanya
-  ke Lexa peraturan mana yang perlu teksnya (`GET /api/impor/butuh-teks`), mengunduh PDF dari halaman rinciannya, dan
-  mengunggahnya (`PUT /api/impor/pdf`); Lexa mengekstraknya menjadi pasal. Ia diuji end-to-end di Chromium terhadap Lexa
-  sungguhan dan situs BPK palsu (`e2e/panen.test.mjs`), tetapi susunan halaman BPK yang sebenarnya tak terjangkau dari
-  lingkungan pengembangan, jadi coba dengan `kering: true` dan `batas: 3` dulu (panduan di
-  [docs/pipeline-data.md](docs/pipeline-data.md#panen-bpk-melengkapi-teks)). Worker sengaja tak pernah menghubungi BPK
-  (di balik Cloudflare managed challenge); hanya peraturan yang punya tautan BPK yang bisa dipanen, dan peraturan baru dari
-  katalog pasal.id umumnya tidak punya (jumlahnya di `tanpa_bpk`).
+  dijalankan di konsol peramban pada peraturan.bpk.go.id dan bekerja dua tahap. (1) **Penjelajahan** (`jelajah: true`):
+  membuka daftar BPK per jenis (UUD, Tap MPR, UU, Perppu, PP; alamat jenis dibaca dari halaman `/Jenis`), halaman demi
+  halaman, dan mengirim tiap entri ke `POST /api/impor/tautan`, yang mengenali sitasinya (slug dan teks tautan, tahan
+  terhadap "01"/"1", "perpu"/"perppu", dan tiga penulisan Tap MPR) lalu menyimpan `bpk_id` dan alamat rincian peraturan Lexa
+  yang sama. Tahap ini diperlukan karena di produksi hanya 3 dari 5.011 PP yang punya tautan BPK. (2) **Panen PDF**:
+  bertanya ke Lexa peraturan mana yang perlu teksnya (`GET /api/impor/butuh-teks`), mengunduh PDF-nya (langsung dari
+  tautan di daftar, atau lewat halaman rincian yang sekaligus memperbarui judul resmi dan status), dan mengunggahnya
+  (`PUT /api/impor/pdf`); Lexa mengekstraknya menjadi pasal. Naskah lama yang di BPK tak berkas ditandai
+  (`POST /api/impor/tanpa-berkas`) supaya tak diulang. Ia diuji end-to-end di Chromium terhadap Lexa sungguhan dan situs
+  BPK palsu (`e2e/panen.test.mjs`), tetapi susunan halaman BPK yang sebenarnya tak terjangkau dari lingkungan pengembangan,
+  jadi jalankan bertahap (uji kering dulu) dan kirim hasil mode `periksa` bila ada yang tak cocok; panduan di
+  [docs/pipeline-data.md](docs/pipeline-data.md#panen-bpk-melengkapi-teks). Worker sengaja tak pernah menghubungi BPK
+  (di balik Cloudflare managed challenge).
 - **Klien server MCP atau halaman web pasal.id.** Teks lengkap hanya dibaca lewat halaman web atau server MCP pasal.id
   (OAuth atau token pribadi, 300 pembacaan per akun per hari); sengaja tidak dibangun sebagai jalur pengambilan massal
   karena itu dirancang untuk pembaca dan asisten AI, dan ketentuan pasal.id melarang menyalin basis datanya. Bila pasal.id
