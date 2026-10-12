@@ -62,6 +62,12 @@ describe("frbrDari", () => {
     expect(frbrDari("PERDA_PROV", "5", 2020)).toBe("/akn/id/act/perda-prov/2020/5");
     expect(frbrDari("TAP_MPR", "1", 1998)).toBe("/akn/id/act/tap-mpr/1998/1");
   });
+
+  it("garis miring dan spasi di dalam nomor tidak menambah segmen alamat; Tap MPR ditulis seperti pasal.id", () => {
+    expect(frbrDari("TAP_MPR", "XVI/MPR/1998", 1998)).toBe("/akn/id/act/tap-mpr/1998/xvi-mpr-1998");
+    expect(frbrDari("UUD", "1945/P4", 1945)).toBe("/akn/id/act/uud/1945/1945-P4");
+    expect(frbrDari("UU", " 5 A ", 2020)).toBe("/akn/id/act/uu/2020/5-A");
+  });
 });
 
 describe("sitasiDariTeks", () => {
@@ -262,8 +268,24 @@ describe("petakanDokumen (manifest hasil panen BPK -> Law + relasi)", () => {
         to_uri: "/akn/id/act/uu/2023/6",
         jenis_relasi: "dicabut_oleh",
         keterangan: dokumen.relasi[0].teks,
+        sasaran: { jenis: "UU", nomor: "6", tahun: 2023 },
       },
     ]);
+  });
+
+  it("nomor Tap MPR dan nomor bernol di depan ditulis seperti pasal.id; baris baru tak menambah ragam penulisan", () => {
+    const tap = petakanDokumen({ bpk_id: "210109", meta: { Judul: "Ketetapan MPR Nomor XVI/MPR/1998 tentang Politik Ekonomi", "Bentuk Singkat": "TAP MPR", Nomor: "XVI/MPR/1998", Tahun: "1998" } });
+    expect(tap?.law).toMatchObject({ jenis: "TAP_MPR", nomor: "xvi-mpr-1998", frbr_uri: "/akn/id/act/tap-mpr/1998/xvi-mpr-1998" });
+    const nol = petakanDokumen({ bpk_id: "1", meta: { Judul: "PP 1/2022", "Bentuk Singkat": "PP", Nomor: "01", Tahun: "2022" } });
+    expect(nol?.law).toMatchObject({ nomor: "1", frbr_uri: "/akn/id/act/pp/2022/1" });
+  });
+
+  it("adaStatus menandai apakah halaman BPK menyebut Status (yang tak menyebutnya tak boleh menimpa status tersimpan)", () => {
+    expect(petakanDokumen(dokumen)?.adaStatus).toBe(true);
+    const { Status: _, ...tanpaStatus } = dokumen.meta;
+    const hasil = petakanDokumen({ ...dokumen, meta: tanpaStatus });
+    expect(hasil?.adaStatus).toBe(false);
+    expect(hasil?.law.status).toBe("berlaku"); // bawaan; pemanggil yang memutuskan memakainya atau tidak
   });
 
   it("menolak dokumen tanpa nomor dan tahun", () => {

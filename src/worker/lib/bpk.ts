@@ -9,11 +9,18 @@
 
 import type { Law, JenisRelasi, StatusPeraturan } from "../../shared/types";
 import { rapikanNomorPasal } from "../../shared/label";
+import { nomorKanonik } from "./nomor";
 import { uraiSitasi } from "./sitasi";
 
 /** Satu dokumen di dalam manifest hasil panen. */
 export interface DokumenBpk {
   bpk_id: string;
+  /**
+   * Peraturan Lexa yang dituju (frbr_uri), diisi skrip panen saat ia memperkaya peraturan yang sedang dipanen PDF-nya.
+   * Dokumen yang membawanya hanya MEMPERBARUI baris itu (tidak pernah membuat baris baru), dan ditolak bila sitasi
+   * dari metadatanya tidak cocok: metadata yang salah baca tak boleh menimpa peraturan lain.
+   */
+  lexa_uri?: string;
   slug?: string;
   detail_url?: string;
   pdf_url?: string;
@@ -96,7 +103,10 @@ function metaAmbil(meta: Record<string, string>, ...label: string[]): string | n
  */
 export function frbrDari(jenis: string, nomor: string, tahun: number): string {
   const segmen = SEGMEN_FRBR[jenis] ?? jenis.toLowerCase().replace(/_/g, "-");
-  return `/akn/id/act/${segmen}/${tahun}/${nomor}`;
+  // Garis miring di dalam nomor ("XVI/MPR/1998") menambah segmen pada alamat dan membuatnya tak bisa dibuka lewat
+  // /api/peraturan/<uri>; pasal.id menuliskannya "xvi-mpr-1998".
+  const bagian = nomor.trim().replace(/[\s/\\]+/g, "-");
+  return `/akn/id/act/${segmen}/${tahun}/${jenis === "TAP_MPR" ? bagian.toLowerCase() : bagian}`;
 }
 
 /** BPK menulis tanggal sebagai "25 Maret 2003". */
@@ -149,9 +159,12 @@ export function relasiDari(label: string): JenisRelasi {
  * Petakan satu dokumen manifest menjadi baris `laws`.
  * Mengembalikan null bila metadata intinya tidak cukup untuk membentuk sitasi.
  */
-export function petakanDokumen(
-  doc: DokumenBpk,
-): { law: Law; relasi: Array<{ to_uri: string; jenis_relasi: JenisRelasi; keterangan: string | null }> } | null {
+export function petakanDokumen(doc: DokumenBpk): {
+  law: Law;
+  /** Apakah halaman BPK menyebut Status; bila tidak, status yang sudah tersimpan tidak boleh ditimpa "berlaku". */
+  adaStatus: boolean;
+  relasi: Array<{ to_uri: string; jenis_relasi: JenisRelasi; keterangan: string | null; sasaran: SitasiRelasi }>;
+} | null {
   const meta = doc.meta ?? {};
 
   const judul = metaAmbil(meta, "Judul", "Tentang");
@@ -163,11 +176,13 @@ export function petakanDokumen(
     tebakJenisDariJudul(judul) ??
     "LAIN";
 
-  const nomor = metaAmbil(meta, "Nomor", "No") ?? tebakNomorDariJudul(judul);
+  const nomorMentah = metaAmbil(meta, "Nomor", "No") ?? tebakNomorDariJudul(judul);
   const tahunTeks = metaAmbil(meta, "Tahun");
   const tahun = Number(tahunTeks) || tebakTahunDariJudul(judul) || 0;
 
-  if (!nomor || !tahun) return null;
+  if (!nomorMentah || !tahun) return null;
+  // Baris baru dari BPK ditulis seperti pasal.id ("xvi-mpr-1998", "1" untuk "01"), supaya tak menambah ragam penulisan.
+  const nomor = nomorKanonik(jenis, nomorMentah);
 
   const frbr = frbrDari(jenis, nomor, tahun);
 
@@ -198,14 +213,22 @@ export function petakanDokumen(
       const target = sitasiDariTeks(r.teks);
       if (!target) return null;
       return {
-        to_uri: frbrDari(target.jenis, target.nomor, target.tahun),
+        to_uri: frbrDari(target.jenis, nomorKanonik(target.jenis, target.nomor), target.tahun),
         jenis_relasi: relasiDari(r.label),
         keterangan: r.teks.slice(0, 300),
+        sasaran: target,
       };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
-  return { law, relasi };
+  return { law, adaStatus: metaAmbil(meta, "Status") !== null, relasi };
+}
+
+/** Sitasi peraturan tujuan sebuah relasi, supaya bisa dicocokkan dengan baris Lexa yang sudah ada. */
+export interface SitasiRelasi {
+  jenis: string;
+  nomor: string;
+  tahun: number;
 }
 
 const POLA_SITASI_TEKS =
