@@ -268,6 +268,45 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
       expect(await res.json()).toEqual({ suggestions: [] });
     });
 
+    it("yang pokok judulnya persis kata yang diketik didahulukan dari yang lebih baru; judul yang cuma menyebutnya di belakang", async () => {
+      // Delapan judul memuat "kelautan"; sebelumnya yang tampil enam yang TERBARU, jadi UU Kelautan (2014) bisa terpotong
+      // dan, bila ikut, berada di bawah PP tarif PNBP yang lebih baru.
+      await sisipkan(l, [
+        { uri: "/akn/id/act/uu/2014/32", jenis: "UU", nomor: "32", tahun: 2014, judul: "Undang-Undang Nomor 32 Tahun 2014 tentang Kelautan" },
+        { uri: "/akn/id/act/pp/2021/27", jenis: "PP", nomor: "27", tahun: 2021, judul: "Peraturan Pemerintah Nomor 27 Tahun 2021 tentang PENYELENGGARAAN BIDANG KELAUTAN DAN PERIKANAN" },
+        ...[2002, 2003, 2004, 2005, 2015, 2021, 2022].map((tahun, i) => ({
+          uri: `/akn/id/act/pp/${tahun}/${60 + i}`, jenis: "PP", nomor: String(60 + i), tahun,
+          judul: `Peraturan Pemerintah Nomor ${60 + i} Tahun ${tahun} tentang TARIF ATAS JENIS PENERIMAAN NEGARA BUKAN PAJAK YANG BERLAKU PADA DEPARTEMEN KELAUTAN DAN PERIKANAN`,
+        })),
+      ]);
+      const b = await json<{ suggestions: Array<{ teks: string; uri: string | null }> }>(await panggil(l, "/api/suggest?q=kelautan"));
+      expect(b.suggestions).toHaveLength(6);
+      expect(b.suggestions[0].uri).toBe("/akn/id/act/uu/2014/32");
+      expect(b.suggestions[1].uri).toBe("/akn/id/act/pp/2021/27");
+      // Sisanya tarif PNBP, yang lebih baru lebih dulu pada nilai sama.
+      expect(b.suggestions.slice(2).map((s) => s.uri)).toEqual([
+        "/akn/id/act/pp/2022/66", "/akn/id/act/pp/2021/65", "/akn/id/act/pp/2015/64", "/akn/id/act/pp/2005/63",
+      ]);
+    });
+
+    it("awalan kata yang sedang diketik ('kelaut') sudah menemukan yang berjudul 'Kelautan'", async () => {
+      await sisipkan(l, [
+        { uri: "/akn/id/act/uu/2014/32", jenis: "UU", nomor: "32", tahun: 2014, judul: "Undang-Undang Nomor 32 Tahun 2014 tentang Kelautan" },
+        { uri: "/akn/id/act/pp/2021/85", jenis: "PP", nomor: "85", tahun: 2021, judul: "Peraturan Pemerintah Nomor 85 Tahun 2021 tentang JENIS DAN TARIF ATAS JENIS PENERIMAAN NEGARA BUKAN PAJAK YANG BERLAKU PADA KEMENTERIAN KELAUTAN DAN PERIKANAN" },
+      ]);
+      const b = await json<{ suggestions: Array<{ uri: string | null }> }>(await panggil(l, "/api/suggest?q=kelaut"));
+      expect(b.suggestions.map((s) => s.uri)).toEqual(["/akn/id/act/uu/2014/32", "/akn/id/act/pp/2021/85"]);
+    });
+
+    it("judul yang tak lolos tingkat judul (kata ada di tengah kata lain) tetap disarankan, di bawah yang lolos, terbaru dulu", async () => {
+      await sisipkan(l, [
+        { uri: "/akn/id/act/uu/2019/9", jenis: "UU", nomor: "9", tahun: 2019, judul: "Undang-Undang Nomor 9 Tahun 2019 tentang Antarkelautan" },
+        { uri: "/akn/id/act/uu/2014/32", jenis: "UU", nomor: "32", tahun: 2014, judul: "Undang-Undang Nomor 32 Tahun 2014 tentang Kelautan" },
+      ]);
+      const b = await json<{ suggestions: Array<{ uri: string | null }> }>(await panggil(l, "/api/suggest?q=kelautan"));
+      expect(b.suggestions.map((s) => s.uri)).toEqual(["/akn/id/act/uu/2014/32", "/akn/id/act/uu/2019/9"]);
+    });
+
     it("kueri populer dari log pencarian ikut disarankan, hanya yang pernah ada hasilnya", async () => {
       await panggil(l, "/api/search?q=pesangon&mode=keyword");
       await panggil(l, "/api/search?q=pesawat+antariksa&mode=keyword"); // nihil

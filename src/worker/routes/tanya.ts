@@ -101,7 +101,9 @@ tanya.post("/", async (c) => {
     cakupan: bacaCakupan(c.env.CAKUPAN_JENIS),
   };
 
-  const hasil = await cari(ctxCari, { query: pertanyaan, mode: "hybrid", limit: 12 });
+  // Tanpa tingkat judul: yang dipakai hanya pasal, dan peraturan yang namanya memuat kata pertanyaan akan menghabiskan
+  // dua belas hasil ini tanpa membawa satu pasal pun.
+  const hasil = await cari(ctxCari, { query: pertanyaan, mode: "hybrid", limit: 12, prioritasJudul: false });
 
   // Hanya pasal yang cukup relevan yang boleh menjadi dasar. Ambang ini yang
   // membedakan "menjawab" dari "mengarang".

@@ -19,7 +19,11 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
 - **Pencarian hybrid** untuk peraturan dan pasal: jalur sitasi ("UU 13/2003", "Peraturan Pemerintah
   Republik Indonesia Nomor 35 Tahun 2021", "Perppu 2/2022"), kata kunci (FTS5 dengan
   stemmer dan sinonim bahasa Indonesia), dan makna (Vectorize + embedding Workers AI), digabung dengan
-  Reciprocal Rank Fusion, di-cache di KV. Tiga mode: Gabungan, Kata kunci, Makna.
+  Reciprocal Rank Fusion, di-cache di KV. Tiga mode: Gabungan, Kata kunci, Makna. **Peraturan yang judulnya
+  memuat kata kunci selalu tampil di atas pasal** (tingkat judul, `src/worker/lib/judul.ts`): "kelautan" menampilkan
+  UU 32/2014 tentang Kelautan lebih dulu, bukan pasal-pasal yang kebetulan menyebut kata itu. Urutan di dalam
+  tingkatnya menurut seberapa besar bagian judul yang dibicarakan kata itu, bukan BM25; "uu perikanan" atau
+  "pp kelautan" membatasi tingkat judul pada jenisnya.
 - **Telusur** dengan filter dan facet: jenis, tahun, status, instansi, bidang.
 - **Detail peraturan**: pasal dan ayat, pencarian di dalam peraturan, relasi antar-peraturan (mengubah,
   mencabut, dasar hukum, dan seterusnya) beserta peta relasi dua arah, tautan ke naskah resmi di
@@ -126,7 +130,7 @@ navigasi utama ada di bilah bawah, dan area aman (takik, bilah gestur) dihormati
 ```
 src/worker/index.ts      titik masuk: fetch + scheduled + queue
 src/worker/routes/       api, fitur, dokumen, auth, tanya, koleksi, impor
-src/worker/lib/          query (stemmer, parser kueri), search (hybrid + RRF), pasal (klien dan pengurai pasal.id),
+src/worker/lib/          query (stemmer, parser kueri), search (hybrid + RRF), judul (tingkat judul), pasal (klien dan pengurai pasal.id),
                          bpk (parser manifest dan PDF), ingest (konsumer antrean, PDF, vektor), pratinjau (pratinjau tautan),
                          sesi, auth, cors, bidang, d1; pipeline isi: katalog, isi, tik, cadangan, akses, hapus,
                          pemeliharaan, diagnosa, keadaan, jadwal

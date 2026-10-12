@@ -136,6 +136,70 @@ describe("uraiKueri: kata yang diketik, sinonim, dan pencarian longgar", () => {
   });
 });
 
+describe("uraiKueri: bahan tingkat judul (kata, ftsJudul, jenisPetunjuk)", () => {
+  it("kata adalah yang diketik tanpa kata henti, lengkap dengan ejaan lainnya, tanpa kata dasar dan sinonim", () => {
+    const k = uraiKueri("Perlindungan data yang pribadi");
+    expect(k.kata).toEqual([
+      { token: "perlindungan", sama: ["pelindungan"] },
+      { token: "data", sama: [] },
+      { token: "pribadi", sama: [] },
+    ]);
+    expect(k.ftsJudul).toBe('("perlindungan"* OR "pelindungan") AND ("data"*) AND ("pribadi"*)');
+    expect(k.ftsJudul).not.toContain("lindung\"");
+    // Sinonim ("kompensasi") hanya untuk jalur biasa; judul yang diprioritaskan adalah yang memuat kata ITU.
+    expect(uraiKueri("pesangon").ftsJudul).toBe('("pesangon"*)');
+  });
+
+  it("kata pendek (kurang dari empat huruf) tidak diberi awalan agar tidak menyeret kata lain", () => {
+    expect(uraiKueri("hak cipta").ftsJudul).toBe('("hak") AND ("cipta"*)');
+  });
+
+  it("singkatan yang berarti beberapa kata ditulis sebagai frasa", () => {
+    expect(uraiKueri("ITE").ftsJudul).toBe('("ite" OR "informasi dan transaksi elektronik")');
+    expect(uraiKueri("ITE").kata).toEqual([{ token: "ite", sama: ["informasi dan transaksi elektronik"] }]);
+  });
+
+  it("frasa berkutip wajib ada di judul dan tidak masuk daftar kata", () => {
+    const k = uraiKueri('"cipta kerja" pengganti');
+    expect(k.ftsJudul).toBe('"cipta kerja" AND ("pengganti"*)');
+    expect(k.frasa).toEqual(["cipta kerja"]);
+    expect(k.kata.map((x) => x.token)).toEqual(["pengganti"]);
+  });
+
+  it("singkatan jenis di depan kata lain menjadi petunjuk jenis, bukan kata yang dicari", () => {
+    const uu = uraiKueri("UU perikanan");
+    expect(uu.jenisPetunjuk).toEqual(["UU"]);
+    expect(uu.kata.map((x) => x.token)).toEqual(["perikanan"]);
+    expect(uu.ftsJudul).toBe('("perikanan"*)');
+    expect(uraiKueri("pp perpu kelautan").jenisPetunjuk.sort()).toEqual(["PERPPU", "PP"]);
+    expect(uraiKueri("kelautan pp").jenisPetunjuk).toEqual(["PP"]);
+    expect(uraiKueri('uud "hak asasi"').jenisPetunjuk).toEqual(["UUD"]);
+    // Jalur lain tidak berubah: singkatan itu tetap bagian ekspresi biasa.
+    expect(uu.fts).toContain('"uu"');
+  });
+
+  it("singkatan jenis yang berdiri sendiri tetap kata biasa", () => {
+    const k = uraiKueri("pp");
+    expect(k.jenisPetunjuk).toEqual([]);
+    expect(k.kata.map((x) => x.token)).toEqual(["pp"]);
+    expect(uraiKueri("pp uu").jenisPetunjuk).toEqual([]);
+  });
+
+  it("kueri tanpa kata (hanya kata henti) tidak punya bahan tingkat judul", () => {
+    const k = uraiKueri("yang dan di");
+    expect(k).toMatchObject({ kata: [], ftsJudul: "", jenisPetunjuk: [] });
+  });
+
+  it("kata yang sama dengan nama properti bawaan Object ('constructor') tidak menjatuhkan penguraian", () => {
+    for (const kata of ["constructor", "hasOwnProperty", "toString", "__proto__", "valueOf"]) {
+      const k = uraiKueri(kata);
+      expect(typeof k.fts, kata).toBe("string");
+      expect(k.fts, kata).not.toBe("");
+    }
+    expect(uraiKueri("constructor").kata).toEqual([{ token: "constructor", sama: [] }]);
+  });
+});
+
 describe("kueriUntukEmbedding", () => {
   it("merapikan spasi dan membuang tanda kurung tanpa membuang kata", () => {
     expect(kueriUntukEmbedding("PHK dan pesangon?  (sanksi)")).toBe("PHK dan pesangon? sanksi");
@@ -186,6 +250,16 @@ describe("kompatibilitas ekspresi dengan FTS5 sungguhan", () => {
     expect(() => indeks!.cocok(ftsLiteral)).not.toThrow();
     if (ftsLonggar) expect(() => indeks!.cocok(ftsLonggar)).not.toThrow();
   });
+
+  // Tingkat judul membungkus ekspresi dengan filter kolom ("{judul} : (...)"); bentuk ini juga harus valid di FTS5.
+  it.skipIf(!fts5Ada).each([...aman, "UU perikanan", "pp kelautan", "ITE", "hak cipta", "perlindungan data pribadi", "constructor"])(
+    "ekspresi judul untuk %j valid dengan filter kolom di FTS5",
+    (kueri) => {
+      const { ftsJudul } = uraiKueri(kueri);
+      if (!ftsJudul) return;
+      expect(() => indeks!.cocok(`{isi} : (${ftsJudul})`)).not.toThrow();
+    },
+  );
 
   it.skipIf(!fts5Ada)("ekspresi longgar menemukan dokumen yang hanya memuat sebagian kata, ekspresi ketat tidak", () => {
     const { fts, ftsLonggar } = uraiKueri("pesangon pekerja kapal");

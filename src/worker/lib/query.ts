@@ -15,7 +15,7 @@
 import { type Sitasi, uraiSitasi } from "./sitasi";
 
 /** Kata yang tidak menambah makna pencarian dan hanya memperbesar recall palsu. */
-const STOPWORDS = new Set([
+export const STOPWORDS: ReadonlySet<string> = new Set([
   "yang", "dan", "atau", "di", "ke", "dari", "untuk", "pada", "dengan", "dalam",
   "adalah", "ini", "itu", "sebagai", "oleh", "tentang", "akan", "telah", "dapat",
   "tidak", "juga", "serta", "bagi", "atas", "para", "agar", "bila", "jika",
@@ -94,8 +94,29 @@ const SINONIM: Record<string, string[]> = {
   koperasi: ["perkoperasian"],
 };
 
+/**
+ * Isi `peta[kunci]` hanya bila kuncinya milik `peta` sendiri. Kata yang diketik pengguna adalah kunci yang tak
+ * terkendali: "constructor" pada objek biasa mengembalikan fungsi bawaan `Object`, dan mengulanginya (`for...of`)
+ * menjatuhkan seluruh pencarian dengan TypeError.
+ */
+const ambil = <T>(peta: Readonly<Record<string, T>>, kunci: string): T | undefined =>
+  Object.hasOwn(peta, kunci) ? peta[kunci] : undefined;
+
 /** Jumlah kelompok kata terdepan yang dipakai membentuk pasangan pada pencarian longgar. */
 const MAKS_KATA_LONGGAR = 6;
+
+/**
+ * Singkatan jenis yang lazim diketik di depan nama peraturan: "uu perikanan", "pp kelautan". Judul tidak memuat
+ * singkatannya (yang tertulis "Undang-Undang Nomor 31 Tahun 2004 tentang Perikanan"), jadi di tingkat judul
+ * singkatan itu bukan kata yang dicari melainkan petunjuk jenis (lihat `KueriTerurai.jenisPetunjuk`).
+ */
+const PETUNJUK_JENIS: ReadonlyMap<string, string> = new Map([
+  ["uu", "UU"],
+  ["pp", "PP"],
+  ["perppu", "PERPPU"],
+  ["perpu", "PERPPU"],
+  ["uud", "UUD"],
+]);
 
 const PARTIKEL = /(?:-?(?:lah|kah|tah|pun))$/;
 const POSESIF = /(?:-?(?:ku|mu|nya))$/;
@@ -181,6 +202,14 @@ function bersihkanToken(token: string): string {
   return token.replace(/["'^*():{}[\]]/g, "").trim();
 }
 
+/** Satu kata yang diketik pengguna, dengan ejaan atau singkatan lain dari kata yang SAMA (`VARIAN_KATA`). */
+export interface KataKueri {
+  /** Huruf kecil, apa adanya yang diketik. */
+  token: string;
+  /** Bentuk lain yang berarti sama, bisa lebih dari satu kata ("phk" -> "pemutusan hubungan kerja"). */
+  sama: string[];
+}
+
 export interface KueriTerurai {
   /** Ekspresi siap dikirim ke `MATCH`: semua kelompok kata harus ada (AND), dengan sinonim. */
   fts: string;
@@ -201,6 +230,22 @@ export interface KueriTerurai {
   ftsLonggar: string;
   /** Frasa dalam tanda kutip yang diminta pengguna secara eksplisit. */
   frasa: string[];
+  /**
+   * Kata yang diketik tanpa kata henti dan tanpa petunjuk jenis ("uu", "pp"), untuk mencocokkan JUDUL peraturan
+   * (lib/judul.ts). Kosong bila tidak ada yang tersisa.
+   */
+  kata: KataKueri[];
+  /**
+   * Ekspresi FTS5 untuk kolom judul saja: setiap kata yang diketik (atau ejaan lainnya) dan setiap frasa berkutip
+   * harus ada. Tanpa kata dasar dan tanpa sinonim: judul yang diprioritaskan adalah yang memuat kata ITU, bukan
+   * yang kebetulan sepadan. Kosong bila `kata` dan `frasa` kosong.
+   */
+  ftsJudul: string;
+  /**
+   * Jenis yang ditunjuk kueri ("uu perikanan" -> ["UU"], "pp kelautan" -> ["PP"]). Hanya terisi bila masih ada
+   * kata lain: kueri "pp" saja tidak berarti apa-apa selain kata itu sendiri.
+   */
+  jenisPetunjuk: string[];
   /** Semua term yang akhirnya dicari — ditampilkan ke pengguna. */
   terms: string[];
   /** Sitasi yang terdeteksi, mis. {jenis:"UU", nomor:"13", tahun:2003}. */
@@ -242,6 +287,12 @@ export function uraiKueri(raw: string): KueriTerurai {
   const semuaTerm = new Set<string>();
   let adaSinonim = false;
 
+  // Tingkat judul: kata yang diketik apa adanya (dan ejaan lainnya), tanpa kata dasar dan sinonim.
+  const kata: KataKueri[] = [];
+  const kelompokJudul: string[] = [];
+  const jenisPetunjuk = new Set<string>();
+  const adaKataLain = frasa.length > 0 || tokens.some((t) => !PETUNJUK_JENIS.has(t));
+
   for (const f of frasa) {
     kelompokFrasa.push(`"${f}"`);
     semuaTerm.add(f);
@@ -262,13 +313,22 @@ export function uraiKueri(raw: string): KueriTerurai {
     // Token asli selalu ikut, dengan bobot alami lebih tinggi karena persis.
     varian.add(`"${token}"`);
     // Singkatan dan ejaan lain dari kata yang sama dihitung sebagai kata yang diketik.
-    for (const v of VARIAN_KATA[token] ?? []) {
+    for (const v of ambil(VARIAN_KATA, token) ?? []) {
       varian.add(`"${v}"`);
       semuaTerm.add(v);
     }
     kelompokLiteral.push(`(${[...varian].join(" OR ")})`);
 
-    for (const sin of SINONIM[token] ?? []) {
+    const petunjuk = PETUNJUK_JENIS.get(token);
+    if (petunjuk && adaKataLain) {
+      jenisPetunjuk.add(petunjuk);
+    } else {
+      const sama = [...(ambil(VARIAN_KATA, token) ?? [])];
+      kata.push({ token, sama });
+      kelompokJudul.push(`(${[token.length >= 4 ? `"${token}"*` : `"${token}"`, ...sama.map((v) => `"${v}"`)].join(" OR ")})`);
+    }
+
+    for (const sin of ambil(SINONIM, token) ?? []) {
       varian.add(`"${sin}"`);
       semuaTerm.add(sin);
       adaSinonim = true;
@@ -293,6 +353,9 @@ export function uraiKueri(raw: string): KueriTerurai {
     ftsLiteral,
     ftsLonggar,
     frasa,
+    kata,
+    ftsJudul: [...kelompokFrasa, ...kelompokJudul].join(" AND "),
+    jenisPetunjuk: [...jenisPetunjuk],
     terms: [...semuaTerm],
     sitasi,
   };

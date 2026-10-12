@@ -686,6 +686,11 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
   .hasil .lencana-berlaku .teks-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   .hasil .lencana-berlaku::before { width: 9px; height: 9px; }
 }
+/* Pemisah kelompok di daftar hasil ("Peraturan yang judulnya memuat …" / "Pasal dan hasil lainnya"). */
+.kelompok-hasil { display: flex; align-items: baseline; gap: 8px; margin: 6px 4px 0; }
+.kelompok-hasil:first-child { margin-top: 0; }
+.kelompok-hasil h2 { margin: 0; font-family: var(--font-badan); font-size: 0.82rem; font-weight: 700; letter-spacing: 0.01em; color: var(--teks-redup); overflow-wrap: anywhere; }
+.kelompok-jumlah { flex: none; padding: 0 8px; border-radius: 999px; background: var(--netral-bg); color: var(--netral-fg); font-size: 0.75rem; font-weight: 700; }
 .istilah { font-size: 0.88rem; color: var(--teks-redup); }
 .istilah code { background: var(--permukaan-2); padding: 1px 6px; border-radius: 5px; margin-inline-end: 4px; display: inline-block; }
 

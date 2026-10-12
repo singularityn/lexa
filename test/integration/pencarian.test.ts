@@ -6,9 +6,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  buatLingkungan, indeksSemua, json, KORPUS, panggil, sisipkan, sqliteAda, type Lingkungan,
+  buatLingkungan, indeksSemua, json, KORPUS, panggil, sisipkan, sqliteAda, type Lingkungan, type PeraturanUji,
 } from "./harness";
 import type { SearchHit, SearchResponse } from "../../src/shared/types";
+import { bacaCakupan } from "../../src/shared/cakupan";
+import { cari as cariLangsung } from "../../src/worker/lib/search";
 
 describe.skipIf(!sqliteAda)("GET /api/search", () => {
   let l: Lingkungan;
@@ -167,6 +169,198 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
     it("sumber hasil tetap 'fts' (pembobotan harfiah/sinonim/longgar tidak bocor ke antarmuka)", async () => {
       const b = await cari(q("pesangon", "mode=keyword"));
       for (const h of b.hits) expect(h.sources).toEqual(["fts"]);
+    });
+  });
+
+  describe("tingkat judul: peraturan yang namanya memuat kata kunci di atas pasal", () => {
+    const UU32 = "/akn/id/act/uu/2014/32";
+    const PP27 = "/akn/id/act/pp/2021/27";
+    const PP62 = "/akn/id/act/pp/2002/62";
+    const UU31 = "/akn/id/act/uu/2004/31";
+    const UU62 = "/akn/id/act/uu/1962/1";
+    const PP19 = "/akn/id/act/pp/2019/5";
+
+    /** Judul dan keadaan data produksi untuk kata "kelautan" (D1, 12 Oktober 2026). */
+    const KELAUTAN: PeraturanUji[] = [
+      {
+        uri: UU32, jenis: "UU", nomor: "32", tahun: 2014, status: "diubah",
+        judul: "Undang-Undang Nomor 32 Tahun 2014 tentang Kelautan", tentang: "PERIKANAN DAN KELAUTAN", bidang: "PERIKANAN DAN KELAUTAN",
+        pasal: [{ nomor: "1", isi: "Kelautan adalah hal yang berkaitan dengan laut dan atau aktivitas masyarakat di wilayah laut." }],
+      },
+      {
+        uri: PP27, jenis: "PP", nomor: "27", tahun: 2021, status: "dicabut",
+        judul: "Peraturan Pemerintah Nomor 27 Tahun 2021 tentang PENYELENGGARAAN BIDANG KELAUTAN DAN PERIKANAN",
+      },
+      {
+        uri: PP62, jenis: "PP", nomor: "62", tahun: 2002,
+        judul: "Peraturan Pemerintah Nomor 62 Tahun 2002 tentang TARIF ATAS JENIS PENERIMAAN NEGARA BUKAN PAJAK YANG BERLAKU PADA DEPARTEMEN KELAUTAN DAN PERIKANAN",
+      },
+      {
+        // Hanya bidangnya yang kelautan; judulnya tidak. Pasalnya menyebut kata itu berulang-ulang.
+        uri: UU31, jenis: "UU", nomor: "31", tahun: 2004, status: "diubah",
+        judul: "Undang-Undang Nomor 31 Tahun 2004 tentang PERIKANAN", tentang: "PERIKANAN DAN KELAUTAN", bidang: "PERIKANAN DAN KELAUTAN",
+        pasal: [
+          { nomor: "2", isi: "Pengelolaan perikanan dilakukan berdasarkan kebijakan kelautan dan kelautan nasional." },
+          { nomor: "3", isi: "Menteri yang membidangi kelautan menetapkan kebijakan kelautan, kelautan dan perikanan." },
+          { nomor: "4", isi: "Kelautan, kelautan, dan kelautan menjadi dasar penetapan wilayah pengelolaan perikanan." },
+        ],
+      },
+      {
+        // "laut" saja, bukan "kelautan".
+        uri: UU62, jenis: "UU", nomor: "1", tahun: 1962, status: "dicabut",
+        judul: "Undang-Undang Nomor 1 Tahun 1962 tentang Karantina Laut", tentang: "PERIKANAN DAN KELAUTAN", bidang: "PERIKANAN DAN KELAUTAN",
+      },
+      {
+        uri: PP19, jenis: "PP", nomor: "5", tahun: 2019, judul: "Peraturan Pemerintah Nomor 5 Tahun 2019 tentang Pengelolaan Pesisir",
+        pasal: [
+          { nomor: "7", isi: "Pengelolaan pesisir selaras dengan kebijakan kelautan nasional dan kelautan regional." },
+          { nomor: "8", isi: "Kelautan menjadi bagian perencanaan ruang pesisir, kelautan, dan pulau-pulau kecil." },
+        ],
+      },
+    ];
+
+    beforeEach(async () => {
+      await sisipkan(l, KELAUTAN);
+      await indeksSemua(l, KELAUTAN.map((p) => p.uri));
+    });
+
+    const cocok = (hits: SearchHit[]) => hits.filter((h) => h.cocok_judul).map((h) => h.frbr_uri);
+
+    it('"kelautan": peraturan berjudul Kelautan di peringkat pertama, bukan pasal yang menyebutnya (keluhan pengguna)', async () => {
+      for (const mode of ["hybrid", "keyword"]) {
+        const b = await cari(q("kelautan", `mode=${mode}`));
+        // UU 32/2014 persis "Kelautan"; PP 27/2021 pokoknya 4 kata; PP tarif PNBP pokoknya 10 kata.
+        expect(b.hits.slice(0, 3).map((h) => h.frbr_uri), mode).toEqual([UU32, PP27, PP62]);
+        for (const h of b.hits.slice(0, 3)) expect(h, mode).toMatchObject({ article_id: null, cocok_judul: true });
+      }
+    });
+
+    it("semua peraturan tingkat judul mendahului semua hasil lain, dan hasil pasal tetap tampil di bawahnya", async () => {
+      const b = await cari(q("kelautan"));
+      const terakhirJudul = b.hits.map((h) => h.cocok_judul === true).lastIndexOf(true);
+      expect(terakhirJudul).toBe(2);
+      expect(b.hits.slice(terakhirJudul + 1).some((h) => h.cocok_judul)).toBe(false);
+      // Pasal yang menyebut kata itu masih ada, di bawah.
+      const pasal = b.hits.filter((h) => h.article_id !== null);
+      expect(pasal.length).toBeGreaterThan(0);
+      expect(pasal.some((h) => h.frbr_uri === UU31)).toBe(true);
+      expect(pasal.some((h) => h.frbr_uri === PP19)).toBe(true);
+      for (const h of pasal) expect(h.cocok_judul).toBeUndefined();
+    });
+
+    it("peraturan yang hanya bidangnya (tentang) atau kata dasarnya yang cocok bukan tingkat judul", async () => {
+      const b = await cari(q("kelautan"));
+      expect(cocok(b.hits)).toEqual([UU32, PP27, PP62]);
+      expect(cocok(b.hits)).not.toContain(UU31);
+      expect(cocok(b.hits)).not.toContain(UU62);
+      // Tetap ditemukan di tingkat bawah: UU Perikanan (bidang dan pasalnya) tidak hilang.
+      expect(b.hits.some((h) => h.frbr_uri === UU31 && h.article_id === null)).toBe(true);
+    });
+
+    it("tanpa judul yang cocok, urutan lama (fusi) tidak berubah dan tidak ada penanda", async () => {
+      const b = await cari(q("pesangon"));
+      expect(b.hits.length).toBeGreaterThan(0);
+      for (const h of b.hits) expect(h.cocok_judul).toBeUndefined();
+    });
+
+    it("mode semantic tidak memakai tingkat judul (pengguna sengaja mencari makna)", async () => {
+      const b = await cari(q("kelautan", "mode=semantic"));
+      for (const h of b.hits) expect(h.cocok_judul).toBeUndefined();
+    });
+
+    it("filter status dan jenis berlaku pada tingkat judul", async () => {
+      expect(cocok((await cari(q("kelautan", "mode=keyword&status=berlaku"))).hits)).toEqual([PP62]);
+      expect(cocok((await cari(q("kelautan", "mode=keyword&jenis=UU"))).hits)).toEqual([UU32]);
+      expect(cocok((await cari(q("kelautan", "mode=keyword&tahun_max=2010"))).hits)).toEqual([PP62]);
+    });
+
+    it("petunjuk jenis di kueri ('pp kelautan', 'uu kelautan') membatasi tingkat judul pada jenis itu", async () => {
+      expect(cocok((await cari(q("pp kelautan", "mode=keyword"))).hits)).toEqual([PP27, PP62]);
+      expect(cocok((await cari(q("uu kelautan", "mode=keyword"))).hits)).toEqual([UU32]);
+      expect(cocok((await cari(q("PERPPU kelautan", "mode=keyword"))).hits)).toEqual([]);
+    });
+
+    it("kata jenis yang berdiri sendiri bukan petunjuk: 'pp' saja tidak menyaring apa pun dan tidak menjatuhkan pencarian", async () => {
+      const res = await panggil(l, `/api/search?${q("pp", "mode=keyword")}`);
+      expect(res.status).toBe(200);
+    });
+
+    it("kata di bagian depan judul ('peraturan pemerintah') tidak meloloskan PP biasa; hanya judul yang menyebutnya di pokoknya", async () => {
+      const b = await cari(q("peraturan pemerintah", "mode=keyword"));
+      // Penetapan Perppu menjadi UU memuat kata itu di pokoknya ("Penetapan Peraturan Pemerintah Pengganti ...").
+      expect(cocok(b.hits)).toEqual(["/akn/id/act/uu/2023/6"]);
+      for (const uri of [PP27, PP62, "/akn/id/act/pp/2021/35"]) expect(cocok(b.hits)).not.toContain(uri);
+    });
+
+    it("beberapa kata: semuanya harus ada di judul; 'kelautan perikanan' tidak meloloskan judul yang hanya satu kata", async () => {
+      const b = await cari(q("kelautan perikanan", "mode=keyword"));
+      expect(cocok(b.hits)).toEqual([PP27, PP62]);
+    });
+
+    it("kueri berbentuk sitasi tidak memakai tingkat judul", async () => {
+      const b = await cari(q("UU 32/2014"));
+      expect(b.hits[0]).toMatchObject({ frbr_uri: UU32, article_id: null });
+      expect(b.hits[0].sources).toContain("sitasi");
+      for (const h of b.hits) expect(h.cocok_judul).toBeUndefined();
+    });
+
+    it("peraturan di luar cakupan tidak muncul di tingkat judul", async () => {
+      await sisipkan(l, [{ uri: "/akn/id/act/perpres/2020/1", jenis: "PERPRES", nomor: "1", tahun: 2020, judul: "Peraturan Presiden Nomor 1 Tahun 2020 tentang Kelautan" }]);
+      const b = await cari(q("kelautan", "mode=keyword"));
+      expect(b.hits.some((h) => h.frbr_uri === "/akn/id/act/perpres/2020/1")).toBe(false);
+      const luas = await cari(q("kelautan", "mode=keyword&jenis=PERPRES"));
+      expect(luas.hits.some((h) => h.frbr_uri === "/akn/id/act/perpres/2020/1")).toBe(false);
+    });
+
+    it("jatah halaman: judul yang terlalu banyak tidak menghabiskan halaman, pasal yang memuat kata itu tetap tampil", async () => {
+      await sisipkan(
+        l,
+        Array.from({ length: 30 }, (_, i) => ({
+          uri: `/akn/id/act/pp/2010/${100 + i}`, jenis: "PP", nomor: String(100 + i), tahun: 2010,
+          judul: `Peraturan Pemerintah Nomor ${100 + i} Tahun 2010 tentang Kelautan Daerah Kelompok ${i + 1}`,
+        })),
+      );
+      const b = await cari(q("kelautan", "mode=keyword&limit=20"));
+      expect(b.hits).toHaveLength(20);
+      expect(b.hits.filter((h) => h.cocok_judul)).toHaveLength(15);
+      expect(b.hits.slice(0, 15).every((h) => h.cocok_judul === true)).toBe(true);
+      expect(b.hits.slice(15).some((h) => h.article_id !== null)).toBe(true);
+      // UU 32/2014 persis "Kelautan" tetap yang pertama di antara semuanya.
+      expect(b.hits[0].frbr_uri).toBe(UU32);
+      // Halaman yang lebih besar memuat lebih banyak judul.
+      const besar = await cari(q("kelautan", "mode=keyword&limit=50"));
+      expect(besar.hits.filter((h) => h.cocok_judul)).toHaveLength(33);
+    });
+
+    it("prioritasJudul: false mematikan tingkat judul (dipakai Tanya Lexa, yang hanya memakai pasal)", async () => {
+      const ctx = {
+        db: l.env.DB, ai: l.env.AI, vectorize: l.env.VECTORIZE, cache: l.env.CACHE, embeddingModel: l.env.EMBEDDING_MODEL,
+        cacheTtl: 3600, cakupan: bacaCakupan(l.env.CAKUPAN_JENIS),
+      };
+      const nyala = await cariLangsung(ctx, { query: "kelautan", limit: 12 });
+      const mati = await cariLangsung(ctx, { query: "kelautan", limit: 12, prioritasJudul: false });
+      expect(nyala.hits.some((h) => h.cocok_judul)).toBe(true);
+      expect(mati.hits.some((h) => h.cocok_judul)).toBe(false);
+      // Hasil yang sama tetap ditemukan; hanya urutan tingkatnya yang tidak berlaku.
+      expect(new Set(mati.hits.map((h) => h.article_id ?? h.frbr_uri))).toEqual(new Set(nyala.hits.map((h) => h.article_id ?? h.frbr_uri)));
+    });
+
+    it("cuplikan peraturan tingkat judul menandai kata yang diketik pada judulnya", async () => {
+      const b = await cari(q("kelautan", "mode=keyword"));
+      expect(b.hits[0].snippet).toContain("<mark>Kelautan</mark>");
+    });
+
+    it("judul yang hanya rujukan (sumber katalog tak memberi pokok) tidak lolos oleh kata bidangnya", async () => {
+      await sisipkan(l, [{ uri: "/akn/id/act/uu/1981/7", jenis: "UU", nomor: "7", tahun: 1981, judul: "Undang-Undang Nomor 7 Tahun 1981", tentang: "KETENAGAKERJAAN" }]);
+      const b = await cari(q("ketenagakerjaan", "mode=keyword"));
+      expect(cocok(b.hits)).not.toContain("/akn/id/act/uu/1981/7");
+      // Tetap ditemukan lewat tingkat bawah (kolom tentang).
+      expect(b.hits.some((h) => h.frbr_uri === "/akn/id/act/uu/1981/7")).toBe(true);
+    });
+
+    it("kueri 'constructor' (nama properti bawaan Object) tidak menjatuhkan pencarian", async () => {
+      const res = await panggil(l, `/api/search?${q("constructor")}`);
+      expect(res.status).toBe(200);
     });
   });
 
@@ -376,7 +570,7 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
     it("hasil yang ada isinya di-cache di KV; panggilan kedua bertanda cached", async () => {
       const pertama = await cari(q("pesangon", "mode=keyword"));
       expect(pertama.cached).toBe(false);
-      const kunci = [...l.kv.isi.keys()].filter((k) => k.startsWith("cari:v4:"));
+      const kunci = [...l.kv.isi.keys()].filter((k) => k.startsWith("cari:v5:"));
       expect(kunci).toHaveLength(1);
       const kedua = await cari(q("pesangon", "mode=keyword"));
       expect(kedua.cached).toBe(true);

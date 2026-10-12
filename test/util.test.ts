@@ -4,7 +4,7 @@ import { klausaBidang, pecahBidang } from "../src/worker/lib/bidang";
 import { headerCors } from "../src/worker/lib/cors";
 import { potongTeks } from "../src/worker/lib/ingest";
 import { rapikanArtikel, rapikanInstansi, rapikanLaw, rapikanNomorPasal } from "../src/shared/label";
-import { gabungRRF, kunciCache, type KandidatMentah } from "../src/worker/lib/search";
+import { gabungRRF, jatahJudul, kunciCache, urutkanBertingkat, type KandidatMentah } from "../src/worker/lib/search";
 import {
   bacaSesi,
   cookieHapus,
@@ -89,7 +89,7 @@ describe("kunciCache", () => {
   it("menormalkan kueri dan mengurutkan filter agar kunci stabil", () => {
     const a = kunciCache({ ...dasar, filters: { jenis: ["PP", "UU"], status: ["berlaku"], tahun_min: 2000 } });
     const b = kunciCache({ ...dasar, query: "phk pesangon", filters: { jenis: ["UU", "PP"], status: ["berlaku"], tahun_min: 2000 } });
-    expect(a).toBe("cari:v4:PERPPU,PP,TAP_MPR,UU,UUD|phk pesangon|hybrid|20|PP,UU|berlaku|2000|||");
+    expect(a).toBe("cari:v5:PERPPU,PP,TAP_MPR,UU,UUD|phk pesangon|hybrid|20|PP,UU|berlaku|2000|||");
     expect(b).toBe(a);
   });
 
@@ -137,6 +137,77 @@ describe("gabungRRF (Reciprocal Rank Fusion)", () => {
 
   it("memisahkan hasil level peraturan dan level pasal", () => {
     expect([...hasil.keys()].sort()).toEqual(["/a", "/b", "b1", "c1"]);
+  });
+});
+
+describe("urutkanBertingkat (sitasi, lalu peraturan berjudul cocok, lalu skor fusi)", () => {
+  type E = { frbr_uri: string; article_id: string | null; score: number; sources: Set<string> };
+  const e = (frbr_uri: string, article_id: string | null, score: number, sources: string[] = ["fts"]): E => ({
+    frbr_uri, article_id, score, sources: new Set(sources),
+  });
+  const uri = (t: E) => t.article_id ?? t.frbr_uri;
+
+  it("peraturan berjudul cocok mendahului pasal yang skor fusinya jauh lebih besar", () => {
+    // Keadaan produksi: UU Kelautan hanya dari FTS peraturan (0,016); pasal-pasalnya dari FTS dan vektor sekaligus (0,029).
+    const { terurut } = urutkanBertingkat(
+      [e("/pp/62", "/pp/62#1", 0.0295, ["fts", "vector"]), e("/uu/32", null, 0.0164), e("/uu/31", "/uu/31#3", 0.029, ["fts", "vector"])],
+      [{ frbr_uri: "/uu/32" }],
+      20,
+    );
+    expect(terurut.map(uri)).toEqual(["/uu/32", "/pp/62#1", "/uu/31#3"]);
+  });
+
+  it("di antara peraturan tingkat judul, urutan nilai judul yang berlaku, bukan skor fusi", () => {
+    const { terurut } = urutkanBertingkat(
+      [e("/a", null, 0.03), e("/b", null, 0.01), e("/c", null, 0.02)],
+      [{ frbr_uri: "/b" }, { frbr_uri: "/c" }, { frbr_uri: "/a" }],
+      20,
+    );
+    expect(terurut.map(uri)).toEqual(["/b", "/c", "/a"]);
+  });
+
+  it("sitasi tetap paling atas, sekalipun ada peraturan berjudul cocok", () => {
+    const { terurut } = urutkanBertingkat(
+      [e("/judul", null, 0.02), e("/sitasi", null, 0.19, ["sitasi"])],
+      [{ frbr_uri: "/judul" }],
+      20,
+    );
+    expect(terurut.map(uri)).toEqual(["/sitasi", "/judul"]);
+  });
+
+  it("hanya hasil tingkat peraturan yang berjudul cocok; pasal dari peraturan yang sama tetap hasil biasa", () => {
+    const { terurut, cocokJudul } = urutkanBertingkat(
+      [e("/uu/32", "/uu/32#1", 0.05), e("/uu/32", null, 0.01)],
+      [{ frbr_uri: "/uu/32" }],
+      20,
+    );
+    expect(terurut.map((t) => [uri(t), cocokJudul(t)])).toEqual([["/uu/32", true], ["/uu/32#1", false]]);
+  });
+
+  it("sisa di luar jatah halaman kembali bersaing menurut skor fusi dan tidak ditandai", () => {
+    const judul = Array.from({ length: 30 }, (_, i) => ({ frbr_uri: `/j${i}` }));
+    const entri = [...judul.map((j, i) => e(j.frbr_uri, null, 0.01 + i / 10000)), e("/pasal", "/pasal#1", 0.0302, ["fts", "vector"])];
+    const { terurut, cocokJudul } = urutkanBertingkat(entri, judul, 20);
+    expect(terurut.slice(0, 15).every(cocokJudul)).toBe(true);
+    expect(terurut.slice(0, 15).map(uri)).toEqual(judul.slice(0, 15).map((j) => j.frbr_uri));
+    expect(terurut.filter(cocokJudul)).toHaveLength(15);
+    // Pasal (0,0302) mengalahkan semua judul sisa (0,01x) di tingkat bawah.
+    expect(uri(terurut[15])).toBe("/pasal#1");
+  });
+
+  it("tanpa daftar judul, urutannya hanya skor fusi (perilaku semula)", () => {
+    const { terurut } = urutkanBertingkat([e("/a", null, 0.01), e("/b", "/b#1", 0.03), e("/c", null, 0.02)], [], 20);
+    expect(terurut.map(uri)).toEqual(["/b#1", "/c", "/a"]);
+  });
+});
+
+describe("jatahJudul (berapa peraturan tingkat judul per halaman)", () => {
+  it("menyisakan paling sedikit lima hasil lain pada halaman besar, tetapi tidak kurang dari separuh halaman untuk judul", () => {
+    expect(jatahJudul(20)).toBe(15);
+    expect(jatahJudul(50)).toBe(37);
+    expect(jatahJudul(12)).toBe(7);
+    expect(jatahJudul(5)).toBe(3);
+    expect(jatahJudul(1)).toBe(1);
   });
 });
 

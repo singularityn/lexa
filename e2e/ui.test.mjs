@@ -134,6 +134,30 @@ describe("pencarian", () => {
     expect(await page.locator(".hasil").first().locator(".sumber-chip").allTextContents()).toContain("Sitasi");
   });
 
+  it("peraturan yang judulnya memuat kata kunci dikelompokkan di atas pasal, dengan judul kelompok yang jelas", async () => {
+    await page.goto(BASE + "/cari?q=" + encodeURIComponent("perkawinan"), { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    const kelompok = page.locator(".kelompok-hasil h2");
+    expect(await kelompok.allTextContents()).toEqual(["Peraturan yang judulnya memuat “perkawinan”", "Pasal dan hasil lainnya"]);
+    expect(await page.locator(".kelompok-hasil .kelompok-jumlah").allTextContents()).toEqual(["2"]);
+    // Urutan di DOM: judul kelompok pertama, dua peraturan (UU 1/1974 yang pokoknya persis di depan perubahannya), lalu judul kedua.
+    const urutan = await page.locator(".daftar-hasil > li").evaluateAll((li) =>
+      li.map((x) => (x.classList.contains("kelompok-hasil") ? "#" : x.querySelector(".hasil-pasal") ? "pasal" : "peraturan")),
+    );
+    expect(urutan.slice(0, 4)).toEqual(["#", "peraturan", "peraturan", "#"]);
+    expect(urutan.slice(4).every((x) => x === "pasal" || x === "peraturan")).toBe(true);
+    expect(await page.locator(".hasil").first().locator(".hasil-sitasi").textContent()).toBe("UU 1/1974");
+    // Pemisah bukan kartu hasil dan bukan sasaran tab.
+    expect(await page.locator(".kelompok-hasil.hasil").count()).toBe(0);
+    expect(await page.locator(".kelompok-hasil a, .kelompok-hasil button").count()).toBe(0);
+  });
+
+  it("tanpa peraturan berjudul cocok (kata hanya ada di isi pasal), daftar hasilnya polos tanpa judul kelompok", async () => {
+    await page.goto(BASE + "/cari?q=pesangon", { waitUntil: "networkidle" });
+    await page.waitForSelector(".daftar-hasil .hasil");
+    expect(await page.locator(".kelompok-hasil").count()).toBe(0);
+  });
+
   it("kartu hasil: judul hanya topiknya (huruf dirapikan), tanpa lencana jenis, dan seluruh kartu bisa diketuk", async () => {
     await reset();
     const res = await fetch(`${BASE}/api/impor/manifest`, {

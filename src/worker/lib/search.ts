@@ -11,7 +11,8 @@
 import type { SearchHit, SearchFilters, SearchMode, SearchResponse, StatusPeraturan } from "../../shared/types";
 import { rapikanNomorPasal } from "../../shared/label";
 import { CAKUPAN_BAWAAN, dalamCakupan, klausaCakupan, type Cakupan } from "../../shared/cakupan";
-import { uraiKueri, kueriUntukEmbedding } from "./query";
+import { uraiKueri, kueriUntukEmbedding, type KueriTerurai } from "./query";
+import { pilahBerjudul } from "./judul";
 import { klausaBidang } from "./bidang";
 import { pilihDalam } from "./d1";
 import type { Sitasi } from "./sitasi";
@@ -40,6 +41,15 @@ const BOBOT_FTS_SINONIM = 0.5;
 const BOBOT_FTS_LONGGAR = 0.4;
 /** Bila pencarian ketat (semua kata) menemukan kurang dari ini, pencarian longgar dijalankan. */
 const MIN_HASIL_KETAT = 3;
+/** Berapa judul teratas menurut BM25 yang diambil sebagai bahan tingkat judul; urutan akhirnya dihitung lib/judul.ts. */
+const BAHAN_JUDUL = 100;
+/**
+ * Daftar judul tidak menyumbang skor RRF: peraturan yang sama sudah dihitung oleh daftar peraturan biasa, dan
+ * menghitungnya dua kali membuat judul yang tak kebagian jatah tingkat judul (kata umum, ratusan judul) mengalahkan
+ * pasal di tingkat bawah. Daftar ini hanya menjamin peraturannya hadir di fusi (daftar peraturan dipotong pada
+ * `kedalaman`, daftar judul sampai `BAHAN_JUDUL`) dan menyediakan cuplikan judul yang menandai kata yang diketik.
+ */
+const BOBOT_FTS_JUDUL = 0;
 
 export interface KandidatMentah {
   frbr_uri: string;
@@ -164,6 +174,95 @@ async function cariFtsPasal(
     snippet: r.snip,
     sumber: "fts" as const,
   }));
+}
+
+/**
+ * Tingkat judul: peraturan yang NAMANYA memuat kata yang diketik (lib/judul.ts).
+ *
+ * BM25 hanya memilih bahannya (judul yang memuat semua kata). Urutannya dihitung ulang dari kepadatan kata itu pada
+ * pokok judul, sebab BM25 menaruh PP tarif PNBP "... Departemen Kelautan dan Perikanan" di atas UU 32/2014 tentang
+ * Kelautan. Hasilnya sudah terurut: peringkat 1 yang paling cocok. Petunjuk jenis dalam kueri ("pp kelautan")
+ * menyaring jenisnya di sini saja; pencarian pasal dan peraturan lain tidak dibatasi olehnya.
+ */
+async function cariJudul(
+  db: D1Database,
+  kueri: KueriTerurai,
+  filters: SearchFilters,
+  cakupan: Cakupan,
+): Promise<KandidatMentah[]> {
+  if (!kueri.ftsJudul) return [];
+  const f = bangunFilter(filters, cakupan);
+  const petunjuk = kueri.jenisPetunjuk.length ? ` AND l.jenis IN (${kueri.jenisPetunjuk.map(() => "?").join(",")})` : "";
+  // `{judul} :` membatasi pencocokan ke kolom judul; tentang (yang di produksi sering berisi bidang) dan ringkasan
+  // tetap dicari oleh daftar peraturan biasa, di tingkat bawah.
+  const sql = `
+    SELECT l.frbr_uri AS frbr_uri, l.jenis AS jenis, l.tahun AS tahun, l.judul AS judul, l.status AS status,
+           snippet(laws_fts, 0, '<mark>', '</mark>', '…', 18) AS snip
+      FROM laws_fts
+      JOIN laws l ON l.rowid = laws_fts.rowid
+     WHERE laws_fts MATCH ?${f.sql}${petunjuk}
+     ORDER BY bm25(laws_fts, 1.0, 0.0, 0.0)
+     LIMIT ?`;
+
+  const { results } = await db
+    .prepare(sql)
+    .bind(`{judul} : (${kueri.ftsJudul})`, ...f.params, ...kueri.jenisPetunjuk, BAHAN_JUDUL)
+    .all<{ frbr_uri: string; jenis: string; tahun: number; judul: string; status: StatusPeraturan; snip: string | null }>();
+
+  const { cocok } = pilahBerjudul(results, kueri);
+  return cocok.map((r, i) => ({
+    frbr_uri: r.frbr_uri,
+    article_id: null,
+    peringkat: i + 1,
+    snippet: r.snip,
+    sumber: "fts" as const,
+  }));
+}
+
+/**
+ * Berapa peraturan tingkat judul yang boleh mengisi satu halaman hasil. Sisanya dipertahankan untuk hasil lain supaya
+ * kata yang terlalu umum ("pajak", "tarif" ada di ratusan judul) tidak membuat pasal yang memuatnya hilang sama sekali:
+ * 15 dari 20 hasil pertama, 37 dari 50. Judul yang tak kebagian jatah tetap bersaing lewat fusi biasa.
+ */
+export function jatahJudul(limit: number): number {
+  return Math.max(Math.ceil(limit / 2), limit - Math.max(5, Math.ceil(limit / 4)));
+}
+
+/** Yang dibutuhkan pengurutan bertingkat dari satu entri hasil fusi. */
+interface EntriBertingkat {
+  frbr_uri: string;
+  article_id: string | null;
+  score: number;
+  sources: ReadonlySet<string>;
+}
+
+/**
+ * Urutan akhir hasil: tiga tingkat, bukan satu skor.
+ *  0. sitasi (bobot RRF-nya sudah jauh di atas yang lain);
+ *  1. peraturan yang NAMANYA memuat kata kunci (`judul`: urutan nilai judulnya, sebanyak `jatahJudul(limit)`);
+ *  2. semua yang lain menurut skor fusi.
+ * Tingkat judul tidak bersaing dengan skor fusi: pasal bisa menerima sumbangan FTS dan vektor sekaligus sedangkan
+ * peraturan hanya dari FTS, dan itulah yang membuat UU Kelautan tenggelam di bawah pasal yang menyebut kata itu.
+ *
+ * Mengembalikan entri terurut beserta predikat `cocokJudul` (entri tingkat 1). Diekspor agar jaminan ini bisa diuji
+ * dengan skor sintetis, tanpa bergantung pada statistik korpus.
+ */
+export function urutkanBertingkat<T extends EntriBertingkat>(
+  entri: Iterable<T>,
+  judul: readonly Pick<KandidatMentah, "frbr_uri">[],
+  limit: number,
+): { terurut: T[]; cocokJudul: (t: Pick<T, "article_id" | "frbr_uri">) => boolean } {
+  const unggulan = new Map(judul.slice(0, jatahJudul(limit)).map((k, i) => [k.frbr_uri, i] as const));
+  const cocokJudul = (t: Pick<T, "article_id" | "frbr_uri">) => t.article_id === null && unggulan.has(t.frbr_uri);
+  const tingkat = (t: T) => (t.sources.has("sitasi") ? 0 : cocokJudul(t) ? 1 : 2);
+  const terurut = [...entri].sort((a, b) => {
+    const ta = tingkat(a);
+    const tb = tingkat(b);
+    if (ta !== tb) return ta - tb;
+    if (ta === 1) return unggulan.get(a.frbr_uri)! - unggulan.get(b.frbr_uri)!;
+    return b.score - a.score;
+  });
+  return { terurut, cocokJudul };
 }
 
 /**
@@ -423,6 +522,12 @@ export interface OpsiPencarian {
   mode?: SearchMode;
   filters?: SearchFilters;
   limit?: number;
+  /**
+   * Peraturan yang namanya memuat kata kunci didahulukan dari hasil lain (tingkat judul; lib/judul.ts). Bawaannya
+   * menyala. Tanya Lexa mematikannya: ia hanya memakai pasal, dan peraturan tingkat judul akan menghabiskan
+   * jatah hasilnya tanpa membawa satu pasal pun.
+   */
+  prioritasJudul?: boolean;
 }
 
 export interface KonteksPencarian {
@@ -449,7 +554,8 @@ export interface KonteksPencarian {
  * tidak terpakai lagi setelah perbaikan ini disebar. v3: peringkat kata-yang-diketik di atas sinonim,
  * cadangan longgar, dan penanda `longgar` pada jawaban. v4: cakupan jenis ikut kunci, sehingga hasil lama
  * yang memuat Perpres, Permen, dan POJK tidak disajikan lagi sesudah cakupan dibatasi (dan mengubah
- * `CAKUPAN_JENIS` di kemudian hari tidak perlu menunggu TTL).
+ * `CAKUPAN_JENIS` di kemudian hari tidak perlu menunggu TTL). v5: tingkat judul (peraturan yang namanya memuat kata
+ * kunci di atas pasal) dan penanda `cocok_judul` pada hasil; urutan hasil lama tidak boleh disajikan lagi.
  */
 export function kunciCache(o: OpsiPencarian, cakupan: Cakupan = CAKUPAN_BAWAAN): string {
   const f = o.filters ?? {};
@@ -465,7 +571,7 @@ export function kunciCache(o: OpsiPencarian, cakupan: Cakupan = CAKUPAN_BAWAAN):
     f.instansi ?? "",
     f.bidang ?? "",
   ];
-  return `cari:v4:${bagian.join("|")}`;
+  return `cari:v5:${bagian.join("|")}`;
 }
 
 export async function cari(
@@ -490,6 +596,8 @@ export async function cari(
   const kedalaman = Math.min(limit * 3, 100);
   const daftar: KandidatMentah[][] = [];
   let longgar: SearchResponse["longgar"];
+  /** Peraturan yang namanya memuat kata yang diketik, terbaik lebih dulu (tingkat judul; lib/judul.ts). */
+  let judulTerurut: KandidatMentah[] = [];
 
   // Sitasi diperiksa pada semua mode, termasuk "makna". Pengguna yang mengetik
   // "UU 13/2003" menginginkan dokumen itu, bukan yang menyerupainya — apa pun
@@ -509,12 +617,20 @@ export async function cari(
 
   if (mode === "hybrid" || mode === "keyword") {
     const adaSinonim = terurai.ftsLiteral !== terurai.fts;
-    const [peraturan, pasal, peraturanHarfiah, pasalHarfiah] = await Promise.all([
+    // Kueri berbentuk sitasi sudah punya daftarnya sendiri, dan nomor serta tahun di dalamnya bukan kata judul.
+    const pakaiJudul = opsi.prioritasJudul !== false && !terurai.sitasi;
+    const [peraturan, pasal, peraturanHarfiah, pasalHarfiah, judul] = await Promise.all([
       cariFtsPeraturan(ctx.db, terurai.fts, filters, ctx.cakupan, kedalaman).catch(() => []),
       cariFtsPasal(ctx.db, terurai.fts, filters, ctx.cakupan, kedalaman).catch(() => []),
       adaSinonim ? cariFtsPeraturan(ctx.db, terurai.ftsLiteral, filters, ctx.cakupan, kedalaman).catch(() => []) : [],
       adaSinonim ? cariFtsPasal(ctx.db, terurai.ftsLiteral, filters, ctx.cakupan, kedalaman).catch(() => []) : [],
+      pakaiJudul ? cariJudul(ctx.db, terurai, filters, ctx.cakupan).catch(() => []) : [],
     ]);
+    if (judul.length) {
+      // Paling depan: cuplikan judul yang menandai kata yang diketik dipakai bila peraturan yang sama muncul di daftar lain.
+      judulTerurut = judul;
+      daftar.push(denganBobot(judul, BOBOT_FTS_JUDUL));
+    }
     if (adaSinonim) {
       // Daftar harfiah lebih dulu: bila dokumen yang sama muncul di kedua daftar, cuplikannya (yang
       // menandai kata persis yang diketik) yang dipakai.
@@ -555,7 +671,8 @@ export async function cari(
   const gabungan = gabungRRF(daftar);
   // Hidrasi lebih banyak daripada `limit`: kandidat vektor di luar cakupan gugur di `hidrasi`, dan halaman hasil
   // tetap harus penuh bila masih ada kandidat dalam cakupan di bawahnya. Batas 100 mengikuti batas parameter D1.
-  const terurut = [...gabungan.values()].sort((a, b) => b.score - a.score).slice(0, Math.min(limit * 2, 100));
+  const { terurut: semua, cocokJudul } = urutkanBertingkat(gabungan.values(), judulTerurut, limit);
+  const terurut = semua.slice(0, Math.min(limit * 2, 100));
   const meta = await hidrasi(
     ctx.db,
     terurut.map((t) => ({ frbr_uri: t.frbr_uri, article_id: t.article_id })),
@@ -590,6 +707,7 @@ export async function cari(
       ayat: m.ayat,
       score: Number(t.score.toFixed(6)),
       sources: [...t.sources],
+      ...(cocokJudul(t) ? { cocok_judul: true as const } : {}),
     });
   }
 

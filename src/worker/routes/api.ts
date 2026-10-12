@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { BrowseResponse, LawDetailResponse, Law, Article, Relation, SearchMode, SearchFilters, StatusPeraturan } from "../../shared/types";
 import { cariDenganCache, type KonteksPencarian } from "../lib/search";
+import { pilahBerjudul } from "../lib/judul";
+import { uraiKueri } from "../lib/query";
 import { tokenSah, diagnosaToken } from "../lib/auth";
 import { headerCors } from "../lib/cors";
 import { klausaBidang } from "../lib/bidang";
@@ -20,6 +22,9 @@ type Bindings = Env;
 export const api = new Hono<{ Bindings: Bindings }>();
 
 const STATUS_VALID: StatusPeraturan[] = ["berlaku", "dicabut", "diubah"];
+
+/** Berapa judul yang diambil sebagai bahan saran ketik sebelum diurutkan dan dipotong menjadi enam. */
+const KANDIDAT_SARAN = 60;
 
 function konteksPencarian(env: Env): KonteksPencarian {
   return {
@@ -319,10 +324,14 @@ api.get("/suggest", async (c) => {
   const pola = `${q}%`;
   const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
   const [laws, populer] = await Promise.all([
+    // Kandidatnya lebih banyak dari yang ditampilkan (judul pendek dulu: yang pokoknya sempit lebih mungkin yang dicari),
+    // lalu diurutkan seperti tingkat judul pencarian (lib/judul.ts). Tanpa itu, kata yang ada di puluhan judul hanya
+    // menampilkan enam yang terbaru, dan peraturan yang memang bernama kata itu ("Kelautan") bisa terpotong.
     c.env.DB.prepare(
-      `SELECT frbr_uri, jenis, nomor, tahun, judul FROM laws
-        WHERE judul LIKE ? COLLATE NOCASE AND ${klausaCakupan(cakupan, "jenis")} ORDER BY tahun DESC LIMIT 6`,
-    ).bind(`%${pola}`).all<{ frbr_uri: string; jenis: string; nomor: string; tahun: number; judul: string }>(),
+      `SELECT frbr_uri, jenis, nomor, tahun, judul, status FROM laws
+        WHERE judul LIKE ? COLLATE NOCASE AND ${klausaCakupan(cakupan, "jenis")}
+        ORDER BY length(judul), tahun DESC LIMIT ${KANDIDAT_SARAN}`,
+    ).bind(`%${pola}`).all<{ frbr_uri: string; jenis: string; nomor: string; tahun: number; judul: string; status: StatusPeraturan }>(),
 
     c.env.DB.prepare(
       `SELECT query, COUNT(*) AS n FROM search_log
@@ -331,9 +340,10 @@ api.get("/suggest", async (c) => {
     ).bind(pola).all<{ query: string; n: number }>(),
   ]);
 
+  const { cocok, lain } = pilahBerjudul(laws.results, uraiKueri(q));
   return c.json({
     suggestions: [
-      ...laws.results.map((l) => ({
+      ...[...cocok, ...lain.sort((a, b) => b.tahun - a.tahun)].slice(0, 6).map((l) => ({
         tipe: "peraturan" as const,
         teks: `${labelSitasi(l)} — ${l.judul}`,
         uri: l.frbr_uri,

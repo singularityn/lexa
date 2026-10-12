@@ -103,9 +103,18 @@ export interface SearchHit {
   article_id: string | null;
   nomor_pasal: string | null;
   ayat: string | null;
-  /** Skor RRF gabungan. */
+  /**
+   * Skor RRF gabungan. Urutan hasil bukan urutan skor: peraturan yang namanya memuat kata kunci (`cocok_judul`)
+   * selalu didahulukan, apa pun skornya (lihat lib/judul.ts).
+   */
   score: number;
   sources: SumberPencarian[];
+  /**
+   * Ada (true) bila hasil ini peraturan yang JUDULNYA memuat kata yang diketik ("kelautan" -> "Undang-Undang Nomor 32
+   * Tahun 2014 tentang Kelautan"). Hasil seperti ini selalu berada di awal daftar, berurutan dari yang pokok judulnya
+   * paling dibicarakan kata itu. Tidak pernah ada pada hasil pasal.
+   */
+  cocok_judul?: true;
 }
 
 export interface SearchResponse {

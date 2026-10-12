@@ -120,7 +120,7 @@ export default async function cari(ctx) {
         hasil,
         r.di_luar_cakupan ? catatanLuarCakupan(r.di_luar_cakupan, true) : null,
         r.longgar ? catatanLonggar(r.longgar.penuh) : null,
-        h("ul", { class: "daftar-hasil" }, r.hits.map((hit) => kartuHasil(hit, { q: r.query }))),
+        daftarHasil(r.hits, r.query),
         lebih
           ? h("div", { class: "tengah", style: { marginTop: "18px" } }, h("button", {
               type: "button",
@@ -146,6 +146,30 @@ export default async function cari(ctx) {
       isi(ringkas);
       isi(hasil, kotakGalat(e, jalankan));
     }
+  }
+
+  /**
+   * Daftar kartu hasil. Bila ada peraturan yang JUDULNYA memuat kata kunci (`cocok_judul`; selalu di awal daftar),
+   * kelompok itu diberi judul sendiri, dan sisanya (pasal dan peraturan lain) di bawah judul berikutnya, supaya
+   * pembaca tahu mengapa "Kelautan" ada di atas pasal-pasal yang juga menyebutnya. Tanpa kelompok itu, daftarnya polos.
+   * @param {import("../../../src/shared/types").SearchHit[]} hits
+   * @param {string} q
+   */
+  function daftarHasil(hits, q) {
+    const kartu = (/** @type {import("../../../src/shared/types").SearchHit} */ hit) => kartuHasil(hit, { q });
+    const judul = hits.filter((x) => x.cocok_judul);
+    if (!judul.length) return h("ul", { class: "daftar-hasil" }, hits.map(kartu));
+    const lain = hits.filter((x) => !x.cocok_judul);
+    const pemisah = (/** @type {string} */ teks, /** @type {number | null} */ jumlah) =>
+      h("li", { class: "kelompok-hasil" }, h("h2", null, teks), jumlah !== null ? h("span", { class: "kelompok-jumlah" }, angka(jumlah)) : null);
+    return h(
+      "ul",
+      { class: "daftar-hasil" },
+      pemisah(`Peraturan yang judulnya memuat “${q}”`, judul.length),
+      judul.map(kartu),
+      lain.length ? pemisah("Pasal dan hasil lainnya", null) : null,
+      lain.map(kartu),
+    );
   }
 
   /**
