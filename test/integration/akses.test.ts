@@ -215,7 +215,15 @@ describe.skipIf(!sqliteAda)("akses isi pasal.id", () => {
         { uri: "/akn/id/act/uu/2019/1", jenis: "UU", tahun: 2019 }, { uri: "/akn/id/act/uu/2019/2", jenis: "UU", tahun: 2019 },
         { uri: "/akn/id/act/uu/2019/3", jenis: "UU", tahun: 2019 }, { uri: "/akn/id/act/uu/2019/4", jenis: "UU", tahun: 2019 },
       ]);
-      pasal.atur({ detail: { ...semuaPenuh(), ...Object.fromEntries([1, 2, 3, 4].map((n) => [`/akn/id/act/uu/2019/${n}`, penuh(`/akn/id/act/uu/2019/${n}`)])) } });
+      // pp/2018/9 sudah tersimpan 'lengkap', jadi bisa diundi sebagai pembanding di bawah; ia harus tetap dijawab penuh
+      // (peta detail diganti seluruhnya oleh `atur`), kalau tidak tes ini gagal setiap kali undian jatuh padanya.
+      pasal.atur({
+        detail: {
+          ...semuaPenuh(),
+          "/akn/id/act/pp/2018/9": penuh("/akn/id/act/pp/2018/9"),
+          ...Object.fromEntries([1, 2, 3, 4].map((n) => [`/akn/id/act/uu/2019/${n}`, penuh(`/akn/id/act/uu/2019/${n}`)])),
+        },
+      });
       await tik(l, menit(60));
       expect(pasal.detailDiminta().slice(4)).toEqual(["/akn/id/act/uu/2019/1", "/akn/id/act/uu/2019/2", "/akn/id/act/uu/2019/3"]);
       await tik(l, menit(6 * 60 + 1)); // lewat enam jam: pemeriksaan awal lagi (pembanding diundi), lalu satu peraturan tersisa
