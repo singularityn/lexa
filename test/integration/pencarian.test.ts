@@ -345,6 +345,20 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
       expect(new Set(mati.hits.map((h) => h.article_id ?? h.frbr_uri))).toEqual(new Set(nyala.hits.map((h) => h.article_id ?? h.frbr_uri)));
     });
 
+    it("kata yang ada di lebih dari seratus judul: yang berjudul persis kata itu tidak terpotong sebelum dinilai", async () => {
+      // 110 judul panjang yang menyebut kata itu berulang kali (BM25 menyukainya), di samping UU 31/2004 yang berjudul
+      // persis "PERIKANAN" (sudah ada di korpus).
+      await sisipkan(
+        l,
+        Array.from({ length: 110 }, (_, i) => ({
+          uri: `/akn/id/act/pp/2011/${200 + i}`, jenis: "PP", nomor: String(200 + i), tahun: 2011,
+          judul: `Peraturan Pemerintah Nomor ${200 + i} Tahun 2011 tentang Perusahaan Perikanan Negara Perikanan Daerah Perikanan Cabang ${i + 1}`,
+        })),
+      );
+      const b = await cari(q("perikanan", "mode=keyword&limit=5"));
+      expect(b.hits[0]).toMatchObject({ frbr_uri: UU31, article_id: null, cocok_judul: true });
+    });
+
     it("cuplikan peraturan tingkat judul menandai kata yang diketik pada judulnya", async () => {
       const b = await cari(q("kelautan", "mode=keyword"));
       expect(b.hits[0].snippet).toContain("<mark>Kelautan</mark>");

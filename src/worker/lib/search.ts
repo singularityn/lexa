@@ -41,8 +41,18 @@ const BOBOT_FTS_SINONIM = 0.5;
 const BOBOT_FTS_LONGGAR = 0.4;
 /** Bila pencarian ketat (semua kata) menemukan kurang dari ini, pencarian longgar dijalankan. */
 const MIN_HASIL_KETAT = 3;
-/** Berapa judul teratas menurut BM25 yang diambil sebagai bahan tingkat judul; urutan akhirnya dihitung lib/judul.ts. */
+/** Berapa judul yang diambil sebagai bahan tingkat judul; urutan akhirnya dihitung lib/judul.ts. */
 const BAHAN_JUDUL = 100;
+/**
+ * Panjang pokok judul dalam huruf (bagian sesudah " tentang " pertama; judul tanpa itu dihitung utuh). Bahan tingkat
+ * judul diambil dari yang pokoknya TERPENDEK, sebab pokok yang pendek berarti kata yang dicari menempati bagian besar
+ * judulnya, itulah yang diutamakan penilai judul. BM25 tak cocok untuk memilih bahan: ia menyukai judul panjang yang
+ * menyebut kata itu berulang kali. Di produksi, UU 31/2004 yang berjudul "PERIKANAN" ada di urutan ke-58 dari 72 judul
+ * yang memuat kata itu; pada kata yang ada di ratusan judul ("pajak": 520), ia terpotong sebelum sempat dinilai.
+ */
+const PANJANG_POKOK_SQL = `CASE WHEN instr(lower(l.judul), ' tentang ') > 0
+                              THEN length(l.judul) - instr(lower(l.judul), ' tentang ') - 8
+                              ELSE length(l.judul) END`;
 /**
  * Daftar judul tidak menyumbang skor RRF: peraturan yang sama sudah dihitung oleh daftar peraturan biasa, dan
  * menghitungnya dua kali membuat judul yang tak kebagian jatah tingkat judul (kata umum, ratusan judul) mengalahkan
@@ -179,9 +189,9 @@ async function cariFtsPasal(
 /**
  * Tingkat judul: peraturan yang NAMANYA memuat kata yang diketik (lib/judul.ts).
  *
- * BM25 hanya memilih bahannya (judul yang memuat semua kata). Urutannya dihitung ulang dari kepadatan kata itu pada
- * pokok judul, sebab BM25 menaruh PP tarif PNBP "... Departemen Kelautan dan Perikanan" di atas UU 32/2014 tentang
- * Kelautan. Hasilnya sudah terurut: peringkat 1 yang paling cocok. Petunjuk jenis dalam kueri ("pp kelautan")
+ * Bahannya judul yang memuat semua kata, dari yang pokoknya terpendek (`PANJANG_POKOK_SQL`). Urutannya dihitung ulang dari
+ * kepadatan kata itu pada pokok judul, sebab BM25 menaruh PP tarif PNBP "... Departemen Kelautan dan Perikanan" di atas
+ * UU 32/2014 tentang Kelautan. Hasilnya sudah terurut: peringkat 1 yang paling cocok. Petunjuk jenis dalam kueri ("pp kelautan")
  * menyaring jenisnya di sini saja; pencarian pasal dan peraturan lain tidak dibatasi olehnya.
  */
 async function cariJudul(
@@ -201,7 +211,7 @@ async function cariJudul(
       FROM laws_fts
       JOIN laws l ON l.rowid = laws_fts.rowid
      WHERE laws_fts MATCH ?${f.sql}${petunjuk}
-     ORDER BY bm25(laws_fts, 1.0, 0.0, 0.0)
+     ORDER BY ${PANJANG_POKOK_SQL}, bm25(laws_fts, 1.0, 0.0, 0.0)
      LIMIT ?`;
 
   const { results } = await db
