@@ -13,6 +13,7 @@ import { toast } from "../komponen/toast.js";
 import { tombolTandai } from "../komponen/tombolTandai.js";
 import { bukaDialogLaporan } from "../komponen/dialogLaporan.js";
 import { buatGrafik } from "../komponen/grafik.js";
+import { buatPenampilPdf } from "../komponen/penampilPdf.js";
 import { GalatLuring, luring, luringDidukung } from "../luring.js";
 import { pantau } from "../state.js";
 import { riwayat } from "../riwayat.js";
@@ -186,6 +187,46 @@ function tampilkan(ctx, d, q) {
       for (const fn of infoStatus.saatSelesai) fn();
     });
 
+  // --- PDF: penampil dan lompat ke pasal -------------------------------------------
+  // Penampil dibuat sekali, hanya bila PDF peraturan ini diarsipkan di Lexa (infoStatus), dan dipakai bersama oleh tab PDF dan
+  // tombol "Lihat di PDF" pada tiap pasal. Dimuat (PDF.js, 2,3 MB) baru saat salah satunya dipakai.
+  /** @type {ReturnType<typeof buatPenampilPdf> | null} */
+  let penampilPdf = null;
+  /** @returns {Promise<ReturnType<typeof buatPenampilPdf> | null>} */
+  const sediakanPenampilPdf = () =>
+    new Promise((selesai) => {
+      const buat = () => {
+        const st = infoStatus.nilai;
+        if (!st?.ada_pdf || !st.pdf_url) return selesai(null);
+        penampilPdf ??= buatPenampilPdf({ url: st.pdf_url });
+        selesai(penampilPdf);
+      };
+      if (infoStatus.selesai) buat();
+      else infoStatus.saatSelesai.push(buat);
+    });
+  ctx.saatKeluar(() => penampilPdf?.hancurkan());
+  const halAwalPdf = Number(ctx.params.get("hal")) || 0;
+
+  /** @param {string} nomor nomor pasal, mis. "156" atau "5A" */
+  const lihatDiPdf = async (nomor) => {
+    pilihTab("pdf");
+    const p = await sediakanPenampilPdf();
+    if (!p) {
+      toast("PDF peraturan ini belum diarsipkan di Lexa.");
+      return;
+    }
+    await p.muat();
+    const hasil = await p.keHalamanPasal(nomor);
+    if ("halaman" in hasil) toast(`Pasal ${nomor} dimulai di halaman ${hasil.halaman} PDF.`);
+    else if (hasil.alasan === "pindaian") toast("PDF ini hasil pindaian tanpa lapisan teks, jadi halaman pasalnya tak bisa dicari otomatis. Ketik nomor halaman atau gulir.", { durasi: 7000 });
+    else if (hasil.alasan === "tidak_ada") toast(`Pasal ${nomor} tidak ditemukan di teks PDF. Ketik nomor halaman atau gulir.`, { durasi: 6000 });
+  };
+  const akses = {
+    /** Apakah PDF-nya ada (diketahui setelah statusnya termuat). */
+    tersedia: () => Boolean(infoStatus.nilai?.ada_pdf && infoStatus.nilai.pdf_url),
+    buka: lihatDiPdf,
+  };
+
   // --- Simpan untuk luring ----------------------------------------------------
   // Salinan peraturan ini di perangkat (Cache API), tidak ikut terbuang oleh cache baca; lihat luring.js.
   const luringBisa = luringDidukung();
@@ -304,14 +345,16 @@ function tampilkan(ctx, d, q) {
   // --- Tab ---------------------------------------------------------------
   const tabTersedia = [
     ["isi", "Isi"],
+    ["pdf", "PDF"],
     ["relasi", `Relasi${d.relations.length ? ` (${d.relations.length})` : ""}`],
     ["naskah", "Naskah"],
   ];
   const tabAwal = tabTersedia.some(([k]) => k === ctx.params.get("tab")) ? /** @type {string} */ (ctx.params.get("tab")) : "isi";
-  const isiPanel = panelIsi(ctx, d, q, kelompok, celah);
+  const isiPanel = panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus);
   /** @type {Record<string, HTMLElement>} */
   const panel = {
     isi: h("div", { role: "tabpanel", id: "panel-isi", "aria-labelledby": "tab-isi" }, isiPanel.el),
+    pdf: h("div", { role: "tabpanel", id: "panel-pdf", "aria-labelledby": "tab-pdf", hidden: true }),
     relasi: h("div", { role: "tabpanel", id: "panel-relasi", "aria-labelledby": "tab-relasi", hidden: true }),
     naskah: h("div", { role: "tabpanel", id: "panel-naskah", "aria-labelledby": "tab-naskah", hidden: true }),
   };
@@ -331,6 +374,7 @@ function tampilkan(ctx, d, q) {
     isiPanel.saatTabBerubah(kunci === "isi");
     if (!termuat[kunci]) {
       termuat[kunci] = true;
+      if (kunci === "pdf") isi(panel.pdf, panelPdf(d, infoStatus, sediakanPenampilPdf, halAwalPdf));
       if (kunci === "relasi") isi(panel.relasi, ...panelRelasi(d, ctx));
       if (kunci === "naskah") isi(panel.naskah, panelNaskah(d, ctx, infoStatus));
     }
@@ -405,6 +449,7 @@ function tampilkan(ctx, d, q) {
     h("details", { class: "info-peraturan" }, h("summary", null, "Informasi peraturan"), metadata),
     daftarTab,
     panel.isi,
+    panel.pdf,
     panel.relasi,
     panel.naskah,
   );
@@ -498,9 +543,11 @@ function renderBlok(b, peta) {
  * @param {string} q
  * @param {ReturnType<typeof kelompokkanPasal>} kelompok
  * @param {ReturnType<typeof celahNomorPasal>} celah
+ * @param {{ tersedia: () => boolean, buka: (nomor: string) => Promise<void> }} akses akses ke PDF peraturan ini (tombol "Lihat di PDF")
+ * @param {{ selesai: boolean, saatSelesai: Array<() => void> }} infoStatus
  * @returns {{ el: HTMLElement, saatTabBerubah: (aktif: boolean) => void }}
  */
-function panelIsi(ctx, d, q, kelompok, celah) {
+function panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus) {
   const l = d.law;
   const nama = sitasi(l);
   if (!d.articles.length) {
@@ -524,6 +571,10 @@ function panelIsi(ctx, d, q, kelompok, celah) {
 
   const daftar = h("div", { class: "isi-peraturan" });
   terapkanPref(daftar);
+  // Tombol "Lihat di PDF" pada tiap pasal tersembunyi sampai diketahui PDF-nya ada (status dokumen dimuat di latar belakang).
+  const tandaiAdaPdf = () => daftar.classList.toggle("ada-pdf", akses.tersedia());
+  if (infoStatus.selesai) tandaiAdaPdf();
+  else infoStatus.saatSelesai.push(tandaiAdaPdf);
   // Peraturan perubahan mengutip pasal peraturan lain; tautan ke pasal bernomor sama di sini akan menyesatkan.
   const peta = peraturanPerubahan(l.judul) ? { pasal: new Map(), ayat: new Set() } : petaRujukan(kelompok);
   /** @type {Array<{ el: HTMLElement, teks: string, jangkar: string, nama: string }>} */
@@ -553,6 +604,11 @@ function panelIsi(ctx, d, q, kelompok, celah) {
       { class: "pasal-aksi" },
       h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Salin sitasi", "aria-label": `Salin sitasi ${namaPs}`, onclick: salinSitasiPasal }, ikon("salin")),
       h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Salin tautan ke pasal ini", "aria-label": `Salin tautan ${namaPs}`, onclick: salinTautanPasal }, ikon("tautan")),
+      // Hanya batang tubuh: penjelasan memakai ulang nomor pasal, jadi halamannya tak bisa ditebak dari nomornya. Tombol ini
+      // baru tampil setelah diketahui PDF-nya ada (kelas `ada-pdf` pada daftar, dipasang di bawah).
+      g.penjelasan
+        ? null
+        : h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon pasal-pdf", title: "Lihat pasal ini di PDF", "aria-label": `Lihat ${namaPs} di PDF`, onclick: () => void akses.buka(g.nomor) }, ikon("dokumen")),
       h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Laporkan kesalahan pasal ini", "aria-label": `Laporkan kesalahan ${namaPs}`, onclick: laporPasal }, ikon("bendera")),
     );
     const lainnyaPasal = h(
@@ -567,6 +623,7 @@ function panelIsi(ctx, d, q, kelompok, celah) {
             judul: sitasiPs,
             aksi: [
               { ikon: "bagikan", label: "Bagikan pasal ini", keterangan: "Kirim lewat WhatsApp, Telegram, dan lainnya", saat: bagikanPasal, tampil: bisaBagikan },
+              { ikon: "dokumen", label: "Lihat di PDF", keterangan: "Bandingkan dengan naskah aslinya", saat: () => void akses.buka(g.nomor), tampil: !g.penjelasan && akses.tersedia() },
               { ikon: "salin", label: "Salin teks pasal", keterangan: "Dengan sitasinya", saat: salinTeks },
               { ikon: "salin", label: "Salin sitasi", keterangan: sitasiPs, saat: salinSitasiPasal },
               { ikon: "tautan", label: "Salin tautan ke pasal ini", saat: salinTautanPasal },
@@ -909,6 +966,51 @@ function panelRelasi(d, ctx) {
     pilihanKedalaman,
     petaWadah,
   ];
+}
+
+/**
+ * Panel "PDF": naskah yang diarsipkan Lexa, untuk memeriksa teks hasil ekstraksi terhadap aslinya. PDF hanya ada untuk
+ * peraturan yang sudah dipanen dari BPK; selebihnya panel ini menjelaskan itu dan menunjuk ke naskah resmi.
+ * @param {Detail} d
+ * @param {{ nilai: import("../api.js").StatusDokumen | null, galat: unknown, selesai: boolean, saatSelesai: Array<() => void> }} info
+ * @param {() => Promise<ReturnType<typeof buatPenampilPdf> | null>} sediakan
+ * @param {number} halamanAwal halaman yang dibuka pertama (0 = awal)
+ */
+function panelPdf(d, info, sediakan, halamanAwal) {
+  const wadah = h("div", { "aria-live": "polite" });
+
+  async function gambar() {
+    if (!info.selesai) {
+      isi(wadah, kerangka(3));
+      return;
+    }
+    if (info.galat) {
+      isi(wadah, kotakGalat(info.galat, () => void gambar()));
+      return;
+    }
+    const penampil = await sediakan();
+    if (!penampil) {
+      const bpk = tautanAman(d.bpk_url);
+      isi(
+        wadah,
+        keadaanKosong(
+          "PDF belum diarsipkan di Lexa",
+          h("p", null, "Lexa baru menyimpan PDF peraturan yang sudah dipanen dari situs resmi BPK. Peraturan ini belum, jadi teks pasalnya (bila ada) tidak bisa dibandingkan dengan naskah aslinya di sini."),
+          bpk
+            ? h("a", { class: "tombol tombol-utama", href: bpk, target: "_blank", rel: "noopener noreferrer" }, ikon("luar"), h("span", null, "Buka naskah resmi (BPK)"))
+            : h("p", { class: "redup" }, "Tautan ke naskah resmi belum diketahui untuk peraturan ini."),
+        ),
+      );
+      return;
+    }
+    isi(wadah, penampil.el);
+    await penampil.muat();
+    if (halamanAwal > 0) penampil.keHalaman(halamanAwal);
+  }
+
+  void gambar();
+  if (!info.selesai) info.saatSelesai.push(() => void gambar());
+  return wadah;
 }
 
 /**

@@ -11,8 +11,12 @@ import { join, relative, sep } from "node:path";
 
 /** Bukan bagian cangkang: berkas konfigurasi Cloudflare, dan service worker itu sendiri. */
 const KECUALI = new Set(["_headers", "sw.js"]);
-/** Folder yang bukan bagian cangkang: gambar pratinjau tautan (og/) hanya dibaca WhatsApp dan sejenisnya, bukan aplikasi. */
-const KECUALI_FOLDER = ["og/"];
+/**
+ * Folder yang bukan bagian cangkang: gambar pratinjau tautan (og/) hanya dibaca WhatsApp dan sejenisnya, bukan aplikasi;
+ * pustaka pihak ketiga (vendor/, kini PDF.js sebesar 2,3 MB) dimuat hanya saat dibutuhkan (tab PDF), bukan oleh setiap
+ * pengunjung saat memasang service worker.
+ */
+const KECUALI_FOLDER = ["og/", "vendor/"];
 
 /** @param {string} dir @returns {Promise<string[]>} */
 async function jelajahi(dir) {

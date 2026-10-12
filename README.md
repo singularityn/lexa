@@ -28,6 +28,11 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
 - **Detail peraturan**: pasal dan ayat, pencarian di dalam peraturan, relasi antar-peraturan (mengubah,
   mencabut, dasar hukum, dan seterusnya) beserta peta relasi dua arah, tautan ke naskah resmi di
   peraturan.bpk.go.id, PDF dan teks hasil konversi bila sudah diarsipkan, lapor kesalahan data.
+- **Tab PDF**: naskah asli yang diarsipkan Lexa ditampilkan di dalam halaman peraturan (PDF.js, digambar per halaman
+  dengan lapisan teks, perbesar/perkecil, loncat ke halaman; berjalan juga di ponsel, yang tak bisa menampilkan PDF
+  di dalam halaman). Tombol **Lihat di PDF** pada tiap pasal membuka halaman tempat pasal itu dimulai, dicari di teks
+  PDF-nya, supaya hasil ekstraksi yang meragukan bisa dibandingkan dengan aslinya. PDF hanya ada untuk peraturan yang
+  dipanen dari BPK; selebihnya tab ini menjelaskan itu. PDF.js dimuat hanya saat tab dibuka (`public/vendor/pdfjs`).
 - **Membaca di ponsel**: halaman peraturan dengan daftar isi dan lompat ke pasal, lima ukuran huruf, Penjelasan
   yang dipisahkan dari batang tubuh, rujukan antarpasal yang bisa diketuk ("Pasal 156 ayat (2)"), lanjutkan
   membaca dari posisi terakhir, bagikan, cetak atau simpan PDF, penanda per pasal ke Koleksi, dan simpan untuk
@@ -136,7 +141,7 @@ src/worker/lib/          query (stemmer, parser kueri), search (hybrid + RRF), j
                          pemeliharaan, diagnosa, keadaan, jadwal
 src/worker/env.d.ts      tipe global Env (binding, variabel, secret)
 src/shared/types.ts      tipe bersama
-public/                  antarmuka (index.html, css/, js/, _headers, favicon, ikon/, og/)
+public/                  antarmuka (index.html, css/, js/, _headers, favicon, ikon/, og/, vendor/pdfjs: salinan PDF.js, lihat README-nya)
 migrations/              migrasi D1: 0000-0004 direkonstruksi dari skema produksi, 0005-0006 antrean isi dan daftar hapus
 test/                    tes unit; test/integration: Worker asli di atas SQLite sungguhan
 e2e/                     tes antarmuka di Chromium

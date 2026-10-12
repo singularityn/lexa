@@ -396,9 +396,12 @@ describe("halaman peraturan", () => {
     await page.waitForFunction((n) => document.querySelectorAll(".pasal:not(.tidak-cocok)").length === n, total);
   });
 
-  it("tab Relasi dan Naskah dapat dicapai dengan papan ketik dan tersimpan di URL", async () => {
+  it("tab PDF, Relasi, dan Naskah dapat dicapai dengan papan ketik dan tersimpan di URL", async () => {
     await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
     await page.focus("#tab-isi");
+    await page.keyboard.press("ArrowRight");
+    await page.waitForSelector("#panel-pdf:not([hidden])");
+    expect(page.url()).toContain("tab=pdf");
     await page.keyboard.press("ArrowRight");
     await page.waitForSelector("#panel-relasi:not([hidden])");
     expect(page.url()).toContain("tab=relasi");

@@ -695,6 +695,8 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
 .istilah code { background: var(--permukaan-2); padding: 1px 6px; border-radius: 5px; margin-inline-end: 4px; display: inline-block; }
 /* Bantuan masuk (alamat pengalihan Google) di halaman Akun. */
 .bantuan-masuk { margin-top: 12px; }
+/* Di dalam kartu pastel (halaman Akun) warna teks mengikuti kartunya: abu-abu redup di atas ungu muda tak lulus kontras. */
+.kartu-pastel .bantuan-masuk, .kartu-pastel .bantuan-masuk .bantu { color: inherit; }
 .bantuan-masuk summary { cursor: pointer; }
 .bantuan-masuk .baris { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; }
 .bantuan-masuk .uri-callback { overflow-wrap: anywhere; word-break: break-all; }
@@ -773,6 +775,55 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
 .tab-daftar button:hover { color: var(--teks); }
 [role="tabpanel"] { padding-top: 14px; }
 
+/* --- Penampil PDF (tab PDF di halaman peraturan) ----------------------------------------------------------------- */
+.penampil-pdf { --tinggi-tab-pdf: 53px; } /* diukur ulang dari .tab-daftar oleh penampilPdf.js */
+.pdf-bilah {
+  position: sticky; top: calc(var(--tinggi-header, 52px) + var(--tinggi-tab-pdf)); z-index: 15; display: flex; align-items: center; gap: 6px;
+  margin: 0 0 10px; padding: 6px 8px; overflow-x: auto; border: 1px solid var(--garis); border-radius: 18px;
+  background: color-mix(in srgb, var(--permukaan) 92%, transparent); backdrop-filter: blur(8px);
+}
+.pdf-bilah > * { flex: none; }
+.pdf-spasi { flex: 1 1 0; min-width: 4px; }
+.pdf-hal { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--teks-redup); font-size: 0.9rem; }
+.pdf-hal-input { width: 4.4em; min-height: 34px; padding: 0 8px; text-align: center; }
+.pdf-zoom { min-width: 3.3em; text-align: center; font-size: 0.85rem; color: var(--teks-redup); }
+/* Layar sempit: bilah alat harus muat tanpa terpotong, jadi tombol dirapatkan, "Buka" tinggal ikon, dan persen zoom disembunyikan. */
+@media (max-width: 560px) {
+  .pdf-bilah { gap: 4px; padding: 5px 6px; }
+  .pdf-bilah .tombol-ikon { min-width: 36px; width: 36px; min-height: 36px; }
+  .pdf-bilah .pdf-buka { min-width: 36px; width: 36px; padding: 0; justify-content: center; }
+  .pdf-buka-teks, .pdf-zoom, .pdf-spasi { display: none; }
+  .pdf-bilah .pdf-hal-input { width: 3.6em; }
+  .pdf-hal { gap: 3px; }
+}
+@media (max-width: 380px) {
+  .pdf-bilah .tombol-ikon, .pdf-bilah .pdf-buka { min-width: 34px; width: 34px; min-height: 34px; }
+  .pdf-bilah .pdf-hal-input { width: 3.2em; padding: 0 4px; }
+}
+.pdf-status { margin: 0 0 10px; padding: 12px 14px; border-radius: 14px; background: var(--permukaan-2); }
+.pdf-status-galat { background: var(--dicabut-bg); color: var(--dicabut-fg); }
+.pdf-status .tombol { margin-inline-start: 6px; }
+.pdf-daftar { display: flex; flex-direction: column; overflow-x: auto; padding: 12px 0 4px; border-radius: 18px; background: var(--permukaan-2); }
+/* Halaman PDF selalu putih, juga di tema gelap: yang digambar adalah naskah aslinya. margin auto memusatkan halaman yang lebih sempit dan,
+   pada halaman yang lebih lebar dari layar (diperbesar), membiarkannya digulir ke kiri-kanan tanpa terpotong. */
+.pdf-halaman { position: relative; flex: none; margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.22); }
+.pdf-halaman .pdf-kanvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.pdf-halaman-galat::after { content: attr(data-galat); position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; color: #555; font-size: 0.9rem; text-align: center; }
+/* Lapisan teks PDF.js (dari pdf_viewer.css, Apache-2.0), ditulis tanpa CSS bersarang agar jalan di peramban ponsel yang lebih tua. */
+.textLayer {
+  position: absolute; inset: 0; z-index: 0; overflow: clip; opacity: 1; line-height: 1; letter-spacing: normal; word-spacing: normal; text-align: initial;
+  -webkit-text-size-adjust: none; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; caret-color: CanvasText; color-scheme: only light;
+  --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.textLayer span, .textLayer br { position: absolute; color: transparent; white-space: pre; cursor: text; transform-origin: 0% 0%; -webkit-user-select: text; user-select: text; }
+.textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent { display: contents; }
+.textLayer span[role="img"] { -webkit-user-select: none; user-select: none; cursor: default; }
+.textLayer ::selection { background: rgba(0, 0, 255, 0.25); color: transparent; }
+
 /* Bilah alat membaca: cari di peraturan, daftar isi, tampilan teks. */
 .alat-baca { display: grid; gap: 8px; margin: 0 0 14px; }
 .alat-baca-tombol { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -847,6 +898,8 @@ dialog.daftar-isi:not([open]) { display: none; }
 .pasal-aksi { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
 .pasal:hover .pasal-aksi, .pasal:focus-within .pasal-aksi, .pasal:target .pasal-aksi { opacity: 1; }
 .pasal-lainnya { display: none; }
+/* "Lihat di PDF" pada pasal: baru ada setelah diketahui PDF peraturannya diarsipkan (kelas ada-pdf pada .isi-peraturan). */
+.isi-peraturan:not(.ada-pdf) .pasal-pdf { display: none; }
 /* Penanda pasal: samar sampai disorot atau ditandai, tetapi selalu ada (juga untuk layar sentuh). */
 .pasal-alat > .tombol[aria-pressed="false"] { color: var(--teks-redup); opacity: 0.7; }
 .pasal-alat > .tombol[aria-pressed="false"]:hover, .pasal-alat > .tombol[aria-pressed="false"]:focus-visible { opacity: 1; }

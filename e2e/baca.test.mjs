@@ -790,8 +790,9 @@ describe("ponsel: halaman baca", () => {
     const lembar = p.locator("dialog.lembar-aksi[open]");
     await lembar.waitFor();
     expect(await lembar.locator("h2").textContent()).toBe("UU 13/2003 Pasal 82");
+    // "Lihat di PDF" ikut tampil karena pratinjau menyimpan PDF contoh untuk UU 13/2003 (peraturan tanpa PDF tidak punya butir ini).
     expect((await lembar.locator(".aksi-baris .aksi-teks > span:first-child").allTextContents())).toEqual([
-      "Salin teks pasal", "Salin sitasi", "Salin tautan ke pasal ini", "Laporkan kesalahan",
+      "Lihat di PDF", "Salin teks pasal", "Salin sitasi", "Salin tautan ke pasal ini", "Laporkan kesalahan",
     ]);
     await lembar.locator(".aksi-baris", { hasText: "Salin teks pasal" }).tap();
     await p.waitForFunction(() => !document.querySelector("dialog.lembar"));
