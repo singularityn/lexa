@@ -184,7 +184,7 @@ Jadi tanpa tahap pertama, skrip tak tahu ke mana harus pergi untuk hampir semua 
 | `POST /api/impor/manifest` | metadata + relasi halaman rincian. Dicocokkan menurut sitasi, bukan URI turunan; `lexa_uri` mengikat dokumen ke satu peraturan (hanya memperbarui; ditolak bila sitasinya tak cocok) |
 | `PUT /api/impor/pdf?uri=` | berkas PDF; ke R2 `pdf/…`, lalu diantrekan `ekstrak_pdf` |
 | `POST /api/impor/tanpa-berkas` | `{ uris: [...] }`: peraturan yang di BPK tak punya berkas (naskah lama hanya metadata); tak muncul lagi di daftar kerja |
-| `POST /api/impor/ekstrak-ulang` | `{ uri?, batas?, jenis? }`: antrekan ulang ekstraksi PDF yang tersimpan tetapi belum berpasal (mis. setelah pengurai diperbaiki) |
+| `POST /api/impor/ekstrak-ulang` | `{ uri?, batas?, jenis?, dariTeks? }`: antrekan ulang ekstraksi PDF yang tersimpan tetapi belum berpasal (mis. setelah pengurai diperbaiki). `dariTeks: true` menguraikan arsip teks hasil konversi yang sudah ada (tanpa membaca PDF dan tanpa Workers AI); peraturan tanpa arsip tetap dikonversi dari PDF-nya |
 
 Beberapa hal yang dijaga di sisi server karena data produksi menuntutnya:
 
@@ -277,7 +277,19 @@ Pesan galat yang lazim:
   pesan antrean yang kehabisan kuota diulang otomatis. Pantau di `/status` dan `sync_log` (`ekstrak_pdf`).
 - **PDF hasil pindaian** (tanpa lapisan teks) menghasilkan `tanpa_pasal` di `ekstraksi_log`; mereka tetap tersimpan dan terbaca
   di tab PDF, tetapi pasalnya menunggu OCR (lihat analisis lanjutan). Setelah pengurai pasal diperbaiki, antrekan ulang dengan
-  `POST /api/impor/ekstrak-ulang`.
+  `POST /api/impor/ekstrak-ulang`. Teks hasil konversinya kini selalu diarsipkan dan kuncinya dicatat (`laws.r2_text_key`) walau tak
+  ada pasal yang terdeteksi: teksnya terbaca di tab Dokumen ("Lihat teks hasil konversi") dan bisa diperiksa lewat
+  `GET /api/dokumen/teks?uri=` untuk memperbaiki pengurai; `dariTeks: true` menguraikannya ulang tanpa konversi.
+
+### Menjalankan skrip panen dari server sendiri: tidak bisa untuk BPK
+
+Dicoba 13 Okt 2026 dari server awan milik pengguna (Ubuntu 22.04, Oracle Cloud): `peraturan.bpk.go.id/` dan `/robots.txt`
+dijawab **403 "Access Denied / Akses Ditolak"** oleh Cloudflare, tanpa `cf-mitigated: challenge` dan tanpa halaman "Just a
+moment". Itu pemblokiran jaringan (alamat atau ASN pusat data), bukan tantangan yang bisa dilewati peramban, jadi panen BPK
+harus dijalankan dari peramban di jaringan yang diterima BPK (rumah atau kantor di Indonesia), seperti pada "Cara menjalankan".
+Jangan mencoba mengakalinya (proxy, penyamaran peramban): itu penolakan akses oleh pemilik situs. Dari server yang sama
+terjangkau: situs Lexa, registri npm, nodejs.org, `jdih.setneg.go.id` (robots.txt mengizinkan semua; struktur daftar PP dan PDF-nya
+belum dipetakan), `pasal.id` (robots.txt melarang crawler AI). Tidak terjangkau: `peraturan.go.id` dan `jdihn.go.id` (waktu habis).
 
 ### Memantau dan memeriksa
 
@@ -297,6 +309,40 @@ SELECT frbr_uri, catatan FROM ekstraksi_log WHERE catatan LIKE 'PDF memuat judul
 -- Duplikat data (satu peraturan, beberapa baris): Tap MPR ditulis tiga cara, PP "01" dan "1"
 SELECT frbr_uri, nomor, tahun, jumlah_pasal FROM laws WHERE jenis = 'TAP_MPR' ORDER BY tahun, lower(nomor);
 ```
+
+### PDF yang sudah ada di R2 tetapi belum berpasal (temuan 13 Okt 2026)
+
+Di produksi 106 peraturan (UU 104, Perppu 1, PP 1) punya PDF di R2 namun `jumlah_pasal = 0`. Asal PDF-nya eksperimen pengukuran
+Agustus 2026 (`GET /api/admin/ukur`), yang mengonversi dan menilai tetapi tidak menyimpan pasal. Dua kelompok:
+
+| Kelompok | Jumlah | Sebab | Pemulihan |
+|---|---|---|---|
+| Vonis `bersih`/`ringan`, `ekstraksi_log.jumlah_pasal > 0`, arsip teks ada (`r2_text_key`) | 14 (KUHP/UU 1/2023: 1.032 pasal, UU 2/2017, UU 20/2016, UU 13/2016, UU 39/2014, UU 23/2007, ...) | pasal terukur tetapi tak pernah disimpan | `ekstrak-ulang` dengan `dariTeks: true` (tanpa Workers AI) |
+| Vonis `tanpa_pasal`, tanpa arsip teks | 89 (hampir semuanya UU 1946-1954) | judul pasal gaya lama "Pasal 1." (titik tunggal) dibuang pengurai sebagai catchword kaki halaman; diperbaiki di `uraikanPasal` (lib/bpk.ts) | `ekstrak-ulang` biasa (konversi ulang dari PDF; PDF-nya kecil, 20-80 KB) |
+
+Setelah sebuah rilis dengan perbaikan ini terpasang, jalankan dari mana saja yang punya token (token dibaca dari variabel
+lingkungan, jangan diketik di baris perintah yang tersimpan di riwayat):
+
+```bash
+read -rs -p 'ADMIN_TOKEN: ' T; echo
+# 14 UU besar: uraikan arsip teks yang sudah ada
+curl -sS -X POST https://lexa.<akun>.workers.dev/api/impor/ekstrak-ulang -H "x-admin-token: $T" -H 'content-type: application/json' \
+  -d '{"jenis":["UU"],"batas":100,"dariTeks":true}'
+# sisanya (tanpa arsip): konversi ulang dari PDF; ulangi sampai "diantrekan" tidak naik lagi
+curl -sS -X POST https://lexa.<akun>.workers.dev/api/impor/ekstrak-ulang -H "x-admin-token: $T" -H 'content-type: application/json' \
+  -d '{"jenis":["UU","PERPPU","PP"],"batas":100}'
+unset T
+```
+
+`ekstrak-ulang` mendahulukan yang paling lama dicoba, jadi pemanggilan berulang berputar melewati semuanya. Pantau:
+
+```sql
+SELECT l.jenis, e.vonis, COUNT(*) FROM laws l LEFT JOIN ekstraksi_log e ON e.frbr_uri = l.frbr_uri
+ WHERE l.r2_pdf_key IS NOT NULL AND l.jumlah_pasal = 0 GROUP BY 1, 2;
+```
+
+Sisa yang tetap `tanpa_pasal` kini punya arsip teks (`r2_text_key`), jadi bentuk kegagalannya bisa dibaca lewat
+`GET /api/dokumen/teks?uri=` dan pengurainya diperbaiki dengan bukti, bukan dugaan.
 
 ## Mengendalikan pipeline
 

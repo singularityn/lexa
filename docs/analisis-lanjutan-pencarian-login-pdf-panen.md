@@ -288,7 +288,7 @@ yang akan digabung, lalu menjalankannya dalam satu transaksi.
 
 ## 9. Pengujian
 
-- **Unit dan integrasi**: 1.255 tes (harness SQLite sungguhan + tiruan KV/R2/Queue/AI/Vectorize), termasuk pengenalan sitasi BPK
+- **Unit dan integrasi**: 1.313 tes (harness SQLite sungguhan + tiruan KV/R2/Queue/AI/Vectorize), termasuk pengenalan sitasi BPK
   (slug dan teks nyata dari hasil pencarian), pencocokan tahan penulisan ganda, manifest yang tak lagi menjatuhkan seluruh kiriman,
   penanda tanpa berkas, ekstrak ulang, dan perbandingan pasal PDF.
 - **e2e di Chromium**: 205 tes, termasuk skrip panen terhadap situs BPK palsu (27 skenario: jenis dari `/Jenis`, halaman
@@ -298,3 +298,57 @@ yang akan digabung, lalu menjalankannya dalam satu transaksi.
   tautan yang memuat `null` menjatuhkan seluruh permintaan) yang tak tertangkap harness; sudah diperbaiki dan diuji ulang.
 - Uji **mutasi** pada tiap perilaku kunci (kode sengaja dirusak, ujinya harus gagal) untuk memastikan tesnya bermakna.
 - **Tidak teruji**: situs BPK sungguhan, alur OAuth Google sungguhan, perangkat Android/iOS sungguhan.
+
+## 10. Pemeriksaan produksi dari server pengguna (13 Okt 2026)
+
+Pengguna menghubungkan servernya (Ubuntu 22.04 di Oracle Cloud, 8 vCPU, 58 GB RAM) lewat Remote Control dan meminta panen BPK
+dijalankan di sana. Sesi pembantu di server itu bekerja dengan persetujuan pengguna pada setiap perintah (mode "setujui satu per
+satu"), hanya-baca, tanpa token, dan berhenti begitu ada penolakan. Sebelum itu, sandbox pengembangan tidak bisa menjangkau
+`*.workers.dev`, jadi inilah pertama kalinya produksi diperiksa dengan data nyata dari luar.
+
+**Panen BPK dari server: tidak bisa.** `peraturan.bpk.go.id` dan `/robots.txt` dijawab 403 "Access Denied / Akses Ditolak" dari
+Cloudflare tanpa tantangan (bukan "Just a moment"): alamat server ditolak di tingkat jaringan. Tidak diakali. Jalur panen tetap
+peramban pengguna di Indonesia ([bagian 5](#5-panen-lanjutan-dari-bpk)). Terjangkau dari server: Lexa, npm, nodejs.org,
+`jdih.setneg.go.id` (robots.txt mengizinkan semua), `pasal.id`. Tidak terjangkau: `peraturan.go.id`, `jdihn.go.id`. Struktur
+`jdih.setneg.go.id` belum dipetakan: beranda 200 dengan badan yang sangat besar tanpa satu pun tautan `<a href>` dalam 400.000
+byte pertama (menu kemungkinan dibangun JavaScript). Memetakannya (anggaran 30 permintaan, jeda 1,5 detik) adalah langkah
+berikutnya bila pengguna ingin sumber resmi kedua untuk PP, **dengan persetujuan pengguna atas penggantian sumber**: BPK adalah
+sumber yang diminta pada awal proyek. Pemanggilan sesi baru dari sesi ini kemudian ditolak platform
+(`elevated_session_untrusted_device`: perlu bukti manusia di perangkat tepercaya), jadi langkah itu dikerjakan pengguna sendiri.
+
+**Pencarian di produksi (17 kueri, 10 hasil teratas).** Tingkat judul bekerja pada data nyata: "kelautan" menaruh UU 32/2014
+tentang Kelautan di urutan pertama (sebelumnya pasal yang menyebut kata itu), "perikanan" UU 31/2004 lalu UU 9/1985,
+"perlindungan konsumen" UU 8/1999, "narkotika" UU 35/2009, "desa" UU 6/2014, dan seterusnya. Temuan:
+
+1. **Latensi**: 1,2-3,2 detik di server per kueri (klien 2,1-4,0 detik). Satu pengukuran 21 detik ("UU 13/2003") ternyata panggilan
+   dingin tunggal yang tersimpan di cache KV; kueri sitasi lain normal. Penyebab struktural: pencarian makna (embedding Workers AI
+   + Vectorize) berjalan sesudah semua kueri FTS selesai dan tanpa batas waktu. **Diperbaiki**: berjalan berbarengan, dengan batas
+   3 detik (`BATAS_VEKTOR_MS`); bila lewat, hasil kata kunci dikirim, ditandai `tanpa_makna`, dan tidak di-cache.
+2. **Kueri sitasi murni** ("UU 13/2003") mendatangkan UU bernomor mirip yang tak relevan (UU 13/2009, UU 27/2008, ...) dan
+   menambah detik. **Diperbaiki**: kueri yang hanya sitasi dan ditemukan dijawab dokumen itu saja (`hanyaSitasi`).
+3. **"upah minimum"** menaruh tiga PP pajak di atas pasal upah minimum UU 13/2003. Itu sesuai aturan yang diminta (judul ketiga PP
+   itu memang memuat "Upah Minimum": "Pajak Penghasilan Atas Penghasilan ... Sampai Dengan Sebesar Upah Minimum ..."), jadi
+   bukan galat; PP 36/2021 "Pengupahan" tak ikut tingkat judul karena kata "pengupahan" bukan awalan "upah". Pemenggalan imbuhan
+   ringan (peta jalan, bagian 8) akan memperbaikinya tanpa melonggarkan aturan judul.
+4. **"pasal 1365"** (KUH Perdata, di luar cakupan) mengembalikan hasil acak dari pencarian makna. Belum ditangani: perlu
+   ambang kemiripan yang dikalibrasi dengan data nyata.
+5. **Kolom `tentang`** sering berisi label bidang ("PERIKANAN DAN KELAUTAN"; UU 11/2020: daftar bidang yang panjang) alih-alih
+   subjek. Tak menyesatkan karena judul resmi ada di kolom `judul`, tetapi kartu hasil menampilkannya sebagai baris kedua.
+6. **Judul berkarakter rusak**: 13 baris (mis. UU 35/1953 "Penetapan ï¿½undang-undang Darurat ..."). **Diperbaiki di sisi baca**
+   (`bersihkanJudul`: API, pencarian, saran ketik, pratinjau tautan) dan saat menyimpan judul baru; data D1 tidak diubah.
+
+**Header**: CSP, `nosniff`, `Referrer-Policy`, `Permissions-Policy` lengkap pada halaman, manifes, dan sw.js. Belum ada
+`Strict-Transport-Security` (**ditambahkan**) dan `/api/stats` tanpa `Cache-Control` (**ditambahkan**, 30 detik).
+
+**Data**: 7.177 peraturan (PP 5.011, UU 1.950, Perppu 170, Tap MPR 41, UUD 5), 53.119 pasal, 3.456 peraturan berpasal. Cakupan
+per jenis: UU 92%, Perppu 90%, **PP 30% (3.502 menunggu)**, Tap MPR 5%, UUD 0%. UU punya 1.569 PDF di R2, PP hanya 4. Dari
+PDF yang sudah ada, **106 peraturan belum berpasal** (bagian di `docs/pipeline-data.md`): 14 UU besar (KUHP/UU 1/2023, 1.032 pasal
+terukur tetapi tak pernah disimpan oleh eksperimen pengukuran Agustus) dan 89 UU lama 1946-1954 yang pasalnya tak terdeteksi
+karena judul gaya lama "Pasal 1." dibuang pengurai sebagai catchword (**diperbaiki**, terbukti pada pengurai dan diuji; bukti
+dari teks nyata menyusul setelah ekstrak-ulang, karena teks 92 di antaranya tak pernah diarsipkan). Pemulihannya tidak butuh
+BPK: satu pemanggilan `ekstrak-ulang` sesudah rilis ini terpasang.
+
+**Kuota pekerjaan penuh PP.** Menambah ±3.500 PP berarti ±140.000 baris pasal; tiap baris menulis ke `articles` dan ke indeks FTS
+(beberapa baris tulis D1 per pasal), jadi paket gratis D1 (100.000 baris tulis per hari) memerlukan beberapa hari, dan penyematan
+vektor semua pasal memakai kuota neuron Workers AI harian. Periksa paket sebelum panen besar.
+
