@@ -288,11 +288,13 @@ yang akan digabung, lalu menjalankannya dalam satu transaksi.
 
 ## 9. Pengujian
 
-- **Unit dan integrasi**: 1.239 tes (harness SQLite sungguhan + tiruan KV/R2/Queue/AI/Vectorize), termasuk pengenalan sitasi BPK
+- **Unit dan integrasi**: 1.255 tes (harness SQLite sungguhan + tiruan KV/R2/Queue/AI/Vectorize), termasuk pengenalan sitasi BPK
   (slug dan teks nyata dari hasil pencarian), pencocokan tahan penulisan ganda, manifest yang tak lagi menjatuhkan seluruh kiriman,
   penanda tanpa berkas, ekstrak ulang, dan perbandingan pasal PDF.
-- **e2e di Chromium**: 202 tes, termasuk skrip panen terhadap situs BPK palsu (24 skenario: jenis dari `/Jenis`, halaman
+- **e2e di Chromium**: 205 tes, termasuk skrip panen terhadap situs BPK palsu (27 skenario: jenis dari `/Jenis`, halaman
   berikutnya, tautan langsung dari daftar, tanpa berkas, tantangan, 503/403, token salah, tombol berhenti, `periksa`) dan penampil
   PDF dengan PDF.js asli (23 skenario, termasuk "Periksa pasal" di 360 px).
+- **Uji asap di workerd lokal** (D1 sungguhan, bukan tiruan node:sqlite) atas titik akhir impor: menemukan satu galat nyata (larik
+  tautan yang memuat `null` menjatuhkan seluruh permintaan) yang tak tertangkap harness; sudah diperbaiki dan diuji ulang.
 - Uji **mutasi** pada tiap perilaku kunci (kode sengaja dirusak, ujinya harus gagal) untuk memastikan tesnya bermakna.
 - **Tidak teruji**: situs BPK sungguhan, alur OAuth Google sungguhan, perangkat Android/iOS sungguhan.
