@@ -800,6 +800,20 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
   .pdf-bilah .tombol-ikon, .pdf-bilah .pdf-buka { min-width: 34px; width: 34px; min-height: 34px; }
   .pdf-bilah .pdf-hal-input { width: 3.2em; padding: 0 4px; }
 }
+/* Periksa pasal: perbandingan judul pasal di PDF dengan pasal di Lexa. */
+.pdf-periksa { margin: 0 0 10px; }
+.pdf-periksa-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.pdf-periksa-petunjuk { font-size: 0.85rem; }
+.pdf-periksa-hasil { margin-top: 8px; padding: 12px 14px; border-radius: 14px; background: var(--permukaan-2); font-size: 0.92rem; }
+.pdf-periksa-hasil p { margin: 0 0 8px; }
+.pdf-periksa-hasil p:last-child, .pdf-periksa-hasil .pdf-nomor-daftar:last-child { margin-bottom: 0; }
+.pdf-periksa-baik { display: flex; align-items: center; gap: 6px; font-weight: 650; color: var(--berlaku-fg); }
+.pdf-periksa-baik .ikon { width: 16px; height: 16px; }
+.pdf-periksa-judul { font-weight: 600; }
+.pdf-nomor-daftar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
+.pdf-nomor { min-height: 32px; padding: 0 12px; }
+.pdf-nomor-polos { cursor: default; }
+.pdf-nomor-polos:hover { background: var(--permukaan); border-color: var(--garis-kuat); }
 .pdf-status { margin: 0 0 10px; padding: 12px 14px; border-radius: 14px; background: var(--permukaan-2); }
 .pdf-status-galat { background: var(--dicabut-bg); color: var(--dicabut-fg); }
 .pdf-status .tombol { margin-inline-start: 6px; }

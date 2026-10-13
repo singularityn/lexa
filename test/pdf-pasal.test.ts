@@ -3,7 +3,10 @@
  * dan tanpa PDF.js; pemindaian PDF sungguhan diuji di e2e/penampil-pdf.test.mjs.
  */
 import { describe, expect, it } from "vitest";
-import { barisDariItem, catatPasalHalaman, nomorDariJudulPasal, pasalDiHalaman } from "../public/js/pdfPasal.js";
+import {
+  adalahJudulPenjelasan, bandingkanNomorPasal, bandingkanPasal, barisDariItem, catatHalamanBadan, catatPasalHalaman, nomorDariJudulPasal,
+  pasalDiHalaman, pindaiHalaman,
+} from "../public/js/pdfPasal.js";
 
 const item = (str: string, hasEOL = false) => ({ str, hasEOL });
 
@@ -88,5 +91,75 @@ describe("catatPasalHalaman", () => {
     // Penjelasan di halaman 12: Pasal 1 dan 82 muncul lagi, tak mengubah catatan, dan tak dihitung baru.
     expect(catatPasalHalaman(indeks, 12, [item("PENJELASAN", true), item("Pasal 1", true), item("Pasal 82", true), item("Pasal 83", true)])).toBe(1);
     expect([...indeks]).toEqual([["1", 1], ["2", 1], ["82", 6], ["83", 12]]);
+  });
+});
+
+describe("adalahJudulPenjelasan", () => {
+  it("judul bagian penjelasan berhuruf besar, seperti yang dikenali pengurai di server", () => {
+    for (const baris of ["PENJELASAN", "  PENJELASAN  ", "PENJELASAN ATAS UNDANG-UNDANG NOMOR 13 TAHUN 2003", "P E N J E L A S A N", "PASAL DEMI PASAL"]) {
+      expect(adalahJudulPenjelasan(baris), baris).toBe(true);
+    }
+  });
+
+  it("kata 'penjelasan' di dalam kalimat atau berhuruf kecil bukan judul bagiannya", () => {
+    for (const baris of ["Penjelasan", "penjelasan ayat ini.", "Penjelasan Pasal 3", "PENJELASAN UMUM", "Lihat PENJELASAN", "Pasal demi pasal", "PASAL DEMI PASAL 5"]) {
+      expect(adalahJudulPenjelasan(baris), baris).toBe(false);
+    }
+  });
+});
+
+describe("pindaiHalaman", () => {
+  it("mengembalikan nomor pasal menurut urutan kemunculan, tanpa penjelasan bila judul penjelasan tak ada", () => {
+    expect(pindaiHalaman([item("Pasal 1", true), item("Ketentuan umum.", true), item("Pasal 2", true)])).toEqual({ pasal: ["1", "2"], penjelasan: false });
+  });
+
+  it("berhenti di judul penjelasan: pasal sebelum judul dihitung, sesudahnya tidak", () => {
+    const hasil = pindaiHalaman([item("Pasal 9", true), item("Isi pasal sembilan.", true), item("PENJELASAN", true), item("Pasal 1", true), item("Cukup jelas.", true), item("Pasal 9", true)]);
+    expect(hasil).toEqual({ pasal: ["9"], penjelasan: true });
+  });
+
+  it("judul penjelasan yang menjadi item tersendiri tanpa tanda akhir baris pun dikenali, seperti judul pasal", () => {
+    expect(pindaiHalaman([item("Pasal 3"), item("PASAL DEMI PASAL"), item("Pasal 3")])).toEqual({ pasal: ["3"], penjelasan: true });
+  });
+
+  it("halaman pertama penjelasan yang tidak memuat pasal sama sekali, dan halaman kosong", () => {
+    expect(pindaiHalaman([item("PENJELASAN ATAS UNDANG-UNDANG", true), item("I. UMUM", true)])).toEqual({ pasal: [], penjelasan: true });
+    expect(pindaiHalaman([])).toEqual({ pasal: [], penjelasan: false });
+  });
+});
+
+describe("catatHalamanBadan", () => {
+  it("hanya batang tubuh: pasal yang cuma ada di penjelasan tidak dicatat, dan penjelasan dilaporkan", () => {
+    const indeks = new Map<string, number>();
+    expect(catatHalamanBadan(indeks, 1, [item("Pasal 1", true), item("Pasal 2", true)])).toEqual({ baru: 2, penjelasan: false });
+    expect(catatHalamanBadan(indeks, 5, [item("Pasal 3", true), item("PENJELASAN", true), item("Pasal 4", true)])).toEqual({ baru: 1, penjelasan: true });
+    expect([...indeks]).toEqual([["1", 1], ["2", 1], ["3", 5]]);
+  });
+});
+
+describe("bandingkanNomorPasal", () => {
+  it("urutan alami: angka menurut nilai, sisipan huruf sesudah angkanya, Romawi sesudah angka", () => {
+    expect(["10", "2", "2A", "1", "II", "I", "2B", "XIV", "9"].sort(bandingkanNomorPasal)).toEqual(["1", "2", "2A", "2B", "9", "10", "I", "II", "XIV"]);
+  });
+});
+
+describe("bandingkanPasal", () => {
+  it("memisahkan yang hanya ada di PDF, yang hanya ada di Lexa, dan yang sama", () => {
+    const h = bandingkanPasal(["1", "2", "3", "45A", "10"], ["1", "2", "3", "7"]);
+    expect(h).toEqual({ pdf: 5, lexa: 4, sama: 3, hanyaPdf: ["10", "45A"], hanyaLexa: ["7"] });
+  });
+
+  it("nomor Lexa dibaca tanpa peduli huruf besar-kecil; yang tak lazim (bukan nomor pasal) tak ikut dibandingkan", () => {
+    const h = bandingkanPasal(["5A", "6"], ["5a", "6", "Umum", "", "ayat", "12345"]);
+    expect(h).toEqual({ pdf: 2, lexa: 2, sama: 2, hanyaPdf: [], hanyaLexa: [] });
+  });
+
+  it("Lexa tanpa pasal: seluruh judul di PDF dilaporkan terlewat; PDF tanpa judul: seluruh pasal Lexa tak tampak", () => {
+    expect(bandingkanPasal(["1", "2"], [])).toMatchObject({ lexa: 0, sama: 0, hanyaPdf: ["1", "2"], hanyaLexa: [] });
+    expect(bandingkanPasal([], ["1", "2"])).toMatchObject({ pdf: 0, sama: 0, hanyaPdf: [], hanyaLexa: ["1", "2"] });
+  });
+
+  it("undang-undang perubahan (Romawi) dibandingkan sama seperti angka", () => {
+    expect(bandingkanPasal(["I", "II", "III"], ["I", "II"])).toMatchObject({ hanyaPdf: ["III"], hanyaLexa: [] });
   });
 });

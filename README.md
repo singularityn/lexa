@@ -31,8 +31,11 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
 - **Tab PDF**: naskah asli yang diarsipkan Lexa ditampilkan di dalam halaman peraturan (PDF.js, digambar per halaman
   dengan lapisan teks, perbesar/perkecil, loncat ke halaman; berjalan juga di ponsel, yang tak bisa menampilkan PDF
   di dalam halaman). Tombol **Lihat di PDF** pada tiap pasal membuka halaman tempat pasal itu dimulai, dicari di teks
-  PDF-nya, supaya hasil ekstraksi yang meragukan bisa dibandingkan dengan aslinya. PDF hanya ada untuk peraturan yang
-  dipanen dari BPK; selebihnya tab ini menjelaskan itu. PDF.js dimuat hanya saat tab dibuka (`public/vendor/pdfjs`).
+  PDF-nya, supaya hasil ekstraksi yang meragukan bisa dibandingkan dengan aslinya. Tombol **Periksa pasal** memindai
+  seluruh batang tubuh PDF (penjelasan tidak dihitung) dan membandingkan nomor pasal yang judulnya tampak di sana dengan
+  pasal yang tersimpan: yang ada di PDF tetapi tak ada di Lexa kemungkinan terlewat oleh ekstraksi, dan tiap nomor membuka
+  halamannya. PDF hanya ada untuk peraturan yang dipanen dari BPK; selebihnya tab ini menjelaskan itu. PDF.js dimuat
+  hanya saat tab dibuka (`public/vendor/pdfjs`).
 - **Membaca di ponsel**: halaman peraturan dengan daftar isi dan lompat ke pasal, lima ukuran huruf, Penjelasan
   yang dipisahkan dari batang tubuh, rujukan antarpasal yang bisa diketuk ("Pasal 156 ayat (2)"), lanjutkan
   membaca dari posisi terakhir, bagikan, cetak atau simpan PDF, penanda per pasal ke Koleksi, dan simpan untuk
@@ -408,3 +411,7 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
   mengendalikan dan memeriksa pipeline di produksi, dan tindakan produksi.
 - [docs/analisis-ux-dan-fitur.md](docs/analisis-ux-dan-fitur.md): analisis lanjutan UI/UX dan fitur (temuan,
   tindakan, peta jalan), memakai Claude Design, memasang ke layar utama, dan daftar periksa di perangkat asli.
+- [docs/analisis-lanjutan-pencarian-login-pdf-panen.md](docs/analisis-lanjutan-pencarian-login-pdf-panen.md): analisis
+  lanjutan 12 Okt 2026 atas empat catatan pemilik (pencarian berdasarkan judul peraturan, `redirect_uri_mismatch`,
+  menu PDF dan fitur lanjutannya, panen lanjutan BPK), temuan data produksi, tindakan yang hanya bisa Anda lakukan,
+  dan peta jalan.

@@ -233,6 +233,131 @@ describe("Lihat di PDF (pasal ke halaman)", () => {
   });
 });
 
+describe("Periksa pasal (judul pasal di PDF dibandingkan dengan teks di Lexa)", () => {
+  /** UU 13/2003 di data awal pratinjau menyimpan batang tubuh Pasal 1, 77, 79, 82, dan 156. */
+  const hasil = () => page.locator(".pdf-periksa-hasil");
+  async function periksa() {
+    await page.getByRole("button", { name: /Periksa (pasal|ulang)/ }).click();
+    await hasil().waitFor({ state: "visible", timeout: 30_000 });
+    return (await hasil().textContent()).replace(/\s+/g, " ");
+  }
+  /** 12 halaman yang judul pasalnya persis sama dengan Lexa; penjelasan di halaman 12 memuat ulang Pasal 82 dan menambah Pasal 999. */
+  function naskahSelaras() {
+    const h = Array.from({ length: 12 }, (_, i) => [`Halaman isi ${i + 1}`, "Teks pengisi."]);
+    h[0] = ["UNDANG-UNDANG CONTOH", "", "Pasal 1", "Ketentuan umum."];
+    h[2] = ["Pasal 77", "Waktu kerja."];
+    h[3] = ["Pasal 79", "Waktu istirahat."];
+    h[5] = ["Pasal 82", "Pekerja perempuan berhak memperoleh istirahat."];
+    h[8] = ["Pasal 156", "Dalam hal terjadi pemutusan hubungan kerja."];
+    h[11] = ["PENJELASAN", "Pasal 82", "Cukup jelas.", "Pasal 999", "Cukup jelas."];
+    return h;
+  }
+  const bukaTabPdf = async () => {
+    await page.goto(tabPdf(), { waitUntil: "networkidle" });
+    await page.locator(".pdf-hal-total", { hasText: "/ 12" }).waitFor({ timeout: 20_000 });
+  };
+
+  it("selaras: nomor pasal di PDF dan di Lexa sama; penjelasan tidak dihitung (Pasal 999 hanya ada di penjelasan)", async () => {
+    await unggah(UU13, buatPdf(naskahSelaras()));
+    await bukaTabPdf();
+    const teks = await periksa();
+    expect(teks).toContain("PDF memuat 5 judul pasal; Lexa memuat 5 pasal, 5 di antaranya bernomor sama.");
+    expect(teks).toContain("Semua nomor pasal selaras.");
+    expect(await page.locator(".pdf-periksa-petunjuk").textContent()).toBe("Semua nomor pasal selaras");
+    expect(teks).toContain("bagian penjelasan tidak dihitung");
+    expect(await page.locator(".pdf-nomor").count()).toBe(0);
+    expect(await page.getByRole("button", { name: "Periksa ulang" }).count()).toBe(1);
+  });
+
+  it("pasal di PDF yang tak ada di Lexa dibuka dari daftar: urut alami, dan ketukan membuka halamannya", async () => {
+    const halaman = naskahSelaras();
+    halaman[1] = ["Pasal 10", "Isi pasal sepuluh."];
+    halaman[4] = ["Pasal 45A", "Isi pasal sisipan."];
+    await unggah(UU13, buatPdf(halaman));
+    await bukaTabPdf();
+    const teks = await periksa();
+    expect(teks).toContain("PDF memuat 7 judul pasal; Lexa memuat 5 pasal, 5 di antaranya bernomor sama.");
+    expect(teks).toContain("Ada di PDF, tidak ada di Lexa (2)");
+    expect(await page.locator(".pdf-periksa-petunjuk").textContent()).toBe("2 hanya di PDF, 0 hanya di Lexa");
+    expect(await page.locator("button.pdf-nomor").allTextContents()).toEqual(["10", "45A"]);
+    await page.locator("button.pdf-nomor", { hasText: "45A" }).click();
+    await page.waitForFunction(() => document.querySelector(".pdf-hal-input")?.value === "5", null, { timeout: 10_000 });
+    await kanvasTerisi(5);
+  });
+
+  it("pasal di Lexa yang judulnya tak tampak di PDF dilaporkan tanpa tombol (tak ada halaman untuk dibuka)", async () => {
+    const halaman = naskahSelaras().map((hal) => hal.map((b) => b.replace("Pasal 156", "Ketentuan 156").replace("Pasal 79", "Ketentuan 79")));
+    await unggah(UU13, buatPdf(halaman));
+    await bukaTabPdf();
+    const teks = await periksa();
+    expect(teks).toContain("PDF memuat 3 judul pasal; Lexa memuat 5 pasal, 3 di antaranya bernomor sama.");
+    expect(teks).toContain("Ada di Lexa, judulnya tak tampak di PDF (2)");
+    expect(await page.locator(".pdf-nomor-polos").allTextContents()).toEqual(["79", "156"]);
+    expect(await page.locator("button.pdf-nomor").count()).toBe(0);
+  });
+
+  it("PDF hasil pindaian: dikatakan terus terang bahwa pemeriksaan tak bisa dilakukan", async () => {
+    await unggah(UU13, buatPdf(naskahSelaras(), { tanpaTeks: true }));
+    await bukaTabPdf();
+    expect(await periksa()).toContain("PDF ini hasil pindaian tanpa lapisan teks");
+    expect(await page.locator(".pdf-nomor").count()).toBe(0);
+  });
+
+  it("peraturan yang pasalnya belum tersimpan di Lexa: PDF memuat N judul pasal, tanpa memperinci semuanya sebagai 'terlewat'", async () => {
+    const uri = "/akn/id/act/pp/2030/77";
+    const manifest = await fetch(`${BASE}/api/impor/manifest`, {
+      method: "POST",
+      headers: { "x-admin-token": TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ versi: 1, dokumen: [{ bpk_id: "7777", meta: { Judul: "Peraturan Pemerintah Nomor 77 Tahun 2030 tentang Contoh", "Bentuk Singkat": "PP", Nomor: "77", Tahun: "2030", Status: "Berlaku" } }] }),
+    });
+    expect(manifest.status).toBe(200);
+    await unggah(uri, buatPdf(naskahSelaras()));
+    await page.goto(tabPdf(uri), { waitUntil: "networkidle" });
+    await page.locator(".pdf-hal-total", { hasText: "/ 12" }).waitFor({ timeout: 20_000 });
+    const teks = await periksa();
+    expect(teks).toContain("PDF memuat 5 judul pasal; Lexa belum menyimpan pasal peraturan ini.");
+    expect(await page.locator(".pdf-nomor").count()).toBe(0);
+  });
+
+  it("ketukan kedua saat berjalan membatalkan, hasilnya diberi tanda; memeriksa ulang sesudahnya memberi hasil utuh", async () => {
+    await unggah(UU13, buatPdf(naskahSelaras()));
+    await bukaTabPdf();
+    // Dua ketukan pada detik yang sama: yang pertama memulai, yang kedua membatalkan sebelum satu halaman pun terbaca.
+    await page.evaluate(() => {
+      const tombol = document.querySelector(".pdf-periksa button");
+      tombol.click();
+      tombol.click();
+    });
+    await hasil().waitFor({ state: "visible", timeout: 30_000 });
+    expect((await hasil().textContent()).replace(/\s+/g, " ")).toContain("Pemeriksaan dibatalkan sebelum ada judul pasal yang terbaca.");
+    const utuh = await periksa();
+    expect(utuh).toContain("PDF memuat 5 judul pasal");
+    expect(utuh).not.toContain("dibatalkan");
+  });
+
+  it("di ponsel 360 px: hasil dengan banyak nomor tidak meluber dan setiap nomor cukup besar untuk diketuk", async () => {
+    await ctx.close();
+    await bukaKonteks({ viewport: { width: 360, height: 800 }, isMobile: true, hasTouch: true });
+    const halaman = naskahSelaras();
+    halaman[1] = Array.from({ length: 25 }, (_, i) => `Pasal ${300 + i}`);
+    await unggah(UU13, buatPdf(halaman));
+    await bukaTabPdf();
+    await periksa();
+    expect(await page.locator("button.pdf-nomor").count()).toBe(25);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    // Hasil digulir ke bawah bilah alat: puncaknya terlihat di layar, tidak tertutup bilah lengket.
+    const { atas, bawahBilah, tinggiLayar } = await page.evaluate(() => ({
+      atas: document.querySelector(".pdf-periksa-hasil").getBoundingClientRect().top,
+      bawahBilah: document.querySelector(".pdf-bilah").getBoundingClientRect().bottom,
+      tinggiLayar: window.innerHeight,
+    }));
+    expect(atas).toBeGreaterThanOrEqual(bawahBilah - 1);
+    expect(atas).toBeLessThan(tinggiLayar - 80);
+    const kotak = await page.locator("button.pdf-nomor").first().boundingBox();
+    expect(kotak.height).toBeGreaterThanOrEqual(32);
+  });
+});
+
 describe("layar sempit", () => {
   for (const lebar of [360, 390]) {
     it(`${lebar}px: bilah alat muat utuh (tak terpotong), halaman tak meluber, dan lompat ke halaman mendarat di bawah bilah`, async () => {

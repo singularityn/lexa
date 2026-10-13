@@ -263,9 +263,9 @@ Pesan galat yang lazim:
 
 ### Biaya dan batas
 
-- **Waktu**: ±4-6 detik per PDF (jeda yang sopan), jadi 3.900 peraturan memakan ±5-7 jam; dibagi beberapa sesi dengan `batas` dan
+- **Waktu**: ±4-6 detik per PDF (jeda yang sopan), jadi ±3.700 peraturan yang belum berteks memakan ±5-7 jam; dibagi beberapa sesi dengan `batas` dan
   `terus`. Penjelajahan PP sendiri ±250-500 permintaan.
-- **R2**: PDF disimpan di `pdf/…` (rata-rata mungkin ratusan KB; 3.900 berkas bisa beberapa GB).
+- **R2**: PDF disimpan di `pdf/…` (rata-rata mungkin ratusan KB; 3.700 berkas bisa beberapa GB).
 - **D1**: tiap peraturan menulis puluhan baris pasal ditambah indeks FTS; bila akun Anda di paket gratis (100.000 baris tulis
   per hari), bagi panen ke beberapa hari.
 - **Workers AI**: konversi PDF, penyematan semua pasal (bge-m3), dan ringkasan tiap peraturan memakai kuota neuron harian;

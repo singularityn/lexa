@@ -110,7 +110,7 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Gambar pratinjau | `/og/lexa.png` | 200, `image/png` |
 | Token admin | `GET /api/admin/cek-token` dengan header `x-admin-token` | `secret_terpasang: true`, `cocok: true` |
 | Login Google (bila diaktifkan) | `/akun` > Masuk dengan Google | kembali ke Lexa dalam keadaan masuk; bila Google menampilkan `redirect_uri_mismatch`, lihat [Login Google](#login-google-oauth) |
-| Tab PDF | buka peraturan yang PDF-nya diarsipkan (mis. salah satu UU hasil panen), tab **PDF** | halaman tergambar tanpa galat di konsol; `GET /vendor/pdfjs/pdf.min.mjs` menjawab `text/javascript`; tombol "Lihat di PDF" pada pasal membuka halamannya |
+| Tab PDF | buka peraturan yang PDF-nya diarsipkan (mis. salah satu UU hasil panen), tab **PDF** | halaman tergambar tanpa galat di konsol; `GET /vendor/pdfjs/pdf.min.mjs` menjawab `text/javascript`; tombol "Lihat di PDF" pada pasal membuka halamannya; tombol "Periksa pasal" menampilkan perbandingan nomor pasal PDF dan Lexa |
 | Pipeline berjalan | D1: `SELECT key, value, updated_at FROM sync_state WHERE key LIKE 'denyut:%' OR key IN ('akses_isi','pasal_tunda_sampai','tik_antre_sampai');` dan `SELECT job, status, detail, created_at FROM sync_log ORDER BY id DESC LIMIT 10;` | `denyut:antrean` (atau `denyut:* * * * *`) segar dalam 5 menit; `/status` memuat panel "Kelengkapan isi" |
 | Akses isi pasal.id | `/status` dan `SELECT value FROM sync_state WHERE key = 'akses_isi';` | tak ada baris `akses_isi` (akses baik). Bila ada, catatan pasal.id dan langkahnya di [pipeline-data.md](pipeline-data.md#akses-isi-pasalid-temuan-11-okt-2026) |
 

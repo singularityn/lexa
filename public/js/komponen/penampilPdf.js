@@ -11,6 +11,10 @@
  * pasal dimulai, dicari di lapisan teks PDF-nya (lihat pdfPasal.js). PDF hasil pindaian tanpa lapisan teks tetap bisa dibaca,
  * hanya pencarian pasalnya yang tak tersedia, dan itu dikatakan terus terang.
  *
+ * "Periksa pasal" memindai SELURUH batang tubuh PDF dan membandingkan nomor pasal yang judulnya tampak di sana dengan pasal yang
+ * tersimpan di Lexa: pasal yang ada di PDF tetapi tak ada di Lexa kemungkinan terlewat oleh ekstraksi, dan sebaliknya. Itu
+ * mengubah "ekstraksi mungkin keliru" menjadi daftar yang bisa diperiksa satu per satu (setiap nomor membuka halamannya).
+ *
  * CSP aplikasi ketat (tanpa eval, tanpa WebAssembly, tanpa gaya sebaris), jadi PDF.js dipanggil dengan `useWasm: false`
  * (dekoder JBIG2 dan JPEG 2000 versi JavaScript, dimuat dari public/vendor/pdfjs/wasm) dan ukuran dipasang lewat CSSOM.
  * PDF.js 6 tidak lagi memakai eval, jadi tak ada opsi yang perlu dimatikan untuk itu.
@@ -18,7 +22,7 @@
 
 import { h, tunda } from "../dom.js";
 import { ikon } from "./ikon.js";
-import { catatPasalHalaman } from "../pdfPasal.js";
+import { bandingkanPasal, catatHalamanBadan } from "../pdfPasal.js";
 import { rapikanNomorPasal } from "../format.js";
 import { penyimpanan } from "../state.js";
 
@@ -40,6 +44,9 @@ const JARAK_GAMBAR = "120%";
 const MAKS_BERSAMAAN = 2;
 /** Bila sebanyak ini halaman pertama tak berisi teks sama sekali, PDF dianggap hasil pindaian dan pemindaian pasal dihentikan. */
 const HALAMAN_UJI_PINDAIAN = 8;
+const PETUNJUK_PERIKSA = "Bandingkan judul pasal di PDF dengan teks di Lexa";
+/** Paling banyak nomor yang diperinci per daftar hasil pemeriksaan; sisanya disebut jumlahnya. */
+const MAKS_NOMOR_TAMPIL = 60;
 
 /** @type {Promise<any> | null} */
 let janjiPustaka = null;
@@ -83,9 +90,10 @@ function tombolAlat(nama, label, saat) {
 }
 
 /**
- * @param {{ url: string }} opsi `url`: alamat PDF di asal yang sama (/api/dokumen/pdf?uri=...)
+ * @param {{ url: string, nomorPasalLexa?: () => string[] }} opsi `url`: alamat PDF di asal yang sama (/api/dokumen/pdf?uri=...);
+ *   `nomorPasalLexa`: nomor pasal batang tubuh yang tersimpan di Lexa, untuk "Periksa pasal"
  */
-export function buatPenampilPdf({ url }) {
+export function buatPenampilPdf({ url, nomorPasalLexa = () => [] }) {
   /** @type {any} */
   let lib = null;
   /** @type {any} */
@@ -115,9 +123,11 @@ export function buatPenampilPdf({ url }) {
   const indeks = new Map();
   let sudahDipindai = 0;
   let tanpaTeks = false;
+  /** Judul penjelasan sudah ditemui: batang tubuh selesai dipindai, sisanya tak perlu dibaca. */
+  let akhirBadan = false;
   let jumlahItemAwal = 0;
   let rantaiPindai = Promise.resolve();
-  const kunciIndeks = `lexa:pdf-indeks:v1:${url}`;
+  const kunciIndeks = `lexa:pdf-indeks:v2:${url}`;
 
   // --- Elemen ---------------------------------------------------------------
   const status = h("div", { class: "pdf-status", role: "status", "aria-live": "polite" });
@@ -148,7 +158,16 @@ export function buatPenampilPdf({ url }) {
   );
   for (const t of [sebelum, berikut, kecil, besar, pas]) /** @type {HTMLButtonElement} */ (t).disabled = true;
 
-  const akar = h("section", { class: "penampil-pdf", "aria-label": "Penampil PDF" }, bilah, status, daftar);
+  const labelPeriksa = h("span", null, "Periksa pasal");
+  const tombolPeriksa = /** @type {HTMLButtonElement} */ (
+    h("button", { type: "button", class: "tombol tombol-kecil", disabled: true, onclick: () => void periksaPasal() }, ikon("centang"), labelPeriksa)
+  );
+  const petunjukPeriksa = h("span", { class: "pdf-periksa-petunjuk redup" }, PETUNJUK_PERIKSA);
+  const hasilPeriksa = h("div", { class: "pdf-periksa-hasil", role: "status", "aria-live": "polite" });
+  hasilPeriksa.hidden = true;
+  const blokPeriksa = h("div", { class: "pdf-periksa" }, h("div", { class: "pdf-periksa-bar" }, tombolPeriksa, petunjukPeriksa), hasilPeriksa);
+
+  const akar = h("section", { class: "penampil-pdf", "aria-label": "Penampil PDF" }, bilah, blokPeriksa, status, daftar);
 
   /** @param {string} teks @param {boolean} [galat] */
   function tulisStatus(teks, galat = false) {
@@ -388,7 +407,7 @@ export function buatPenampilPdf({ url }) {
   // --- Pasal -> halaman -------------------------------------------------------
   function simpanIndeks() {
     try {
-      penyimpanan.tulis(kunciIndeks, JSON.stringify({ n: hal.length, s: sudahDipindai, t: tanpaTeks, p: [...indeks] }));
+      penyimpanan.tulis(kunciIndeks, JSON.stringify({ n: hal.length, s: sudahDipindai, t: tanpaTeks, a: akhirBadan, p: [...indeks] }));
     } catch {
       /* penyimpanan penuh atau dimatikan: pemindaian saja yang diulang */
     }
@@ -403,36 +422,165 @@ export function buatPenampilPdf({ url }) {
       for (const [nomor, halaman] of o.p) if (typeof nomor === "string" && Number.isInteger(halaman)) indeks.set(nomor, halaman);
       sudahDipindai = Math.min(Number(o.s) || 0, hal.length);
       tanpaTeks = Boolean(o.t);
+      akhirBadan = Boolean(o.a);
     } catch {
       /* indeks rusak: dipindai ulang */
     }
   }
 
+  /** Apakah masih ada halaman batang tubuh yang belum dipindai. */
+  const bisaMemindai = () => Boolean(pdf) && !hancur && !tanpaTeks && !akhirBadan && sudahDipindai < hal.length;
+
+  /** Pindai satu halaman berikutnya; halaman yang tak terbaca dilewati. */
+  async function pindaiHalamanBerikut() {
+    const no = ++sudahDipindai;
+    try {
+      const page = await pdf.getPage(no);
+      const isi = await page.getTextContent();
+      jumlahItemAwal += no <= HALAMAN_UJI_PINDAIAN ? isi.items.length : 0;
+      if (catatHalamanBadan(indeks, no, isi.items).penjelasan) akhirBadan = true;
+      page.cleanup();
+    } catch {
+      /* halaman yang tak terbaca dilewati */
+    }
+    if (no === Math.min(HALAMAN_UJI_PINDAIAN, hal.length) && jumlahItemAwal === 0) tanpaTeks = true;
+  }
+
   /**
    * Halaman tempat pasal `nomor` dimulai, dicari di lapisan teks PDF (dipindai berurutan dari halaman terakhir yang sudah
-   * dipindai, berhenti begitu ketemu). null bila tak ada, atau PDF-nya hasil pindaian tanpa lapisan teks.
+   * dipindai, berhenti begitu ketemu atau begitu bagian penjelasan dimulai). null bila tak ada, atau PDF-nya hasil pindaian
+   * tanpa lapisan teks.
    * @param {string} nomor
    * @returns {Promise<number | null>}
    */
   function cariHalamanPasal(nomor) {
     const kunci = rapikanNomorPasal(String(nomor).replace(/\s+/g, "").toUpperCase());
     rantaiPindai = rantaiPindai.then(async () => {
-      while (pdf && !hancur && !indeks.has(kunci) && !tanpaTeks && sudahDipindai < hal.length) {
-        const no = ++sudahDipindai;
-        try {
-          const page = await pdf.getPage(no);
-          const isi = await page.getTextContent();
-          jumlahItemAwal += no <= HALAMAN_UJI_PINDAIAN ? isi.items.length : 0;
-          catatPasalHalaman(indeks, no, isi.items);
-          page.cleanup();
-        } catch {
-          /* halaman yang tak terbaca dilewati */
-        }
-        if (no === Math.min(HALAMAN_UJI_PINDAIAN, hal.length) && jumlahItemAwal === 0) tanpaTeks = true;
-      }
+      while (bisaMemindai() && !indeks.has(kunci)) await pindaiHalamanBerikut();
       simpanIndeks();
     });
     return rantaiPindai.then(() => indeks.get(kunci) ?? null);
+  }
+
+  // --- Periksa pasal: PDF dibandingkan dengan Lexa ------------------------------------------------------------------
+  let periksaBerjalan = false;
+  let periksaDibatalkan = false;
+  /** Ringkasan hasil terakhir, ditampilkan di baris tombol sampai pemeriksaan berikutnya. */
+  let ringkasPeriksa = "";
+
+  /** @param {string} teks */
+  function tulisTombolPeriksa(teks) {
+    labelPeriksa.textContent = teks;
+  }
+
+  /** Daftar nomor sebagai tombol (membuka halaman PDF-nya) atau butir polos. @param {string[]} nomor @param {boolean} bisaBuka */
+  function daftarNomor(nomor, bisaBuka) {
+    const tampil = nomor.slice(0, MAKS_NOMOR_TAMPIL);
+    return h(
+      "div",
+      { class: "pdf-nomor-daftar" },
+      tampil.map((n) => {
+        const halaman = indeks.get(n);
+        return bisaBuka && halaman
+          ? h("button", { type: "button", class: "chip pdf-nomor", "aria-label": `Pasal ${n}, buka halaman ${halaman} PDF`, title: `Buka halaman ${halaman}`, onclick: () => keHalaman(halaman) }, n)
+          : h("span", { class: "chip pdf-nomor pdf-nomor-polos" }, n);
+      }),
+      nomor.length > tampil.length ? h("span", { class: "redup" }, ` dan ${nomor.length - tampil.length} lainnya`) : null,
+    );
+  }
+
+  /** @param {boolean} sebagian pemeriksaan dibatalkan sebelum seluruh batang tubuh terbaca */
+  function tampilkanHasilPeriksa(sebagian) {
+    const bagian = [];
+    if (sebagian && indeks.size === 0) {
+      bagian.push(h("p", null, h("strong", null, "Pemeriksaan dibatalkan"), " sebelum ada judul pasal yang terbaca."));
+    } else if (tanpaTeks) {
+      bagian.push(h("p", null, h("strong", null, "PDF ini hasil pindaian tanpa lapisan teks."), " Judul pasalnya tak bisa dibaca otomatis, jadi pemeriksaan tak dapat dilakukan. Bandingkan dengan membaca halamannya."));
+    } else {
+      const lexa = nomorPasalLexa();
+      const r = bandingkanPasal(indeks.keys(), lexa);
+      if (r.pdf === 0) {
+        bagian.push(h("p", null, h("strong", null, "Tidak ada judul pasal yang terbaca di teks PDF ini."), " Mungkin naskahnya tidak berbab-pasal, atau judulnya tak berdiri sendiri di barisnya."));
+      } else {
+        bagian.push(
+          h(
+            "p",
+            null,
+            h("strong", null, `PDF memuat ${r.pdf} judul pasal`),
+            r.lexa ? `; Lexa memuat ${r.lexa} pasal, ${r.sama} di antaranya bernomor sama.` : "; Lexa belum menyimpan pasal peraturan ini.",
+          ),
+        );
+        if (!r.hanyaPdf.length && !r.hanyaLexa.length && r.lexa) {
+          bagian.push(h("p", { class: "pdf-periksa-baik" }, ikon("centang"), " Semua nomor pasal selaras."));
+        }
+        if (r.hanyaPdf.length && r.lexa) {
+          bagian.push(
+            h("p", { class: "pdf-periksa-judul" }, `Ada di PDF, tidak ada di Lexa (${r.hanyaPdf.length}). Kemungkinan terlewat oleh ekstraksi; ketuk untuk membuka halamannya:`),
+            daftarNomor(r.hanyaPdf, true),
+          );
+        }
+        if (r.hanyaLexa.length) {
+          bagian.push(
+            h("p", { class: "pdf-periksa-judul" }, `Ada di Lexa, judulnya tak tampak di PDF (${r.hanyaLexa.length}). Bisa nomor yang salah terbaca, atau judulnya tak berdiri sendiri di barisnya:`),
+            daftarNomor(r.hanyaLexa, false),
+          );
+        }
+      }
+      if (sebagian) bagian.push(h("p", { class: "redup" }, `Pemeriksaan dibatalkan setelah ${sudahDipindai} dari ${hal.length} halaman dibaca; hasil ini sebagian.`));
+      else if (akhirBadan) bagian.push(h("p", { class: "redup" }, "Hanya batang tubuh yang dibandingkan; bagian penjelasan tidak dihitung."));
+    }
+    if (indeks.size) bagian.push(h("p", { class: "redup" }, "Yang dibandingkan hanya nomor pasal. Isi pasal tetap perlu dibaca di halaman PDF."));
+    hasilPeriksa.replaceChildren(...bagian);
+    hasilPeriksa.hidden = false;
+    // Ringkasannya juga di baris tombol, supaya terbaca tanpa menggulir; lalu rincinya digulir ke bawah bilah alat bila tertutup.
+    const r = tanpaTeks ? null : bandingkanPasal(indeks.keys(), nomorPasalLexa());
+    ringkasPeriksa = r && indeks.size && r.lexa ? (r.hanyaPdf.length || r.hanyaLexa.length ? `${r.hanyaPdf.length} hanya di PDF, ${r.hanyaLexa.length} hanya di Lexa` : "Semua nomor pasal selaras") : "";
+    requestAnimationFrame(() => {
+      if (hancur) return;
+      const kotak = hasilPeriksa.getBoundingClientRect();
+      const batas = (parseFloat(getComputedStyle(bilah).top) || 0) + bilah.offsetHeight + 8;
+      if (kotak.top < batas || kotak.bottom > window.innerHeight - 80) window.scrollTo({ top: kotak.top + window.scrollY - batas, behavior: "auto" });
+    });
+  }
+
+  /**
+   * Pindai seluruh batang tubuh PDF dan tampilkan perbandingannya dengan pasal di Lexa. Dipanggil lagi saat berjalan: dibatalkan.
+   * @returns {Promise<void>}
+   */
+  async function periksaPasal() {
+    if (periksaBerjalan) {
+      periksaDibatalkan = true;
+      tulisTombolPeriksa("Membatalkan…");
+      return;
+    }
+    // Ditandai berjalan sebelum menunggu apa pun, supaya ketukan kedua yang menyusul langsung membatalkan (bukan memulai lagi).
+    periksaBerjalan = true;
+    periksaDibatalkan = false;
+    tulisTombolPeriksa("Batalkan");
+    hasilPeriksa.hidden = true;
+    ringkasPeriksa = "";
+    const lapor = () => {
+      petunjukPeriksa.textContent = `Memindai halaman ${sudahDipindai} dari ${hal.length}…`;
+    };
+    try {
+      if (janjiMuat) await janjiMuat;
+      if (!hal.length || hancur) return;
+      lapor();
+      rantaiPindai = rantaiPindai.then(async () => {
+        while (bisaMemindai() && !periksaDibatalkan) {
+          await pindaiHalamanBerikut();
+          lapor();
+        }
+        simpanIndeks();
+      });
+      await rantaiPindai;
+      if (hancur) return;
+      tampilkanHasilPeriksa(periksaDibatalkan && bisaMemindai());
+    } finally {
+      periksaBerjalan = false;
+      petunjukPeriksa.textContent = !hasilPeriksa.hidden && ringkasPeriksa ? ringkasPeriksa : PETUNJUK_PERIKSA;
+      tulisTombolPeriksa(hal.length && !hasilPeriksa.hidden ? "Periksa ulang" : "Periksa pasal");
+    }
   }
 
   /**
@@ -522,6 +670,7 @@ export function buatPenampilPdf({ url }) {
         masukan.max = String(hal.length);
         masukan.disabled = false;
         for (const t of [sebelum, berikut, pas]) /** @type {HTMLButtonElement} */ (t).disabled = false;
+        tombolPeriksa.disabled = false;
         catatHalaman(1);
         pulihkanIndeks();
         pasangPengamat();
@@ -580,6 +729,7 @@ export function buatPenampilPdf({ url }) {
     keHalaman,
     keHalamanPasal,
     cariHalamanPasal,
+    periksaPasal,
     hancurkan,
     /** Jumlah halaman, 0 sebelum PDF termuat. */
     jumlahHalaman: () => hal.length,

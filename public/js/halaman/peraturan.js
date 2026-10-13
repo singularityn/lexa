@@ -198,7 +198,8 @@ function tampilkan(ctx, d, q) {
       const buat = () => {
         const st = infoStatus.nilai;
         if (!st?.ada_pdf || !st.pdf_url) return selesai(null);
-        penampilPdf ??= buatPenampilPdf({ url: st.pdf_url });
+        // "Periksa pasal" membandingkan judul pasal di PDF dengan batang tubuh yang tersimpan (tanpa penjelasan).
+        penampilPdf ??= buatPenampilPdf({ url: st.pdf_url, nomorPasalLexa: () => kelompok.filter((g) => !g.penjelasan).map((g) => g.nomor) });
         selesai(penampilPdf);
       };
       if (infoStatus.selesai) buat();
