@@ -65,11 +65,15 @@ const TAHUN_MAKS = 2100;
 
 const tahunMasuk = (tahun: number) => tahun >= TAHUN_MIN && tahun <= TAHUN_MAKS;
 
-/** Sitasi pertama yang dikenali dalam `teks`, atau null. */
-export function uraiSitasi(teks: string): Sitasi | null {
+/** Sitasi pertama yang dikenali dalam `teks` beserta rentang teks yang dicakupnya (awal inklusif, akhir eksklusif). */
+function cocokSitasi(teks: string): { sitasi: Sitasi; awal: number; akhir: number } | null {
   const resmi = POLA_POJK_RESMI.exec(teks);
   if (resmi && tahunMasuk(Number(resmi[3]))) {
-    return { jenis: "POJK", nomor: resmi[1], tahun: Number(resmi[3]), sub: resmi[2] };
+    return {
+      sitasi: { jenis: "POJK", nomor: resmi[1], tahun: Number(resmi[3]), sub: resmi[2] },
+      awal: resmi.index,
+      akhir: resmi.index + resmi[0].length,
+    };
   }
 
   for (const m of teks.matchAll(POLA_JENIS)) {
@@ -82,7 +86,27 @@ export function uraiSitasi(teks: string): Sitasi | null {
     const t = ekor.exec(teks);
     if (!t || !tahunMasuk(Number(t[2]))) continue;
 
-    return { jenis: def.jenis, nomor: t[1], tahun: Number(t[2]) };
+    return {
+      sitasi: { jenis: def.jenis, nomor: t[1], tahun: Number(t[2]) },
+      awal: m.index ?? 0,
+      akhir: t.index + t[0].length,
+    };
   }
   return null;
+}
+
+/** Sitasi pertama yang dikenali dalam `teks`, atau null. */
+export function uraiSitasi(teks: string): Sitasi | null {
+  return cocokSitasi(teks)?.sitasi ?? null;
+}
+
+/**
+ * Apakah seluruh `teks` hanyalah sebuah sitasi ("UU 13/2003", "Peraturan Pemerintah Nomor 35 Tahun 2021", kadang
+ * berkutip), tanpa kata lain yang menyatakan topik ("UU 13/2003 pesangon")? Pencarian memakai ini untuk tidak mencari
+ * kata dan makna bagi kueri yang jelas-jelas menunjuk satu dokumen: "13" dan "2003" hanya angka biasa di jutaan pasal.
+ */
+export function hanyaSitasi(teks: string): boolean {
+  const c = cocokSitasi(teks);
+  if (!c) return false;
+  return `${teks.slice(0, c.awal)} ${teks.slice(c.akhir)}`.replace(/[^\p{L}\p{N}]+/gu, "") === "";
 }

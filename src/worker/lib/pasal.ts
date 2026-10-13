@@ -25,6 +25,7 @@
  */
 
 import type { Law, Article, JenisRelasi, StatusPeraturan } from "../../shared/types";
+import { bersihkanJudul } from "../../shared/label";
 
 export interface PasalClientOptions {
   base: string;
@@ -155,7 +156,9 @@ export function petakanLaw(raw: Record<string, unknown>): Law | null {
   if (!frbr) return null;
 
   const dariUri = uraiFrbr(frbr);
-  const judul = keTeks(pilih(raw, "judul", "title", "nama"));
+  const judulMentah = keTeks(pilih(raw, "judul", "title", "nama"));
+  // Karakter pengganti dari sumber (U+FFFD) tak berguna sebagai judul; lihat bersihkanJudul.
+  const judul = judulMentah ? bersihkanJudul(judulMentah) : judulMentah;
   if (!judul) return null;
 
   const tahun = Number(pilih(raw, "tahun", "year") ?? dariUri.tahun ?? 0);
@@ -169,7 +172,7 @@ export function petakanLaw(raw: Record<string, unknown>): Law | null {
     nomor: String(pilih(raw, "nomor", "number", "no") ?? dariUri.nomor ?? "-"),
     tahun: Number.isFinite(tahun) ? tahun : 0,
     judul,
-    tentang: keTeks(pilih(raw, "tentang", "about", "subjek", "perihal")),
+    tentang: ((t) => (t ? bersihkanJudul(t) : t))(keTeks(pilih(raw, "tentang", "about", "subjek", "perihal"))),
     status: keStatus(pilih(raw, "status", "status_peraturan")),
     tanggal_penetapan: keTanggal(
       pilih(raw, "tanggal_penetapan", "tanggal_ditetapkan", "date_enacted", "tanggal"),

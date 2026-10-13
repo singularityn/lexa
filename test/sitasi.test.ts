@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { uraiSitasi } from "../src/worker/lib/sitasi";
+import { hanyaSitasi, uraiSitasi } from "../src/worker/lib/sitasi";
 import { uraiKueri } from "../src/worker/lib/query";
 import { sitasiDariTeks } from "../src/worker/lib/bpk";
 
@@ -142,5 +142,40 @@ describe("integrasi dengan pengurai kueri dan pengurai relasi", () => {
     expect(sitasiDariTeks("Undang-Undang Cipta Kerja No. 11 Tahun 2020")).toEqual({ jenis: "UU", nomor: "11", tahun: 2020 });
     expect(sitasiDariTeks("TAP MPR No. 5 Tahun 1998")).toEqual({ jenis: "TAP_MPR", nomor: "5", tahun: 1998 });
     expect(sitasiDariTeks("tidak ada sitasi di sini")).toBeNull();
+  });
+});
+
+describe("hanyaSitasi: kueri yang tak lain dari sebuah sitasi", () => {
+  it.each([
+    "UU 13/2003",
+    "uu 13 / 2003",
+    '"UU 13/2003"',
+    "  UU No. 13 Tahun 2003  ",
+    "Undang-Undang Nomor 13 Tahun 2003",
+    "Undang-Undang Republik Indonesia Nomor 13 Tahun 2003",
+    "Peraturan Pemerintah Nomor 35 Tahun 2021.",
+    "PP 35/2021",
+    "Perpu 2/2022",
+    "(UU 13/2003)",
+    "48/POJK.04/2016",
+  ])("%s -> ya", (teks) => {
+    expect(hanyaSitasi(teks)).toBe(true);
+  });
+
+  it.each([
+    "UU 13/2003 pesangon",
+    "pesangon UU 13/2003",
+    "pesangon menurut UU 13/2003",
+    "UU 13/2003 dan PP 35/2021",
+    "tentang UU 13/2003",
+    "pasal 156 UU 13/2003",
+    "pesangon",
+    "13/2003",
+    "UU",
+    "",
+    "   ",
+    "UU 13/1800",
+  ])("%j -> bukan", (teks) => {
+    expect(hanyaSitasi(teks)).toBe(false);
   });
 });

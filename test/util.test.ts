@@ -3,7 +3,7 @@ import { diagnosaToken, tokenSah } from "../src/worker/lib/auth";
 import { klausaBidang, pecahBidang } from "../src/worker/lib/bidang";
 import { headerCors } from "../src/worker/lib/cors";
 import { potongTeks } from "../src/worker/lib/ingest";
-import { rapikanArtikel, rapikanInstansi, rapikanLaw, rapikanNomorPasal } from "../src/shared/label";
+import { bersihkanJudul, rapikanArtikel, rapikanInstansi, rapikanLaw, rapikanNomorPasal } from "../src/shared/label";
 import { gabungRRF, jatahJudul, kunciCache, urutkanBertingkat, type KandidatMentah } from "../src/worker/lib/search";
 import {
   bacaSesi,
@@ -336,6 +336,31 @@ describe("rapikanInstansi / rapikanLaw", () => {
     const kotor = { judul: "x", instansi: "[object Object]", tahun: 2003 };
     expect(rapikanLaw(kotor)).toEqual({ judul: "x", instansi: null, tahun: 2003 });
     expect(kotor.instansi).toBe("[object Object]"); // tidak mengubah masukan
+  });
+});
+
+describe("bersihkanJudul (karakter pengganti dari sumber)", () => {
+  it.each([
+    // Data produksi: UU 35/1953.
+    ["Undang-Undang Nomor 35 Tahun 1953 tentang Penetapan ï¿½undang-undang Darurat Nomor 19 Tahun 1951", "Undang-Undang Nomor 35 Tahun 1953 tentang Penetapan undang-undang Darurat Nomor 19 Tahun 1951"],
+    ["Penetapan \uFFFDundang-undang Darurat", "Penetapan undang-undang Darurat"],
+    ["Pasal \uFFFD\uFFFD dan ï¿½ï¿½ lain", "Pasal dan lain"],
+    ["Judul biasa tentang Kelautan", "Judul biasa tentang Kelautan"],
+    ["", ""],
+  ])("%j -> %j", (masuk, keluar) => {
+    expect(bersihkanJudul(masuk)).toBe(keluar);
+  });
+
+  it("dipanggil berulang tetap konsisten (tanpa keadaan tersisa dari ekspresi reguler)", () => {
+    for (let i = 0; i < 4; i++) expect(bersihkanJudul("a \uFFFD b")).toBe("a b");
+  });
+
+  it("rapikanLaw ikut membersihkan judul dan tentang, dan tidak mengubah objek yang sudah bersih", () => {
+    const rusak = { judul: "UU \uFFFDx", tentang: "T\uFFFD", instansi: "Presiden", tahun: 1953 };
+    expect(rapikanLaw(rusak)).toEqual({ judul: "UU x", tentang: "T", instansi: "Presiden", tahun: 1953 });
+    expect(rusak.judul).toBe("UU \uFFFDx");
+    const bersih = { judul: "UU x", tentang: null, instansi: "Presiden" };
+    expect(rapikanLaw(bersih)).toBe(bersih);
   });
 });
 

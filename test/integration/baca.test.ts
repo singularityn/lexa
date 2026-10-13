@@ -533,7 +533,20 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
         expect(res.headers.get("x-content-type-options"), path).toBe("nosniff");
         expect(res.headers.get("x-frame-options"), path).toBe("DENY");
         expect(res.headers.get("referrer-policy"), path).toBe("strict-origin-when-cross-origin");
+        // Lewat HTTPS (harness memakai https://lexa.test), peramban diminta tetap di HTTPS.
+        expect(res.headers.get("strict-transport-security"), path).toBe("max-age=31536000; includeSubDomains");
       }
+    });
+
+    it("HSTS tidak dikirim lewat HTTP biasa (pratinjau lokal)", async () => {
+      const { default: worker } = await import("../../src/worker/index");
+      const res = await worker.fetch(new Request("http://localhost:8787/api/tidak-ada"), l.env, { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext);
+      expect(res.headers.get("strict-transport-security")).toBeNull();
+    });
+
+    it("/api/stats boleh dipakai ulang peramban sebentar (beranda memanggilnya di setiap kunjungan)", async () => {
+      const res = await panggil(l, "/api/stats");
+      expect(res.headers.get("cache-control")).toBe("public, max-age=30, stale-while-revalidate=120");
     });
 
     it("rute /api yang tidak dikenal dijawab 404 JSON", async () => {

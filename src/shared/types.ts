@@ -132,6 +132,11 @@ export interface SearchResponse {
    */
   longgar?: { penuh: number };
   /**
+   * Ada (true) bila pencarian makna (embedding + Vectorize) gagal atau melewati batas waktu, sehingga hasilnya hanya dari
+   * kata kunci. Hasil seperti ini tidak disimpan di cache; mengulang pencarian biasanya menghasilkan jawaban lengkap.
+   */
+  tanpa_makna?: true;
+  /**
    * Ada bila kueri berbentuk sitasi ke jenis peraturan di luar cakupan Lexa ("Perpres 12/2020"): kode jenisnya
    * ("PERPRES") dan jenis yang dicakup. Peraturan itu sendiri tidak dicari; hasil lain tetap berasal dari
    * kata-katanya.

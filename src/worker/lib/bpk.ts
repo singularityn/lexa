@@ -8,7 +8,7 @@
  */
 
 import type { Law, JenisRelasi, StatusPeraturan } from "../../shared/types";
-import { rapikanNomorPasal } from "../../shared/label";
+import { bersihkanJudul, rapikanNomorPasal } from "../../shared/label";
 import { nomorKanonik } from "./nomor";
 import { uraiSitasi } from "./sitasi";
 
@@ -168,7 +168,9 @@ export function petakanDokumen(doc: DokumenBpk): {
 } | null {
   const meta = doc && typeof doc.meta === "object" && doc.meta ? doc.meta : {};
 
-  const judul = metaAmbil(meta, "Judul", "Tentang");
+  const judulMentah = metaAmbil(meta, "Judul", "Tentang");
+  // Karakter pengganti dari sumber (U+FFFD) tak berguna sebagai judul; lihat bersihkanJudul.
+  const judul = judulMentah ? bersihkanJudul(judulMentah) : judulMentah;
   if (!judul) return null;
 
   const bentukSingkat = metaAmbil(meta, "Bentuk Singkat", "Bentuk", "Jenis");

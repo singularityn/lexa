@@ -12,7 +12,7 @@ import { uraiAkses } from "../lib/akses";
 import type { KonteksIngest } from "../lib/ingest";
 import { jalankanTik } from "../lib/tik";
 import { arsipkanMentah, arsipkanTeksDanIndeks, SQL_GILIRAN, simpanIsi } from "../lib/isi";
-import { labelSitasi, rapikanArtikel, rapikanLaw } from "../../shared/label";
+import { bersihkanJudul, labelSitasi, rapikanArtikel, rapikanLaw } from "../../shared/label";
 import { pilihDalam } from "../lib/d1";
 import { aliasUri, selesaikanUri } from "../lib/uri";
 import { bacaCakupan, dalamCakupan, klausaCakupan, uriJelasDiLuarCakupan } from "../../shared/cakupan";
@@ -35,6 +35,7 @@ function konteksPencarian(env: Env): KonteksPencarian {
     embeddingModel: env.EMBEDDING_MODEL,
     cacheTtl: Number(env.SEARCH_CACHE_TTL) || 3600,
     cakupan: bacaCakupan(env.CAKUPAN_JENIS),
+    batasVektorMs: Number(env.BATAS_VEKTOR_MS) || undefined,
   };
 }
 
@@ -345,7 +346,7 @@ api.get("/suggest", async (c) => {
     suggestions: [
       ...[...cocok, ...lain.sort((a, b) => b.tahun - a.tahun)].slice(0, 6).map((l) => ({
         tipe: "peraturan" as const,
-        teks: `${labelSitasi(l)} — ${l.judul}`,
+        teks: `${labelSitasi(l)} — ${bersihkanJudul(l.judul)}`,
         uri: l.frbr_uri,
       })),
       ...populer.results.map((p) => ({ tipe: "kueri" as const, teks: p.query, uri: null })),
@@ -452,7 +453,7 @@ api.get("/stats", async (c) => {
         antrean: kv.get("denyut:antrean") ?? null,
       },
     },
-  });
+  }, 200, { "Cache-Control": "public, max-age=30, stale-while-revalidate=120" });
 });
 
 // ---------------------------------------------------------------------------

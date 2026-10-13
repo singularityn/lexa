@@ -66,8 +66,24 @@ export function rapikanArtikel<T extends { nomor_pasal: string }>(a: T): T {
   return nomor === a.nomor_pasal ? a : { ...a, nomor_pasal: nomor };
 }
 
+/** Karakter pengganti Unicode (U+FFFD) dan wujud mojibake-nya ("ï¿½": UTF-8 yang terbaca sebagai Latin-1). */
+const POLA_KARAKTER_RUSAK = /(?:ï¿½|�)+/g;
+
+/**
+ * Buang karakter pengganti yang terbawa dari sumber ke judul: UU 35/1953 di produksi berjudul "... tentang Penetapan
+ * ï¿½undang-undang Darurat Nomor 19 Tahun 1951 ...". Karakter aslinya tak bisa dipulihkan, tetapi sisa katanya terbaca.
+ * Dipakai di sisi baca (API, pencarian, pratinjau tautan) dan saat menyimpan judul baru.
+ */
+export function bersihkanJudul(teks: string): string {
+  const tanpaRusak = teks.replace(POLA_KARAKTER_RUSAK, "");
+  return tanpaRusak === teks ? teks : tanpaRusak.replace(/\s{2,}/g, " ").trim();
+}
+
 /** Rapikan kolom-kolom `laws` yang bisa berisi sisa data buruk sebelum dikirim ke klien. */
-export function rapikanLaw<T extends { instansi: string | null }>(law: T): T {
+export function rapikanLaw<T extends { instansi: string | null; judul?: string; tentang?: string | null }>(law: T): T {
   const instansi = rapikanInstansi(law.instansi);
-  return instansi === law.instansi ? law : { ...law, instansi };
+  const judul = typeof law.judul === "string" ? bersihkanJudul(law.judul) : law.judul;
+  const tentang = typeof law.tentang === "string" ? bersihkanJudul(law.tentang) : law.tentang;
+  if (instansi === law.instansi && judul === law.judul && tentang === law.tentang) return law;
+  return { ...law, instansi, ...(judul !== undefined ? { judul } : {}), ...(tentang !== undefined ? { tentang } : {}) };
 }

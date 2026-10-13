@@ -9,13 +9,13 @@
  */
 
 import type { SearchHit, SearchFilters, SearchMode, SearchResponse, StatusPeraturan } from "../../shared/types";
-import { rapikanNomorPasal } from "../../shared/label";
+import { bersihkanJudul, rapikanNomorPasal } from "../../shared/label";
 import { CAKUPAN_BAWAAN, dalamCakupan, klausaCakupan, type Cakupan } from "../../shared/cakupan";
 import { uraiKueri, kueriUntukEmbedding, type KueriTerurai } from "./query";
 import { pilahBerjudul } from "./judul";
 import { klausaBidang } from "./bidang";
 import { pilihDalam } from "./d1";
-import type { Sitasi } from "./sitasi";
+import { hanyaSitasi, type Sitasi } from "./sitasi";
 
 /** Konstanta peredam RRF. 60 adalah nilai standar dari makalah Cormack dkk. */
 const RRF_K = 60;
@@ -494,7 +494,7 @@ async function hidrasi(
     .bind(...uriUnik)
     .all<Omit<BarisHidrasi, "article_id" | "nomor_pasal" | "ayat" | "isi">>();
 
-  const lawMap = new Map(lawRows.results.map((r) => [r.frbr_uri, r]));
+  const lawMap = new Map(lawRows.results.map((r) => [r.frbr_uri, { ...r, judul: bersihkanJudul(r.judul), tentang: r.tentang === null ? null : bersihkanJudul(r.tentang) }]));
 
   // Detail pasal, bila ada kandidat level pasal.
   const artMap = new Map<string, { nomor_pasal: string; ayat: string | null; isi: string }>();
@@ -549,6 +549,36 @@ export interface KonteksPencarian {
   cacheTtl: number;
   /** Jenis peraturan yang boleh muncul di hasil (shared/cakupan.ts). */
   cakupan: Cakupan;
+  /** Batas waktu pencarian makna dalam milidetik; bawaan `BATAS_VEKTOR_MS`. */
+  batasVektorMs?: number;
+}
+
+/**
+ * Lama paling banyak menunggu pencarian makna (embedding Workers AI + Vectorize) sebelum hasil kata kunci dikirim sendiri.
+ * Pengukuran produksi (13 Okt 2026): satu panggilan dingin menahan seluruh jawaban 21 detik, padahal pencarian kata kunci
+ * sudah selesai dalam sepersekian detik. Pencarian makna hanya pelengkap; ia tak boleh membuat pengguna menunggu.
+ */
+export const BATAS_VEKTOR_MS = 3000;
+
+interface HasilVektor {
+  kandidat: KandidatMentah[];
+  /** Salah bila AI/Vectorize gagal atau melewati batas waktu: hasilnya hanya dari kata kunci dan tak boleh di-cache. */
+  tuntas: boolean;
+}
+
+/** Pencarian makna dengan batas waktu. Tidak pernah menolak: galat dan waktu habis menjadi daftar kosong dengan `tuntas: false`. */
+function cariVektorBerbatas(ctx: KonteksPencarian, kueri: string, filters: SearchFilters, kedalaman: number): Promise<HasilVektor> {
+  const kerja: Promise<HasilVektor> = cariVektor(ctx.ai, ctx.vectorize, ctx.embeddingModel, kueri, filters, kedalaman).then(
+    (kandidat) => ({ kandidat, tuntas: true }),
+    () => ({ kandidat: [], tuntas: false }),
+  );
+  let pewaktu: ReturnType<typeof setTimeout> | undefined;
+  const habis = new Promise<HasilVektor>((selesai) => {
+    pewaktu = setTimeout(() => selesai({ kandidat: [], tuntas: false }), ctx.batasVektorMs ?? BATAS_VEKTOR_MS);
+  });
+  return Promise.race([kerja, habis]).finally(() => {
+    if (pewaktu !== undefined) clearTimeout(pewaktu);
+  });
 }
 
 /**
@@ -617,15 +647,29 @@ export async function cari(
   // antarmuka bisa menyatakan terus terang bahwa peraturannya memang tidak dimuat. Pencarian kata tetap
   // jalan: peraturan dalam cakupan yang menyebutnya masih berguna bagi pencari.
   let luarCakupan: string | undefined;
+  let sitasiDitemukan = false;
   if (terurai.sitasi) {
     if (dalamCakupan(ctx.cakupan, terurai.sitasi.jenis)) {
-      daftar.push(await cariSitasi(ctx.db, terurai.sitasi, filters, ctx.cakupan).catch(() => []));
+      const dokumen = await cariSitasi(ctx.db, terurai.sitasi, filters, ctx.cakupan).catch(() => []);
+      daftar.push(dokumen);
+      sitasiDitemukan = dokumen.length > 0;
     } else {
       luarCakupan = terurai.sitasi.jenis;
     }
   }
 
-  if (mode === "hybrid" || mode === "keyword") {
+  // Kueri yang HANYA sitasi dan menemukan dokumennya ("UU 13/2003") dijawab dokumen itu saja. Mencari kata dan makna
+  // bagi "13" dan "2003" hanya mendatangkan UU bernomor mirip yang tak relevan (UU 13/2009, UU 27/2008, ...) dan
+  // menambah satu sampai tiga detik. Sitasi yang tak ditemukan tetap jatuh ke pencarian biasa di bawah.
+  const hanyaDokumen = sitasiDitemukan && hanyaSitasi(opsi.query);
+
+  // Pencarian makna dimulai SEKARANG dan berjalan berbarengan dengan pencarian kata kunci (dulu ia menunggu semua kueri
+  // FTS selesai), dengan batas waktu: ia pelengkap dan tak boleh menahan jawaban.
+  const vektorJanji =
+    !hanyaDokumen && (mode === "hybrid" || mode === "semantic") ? cariVektorBerbatas(ctx, opsi.query, filters, kedalaman) : null;
+  let tanpaMakna = false;
+
+  if (!hanyaDokumen && (mode === "hybrid" || mode === "keyword")) {
     const adaSinonim = terurai.ftsLiteral !== terurai.fts;
     // Kueri berbentuk sitasi sudah punya daftarnya sendiri, dan nomor serta tahun di dalamnya bukan kata judul.
     const pakaiJudul = opsi.prioritasJudul !== false && !terurai.sitasi;
@@ -668,10 +712,11 @@ export async function cari(
     }
   }
 
-  if (mode === "hybrid" || mode === "semantic") {
-    const vektor = await cariVektor(
-      ctx.ai, ctx.vectorize, ctx.embeddingModel, opsi.query, filters, kedalaman,
-    ).catch(() => []); // Vectorize/AI gagal tidak boleh menjatuhkan pencarian keyword
+  if (vektorJanji) {
+    // Vectorize/AI gagal atau lambat tidak boleh menjatuhkan pencarian kata kunci: hasilnya kosong dan ditandai.
+    const hasilVektor = await vektorJanji;
+    if (!hasilVektor.tuntas) tanpaMakna = true;
+    const vektor = hasilVektor.kandidat;
     // Vektor peraturan yang kini di luar cakupan masih ada di Vectorize dan tidak disaring di sana (filter metadata
     // hanya bekerja untuk vektor yang diunggah setelah indeks metadatanya dibuat, dan itu tak bisa dipastikan dari
     // luar). Mereka gugur di `hidrasi` menurut kolom `jenis`.
@@ -730,6 +775,7 @@ export async function cari(
     expanded_terms: terurai.terms,
     cached: false,
     ...(longgar ? { longgar } : {}),
+    ...(tanpaMakna ? { tanpa_makna: true as const } : {}),
     ...(luarCakupan ? { di_luar_cakupan: { jenis: luarCakupan, cakupan: [...ctx.cakupan] } } : {}),
   };
 }
@@ -747,8 +793,9 @@ export async function cariDenganCache(
   const hasil = await cari(ctx, opsi);
 
   // Jangan cache hasil kosong: biasanya menandakan indeks belum lengkap,
-  // dan menyimpannya akan mengunci pengguna pada jawaban salah selama TTL.
-  if (hasil.hits.length > 0) {
+  // dan menyimpannya akan mengunci pengguna pada jawaban salah selama TTL. Hasil tanpa pencarian makna (AI/Vectorize
+  // gagal atau lambat) juga tidak: gangguan sesaat tak boleh menetap sebagai jawaban yang kurang selama TTL.
+  if (hasil.hits.length > 0 && !hasil.tanpa_makna) {
     await ctx.cache
       .put(kunci, JSON.stringify(hasil), { expirationTtl: ctx.cacheTtl })
       .catch(() => {});

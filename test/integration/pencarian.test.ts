@@ -25,6 +25,40 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
   const q = (teks: string, ekstra = "") => `q=${encodeURIComponent(teks)}${ekstra ? `&${ekstra}` : ""}`;
   const uris = (hits: SearchHit[]) => hits.map((h) => h.article_id ?? h.frbr_uri);
 
+  describe("judul berkarakter rusak dari sumber", () => {
+    const URI = "/akn/id/act/uu/1953/35";
+    const RUSAK = "Undang-Undang Nomor 35 Tahun 1953 tentang Penetapan ï¿½undang-undang Darurat Nomor 19 Tahun 1951 tentang Pemungutan Pajak";
+    const BERSIH = "Undang-Undang Nomor 35 Tahun 1953 tentang Penetapan undang-undang Darurat Nomor 19 Tahun 1951 tentang Pemungutan Pajak";
+
+    beforeEach(async () => {
+      await sisipkan(l, [{ uri: URI, jenis: "UU", nomor: "35", tahun: 1953, judul: RUSAK, tentang: "Pemungutan� Pajak" }]);
+    });
+
+    it("pencarian, telusur, detail, saran ketik, dan pratinjau tautan menampilkan judul yang bersih", async () => {
+      const b = await cari(q("pemungutan pajak", "mode=keyword"));
+      const hit = b.hits.find((h) => h.frbr_uri === URI);
+      expect(hit).toMatchObject({ judul: BERSIH, tentang: "Pemungutan Pajak" });
+
+      const telusur = await json<{ laws: Array<{ frbr_uri: string; judul: string }> }>(await panggil(l, "/api/laws?per_page=100"));
+      expect(telusur.laws.find((x) => x.frbr_uri === URI)?.judul).toBe(BERSIH);
+
+      const detail = await json<{ law: { judul: string; tentang: string | null } }>(await panggil(l, `/api/laws/detail?uri=${encodeURIComponent(URI)}`));
+      expect(detail.law).toMatchObject({ judul: BERSIH, tentang: "Pemungutan Pajak" });
+
+      const saran = await json<{ suggestions: Array<{ teks: string }> }>(await panggil(l, `/api/suggest?q=${encodeURIComponent("Undang-Undang Nomor 35")}`));
+      expect(saran.suggestions.map((s) => s.teks).join("\n")).toContain(`— ${BERSIH}`);
+      expect(saran.suggestions.map((s) => s.teks).join("\n")).not.toMatch(/ï¿½|�/);
+
+      const halaman = await (await panggil(l, `/peraturan?uri=${encodeURIComponent(URI)}`, { headers: { "user-agent": "facebookexternalhit/1.1" } })).text();
+      expect(halaman).not.toMatch(/ï¿½|�/);
+    });
+
+    it("data di D1 tidak diubah (pembersihan hanya di sisi baca)", async () => {
+      await cari(q("pemungutan pajak", "mode=keyword"));
+      expect(await l.db.prepare(`SELECT judul FROM laws WHERE frbr_uri = ?`).bind(URI).first()).toEqual({ judul: RUSAK });
+    });
+  });
+
   describe("nomor pasal hasil OCR", () => {
     it('hasil pasal "1O" ditampilkan sebagai Pasal 10, sedangkan id (tautan) tetap id aslinya', async () => {
       await sisipkan(l, [{ uri: "/akn/id/act/uu/2023/99", jenis: "UU", nomor: "99", tahun: 2023, judul: "Contoh OCR", pasal: [{ nomor: "1O", ayat: "1", isi: "Setiap orang wajib menjaga kebersihan lingkungan pasar tradisional." }] }]);
@@ -380,11 +414,30 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
 
   describe("sitasi", () => {
     it("'UU 13/2003' menempatkan peraturan itu di peringkat teratas dengan sumber sitasi", async () => {
-      const b = await cari(q("UU 13/2003"));
+      // Sitasi yang disertai kata lain tetap dicari sebagai teks juga; bobot sitasi jauh di atas sumber lain.
+      const b = await cari(q("UU 13/2003 pekerja"));
       expect(b.hits[0]).toMatchObject({ frbr_uri: "/akn/id/act/uu/2003/13", article_id: null });
       expect(b.hits[0].sources).toContain("sitasi");
-      // Bobot sitasi jauh di atas sumber lain: tidak ada hasil yang boleh menggesernya.
+      expect(b.hits.length).toBeGreaterThan(1);
       expect(b.hits[0].score).toBeGreaterThan(10 * b.hits[1].score);
+    });
+
+    it("kueri yang HANYA sitasi dijawab dokumennya saja, tanpa pencarian kata dan makna", async () => {
+      // "13" dan "2003" cuma angka biasa di ribuan pasal: kata dan makna hanya mendatangkan sampah dan menambah detik.
+      const embeddingSebelum = l.ai.panggilan.length;
+      for (const kueri of ["UU 13/2003", '"UU 13/2003"', "Undang-Undang Nomor 13 Tahun 2003", "uu no. 13 tahun 2003"]) {
+        const b = await cari(q(kueri));
+        expect(b.hits.map((h) => h.frbr_uri), kueri).toEqual(["/akn/id/act/uu/2003/13"]);
+        expect(b.hits[0].sources, kueri).toEqual(["sitasi"]);
+      }
+      expect(l.ai.panggilan.length).toBe(embeddingSebelum); // tidak ada embedding yang diminta
+    });
+
+    it("sitasi yang tak ditemukan di indeks jatuh ke pencarian biasa (kata dan makna tetap jalan)", async () => {
+      const embeddingSebelum = l.ai.panggilan.length;
+      const b = await cari(q("UU 99/1999"));
+      expect(b.hits.some((h) => h.frbr_uri === "/akn/id/act/uu/1999/99")).toBe(false);
+      expect(l.ai.panggilan.length).toBeGreaterThan(embeddingSebelum);
     });
 
     it("sitasi dikenali pada semua mode, termasuk keyword dan semantic", async () => {
@@ -699,6 +752,63 @@ describe.skipIf(!sqliteAda)("GET /api/search", () => {
       const res = await panggil(l, `/api/search?${q("pesangon", "mode=semantic")}`);
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ hits: [], total: 0 });
+    });
+
+    it("Workers AI gagal: hasil kata kunci bertanda tanpa_makna dan TIDAK di-cache (gangguan sesaat tak boleh menetap)", async () => {
+      l.ai.galat = new Error("AI mati");
+      const gagal = await cari(q("pesangon"));
+      expect(gagal.tanpa_makna).toBe(true);
+      expect([...l.kv.isi.keys()].filter((k) => k.startsWith("cari:"))).toEqual([]);
+
+      l.ai.galat = null;
+      const pulih = await cari(q("pesangon"));
+      expect(pulih.tanpa_makna).toBeUndefined();
+      expect(pulih.cached).toBe(false);
+      expect([...l.kv.isi.keys()].filter((k) => k.startsWith("cari:"))).toHaveLength(1);
+      expect((await cari(q("pesangon"))).cached).toBe(true);
+    });
+
+    it("pencarian makna yang lambat tidak menahan jawaban: lewat batas waktu, hasil kata kunci dikirim dan ditandai", async () => {
+      l.env.BATAS_VEKTOR_MS = "40";
+      l.ai.tundaEmbedding = 600;
+      const mulai = Date.now();
+      const b = await cari(q("pesangon"));
+      const lama = Date.now() - mulai;
+      expect(lama).toBeLessThan(450); // jauh di bawah 600 ms penundaan embedding
+      expect(b.tanpa_makna).toBe(true);
+      expect(b.hits.length).toBeGreaterThan(0);
+      for (const h of b.hits) expect(h.sources).toEqual(["fts"]);
+      expect([...l.kv.isi.keys()].filter((k) => k.startsWith("cari:"))).toEqual([]);
+    });
+
+    it("pencarian makna yang selesai tepat waktu tetap ikut (tanpa penanda)", async () => {
+      l.env.BATAS_VEKTOR_MS = "2000";
+      l.ai.tundaEmbedding = 20;
+      const b = await cari(q("pemutusan hubungan kerja", "mode=semantic"));
+      expect(b.tanpa_makna).toBeUndefined();
+      expect(b.hits.length).toBeGreaterThan(0);
+      expect(b.hits.every((h) => h.sources.includes("vector"))).toBe(true);
+    });
+
+    it("pencarian makna dimulai berbarengan dengan kata kunci, bukan sesudah semua kueri FTS selesai", async () => {
+      // Dulu embedding baru diminta setelah seluruh kueri FTS selesai, sehingga waktunya dijumlahkan. Sekarang embedding
+      // sudah diminta sebelum kueri FTS pertama dikirim ke D1.
+      const urutan: string[] = [];
+      const prepareAsli = l.env.DB.prepare.bind(l.env.DB);
+      l.env.DB.prepare = ((sql: string) => {
+        if (/\bMATCH\b/.test(sql) && !urutan.includes("fts")) urutan.push("fts");
+        return prepareAsli(sql);
+      }) as typeof l.env.DB.prepare;
+      const jalankanAsli = l.ai.run.bind(l.ai);
+      l.ai.run = (async (...a: Parameters<typeof jalankanAsli>) => {
+        if (!urutan.includes("embedding")) urutan.push("embedding");
+        return jalankanAsli(...a);
+      }) as typeof l.ai.run;
+
+      const b = await cari(q("pemutusan hubungan kerja"));
+      expect(urutan).toEqual(["embedding", "fts"]);
+      expect(b.hits.some((h) => h.sources.includes("fts"))).toBe(true);
+      expect(b.hits.some((h) => h.sources.includes("vector"))).toBe(true);
     });
 
     it("kandidat vektor yatim (peraturannya sudah dihapus) disaring dari hasil", async () => {

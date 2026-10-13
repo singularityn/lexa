@@ -49,6 +49,9 @@ app.use("*", async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
   c.header("X-Frame-Options", "DENY");
+  // HSTS hanya bermakna lewat HTTPS (peramban mengabaikannya di HTTP biasa, mis. pratinjau lokal). Tanpa "preload":
+  // *.workers.dev berada di TLD .dev, yang sudah dipaksa HTTPS oleh daftar preload peramban.
+  if (c.req.url.startsWith("https:")) c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
 });
 
 // Rute spesifik didaftarkan lebih dulu: `api` menangkap semua sisa rute

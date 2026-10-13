@@ -18,6 +18,7 @@
  */
 
 import { pratinjauPeraturan } from "../../../public/js/format.js";
+import { bersihkanJudul } from "../../shared/label";
 import { bacaCakupan, klausaCakupan, type Cakupan } from "../../shared/cakupan";
 import { aliasUri } from "./uri";
 
@@ -104,7 +105,7 @@ export function suntikPratinjau(html: string, p: IsiPratinjau): string | null {
 
 /** Susun isi pratinjau dari baris peraturan. @param asal mis. "https://lexa.example" (tanpa garis miring akhir) */
 export function susunPratinjau(baris: BarisPratinjau, asal: string): IsiPratinjau {
-  const { judul, deskripsi } = pratinjauPeraturan(baris);
+  const { judul, deskripsi } = pratinjauPeraturan({ ...baris, judul: bersihkanJudul(baris.judul) });
   return {
     judul,
     deskripsi,

@@ -34,6 +34,11 @@ interface Env {
   /** TTL cache hasil pencarian dalam detik (string; bawaan 3600). */
   SEARCH_CACHE_TTL: string;
   /**
+   * Batas waktu pencarian makna (embedding Workers AI + Vectorize) dalam milidetik (string; bawaan `BATAS_VEKTOR_MS` di
+   * lib/search.ts). Lewat batas ini hasil kata kunci dikirim tanpa menunggu, dan tidak disimpan di cache.
+   */
+  BATAS_VEKTOR_MS?: string;
+  /**
    * Jenis peraturan yang dicakup, kode seperti `laws.jenis` dipisah koma (mis. `UUD,TAP_MPR,UU,PERPPU,PP`).
    * Tak ada atau tak sah: `CAKUPAN_BAWAAN` di shared/cakupan.ts. Lihat berkas itu.
    */
