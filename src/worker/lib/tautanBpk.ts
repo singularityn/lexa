@@ -316,7 +316,8 @@ export async function tautkanBpk(
   daftar: readonly TautanMasuk[],
   opsi: OpsiTautan,
 ): Promise<{ ringkas: RingkasTautan; hasil: HasilTautan[] }> {
-  const kenal = daftar.map((m) => ({ masuk: m, kenal: kenaliTautan(m) }));
+  // Entri berasal dari peramban: larik JSON bisa memuat null atau nilai bukan objek, dan itu tak boleh menjatuhkan seluruh permintaan.
+  const kenal = daftar.map((m) => ({ masuk: (m && typeof m === "object" ? m : {}) as TautanMasuk, kenal: kenaliTautan(m) }));
 
   // Sitasi dalam cakupan yang perlu dicari, tanpa kembaran.
   const calon = new Map<string, Sitasi>();
@@ -349,7 +350,9 @@ export async function tautkanBpk(
   for (const { masuk, kenal: k } of kenal) {
     const indeks = hasil.length;
     if (!k.ok) {
-      hasil.push({ bpk_id: masuk.bpk_id != null ? String(masuk.bpk_id) : null, status: "tidak_dikenali", alasan: k.alasan });
+      // Id dokumen dilaporkan bila terbaca (dari kolom atau alamat), supaya pemanggil bisa mencatat entri mana yang bermasalah.
+      const id = masuk.bpk_id != null ? String(masuk.bpk_id) : (bacaAlamatBpk(typeof masuk.url === "string" ? masuk.url : null)?.bpk_id ?? null);
+      hasil.push({ bpk_id: id, status: "tidak_dikenali", alasan: k.alasan });
       continue;
     }
     const { dok } = k;

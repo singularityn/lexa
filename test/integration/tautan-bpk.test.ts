@@ -190,6 +190,17 @@ describe.skipIf(!sqliteAda)("POST /api/impor/tautan", () => {
       expect(b.ringkas).toMatchObject({ luar_cakupan: 1, tidak_dikenali: 4, ditautkan: 1 });
     });
 
+    it("larik yang memuat null atau nilai bukan objek tidak menjatuhkan permintaan (500); id dokumen yang terbaca dari alamat dilaporkan", async () => {
+      const b = await tautan([null, 5, "teks", { url: "/Details/7/selengkapnya" }, { bpk_id: 8, teks: "Selengkapnya" }]);
+      expect(b.hasil).toEqual([
+        { bpk_id: null, status: "tidak_dikenali", alasan: "id dokumen BPK tak ditemukan" },
+        { bpk_id: null, status: "tidak_dikenali", alasan: "id dokumen BPK tak ditemukan" },
+        { bpk_id: null, status: "tidak_dikenali", alasan: "id dokumen BPK tak ditemukan" },
+        { bpk_id: "7", status: "tidak_dikenali", alasan: "sitasi tak dikenali dari slug maupun teks tautan" },
+        { bpk_id: "8", status: "tidak_dikenali", alasan: "sitasi tak dikenali dari slug maupun teks tautan" },
+      ]);
+    });
+
     it("pemetaan manual (uri) menautkan tanpa sitasi; uri yang tak ada atau di luar cakupan dilaporkan", async () => {
       await sisipkan(l, [{ uri: "/akn/id/act/uud/1945/perubahan-4", jenis: "UUD", nomor: "1945/P4", tahun: 1945, judul: "UUD 1945 Perubahan Keempat" }]);
       await l.db.prepare(`INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul) VALUES ('/akn/id/act/perpres/2020/1','PERPRES','1',2020,'Komisi')`).run();
