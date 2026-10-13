@@ -320,17 +320,18 @@ Agustus 2026 (`GET /api/admin/ukur`), yang mengonversi dan menilai tetapi tidak 
 | Vonis `bersih`/`ringan`, `ekstraksi_log.jumlah_pasal > 0`, arsip teks ada (`r2_text_key`) | 14 (KUHP/UU 1/2023: 1.032 pasal, UU 2/2017, UU 20/2016, UU 13/2016, UU 39/2014, UU 23/2007, ...) | pasal terukur tetapi tak pernah disimpan | `ekstrak-ulang` dengan `dariTeks: true` (tanpa Workers AI) |
 | Vonis `tanpa_pasal`, tanpa arsip teks | 89 (hampir semuanya UU 1946-1954) | judul pasal gaya lama "Pasal 1." (titik tunggal) dibuang pengurai sebagai catchword kaki halaman; diperbaiki di `uraikanPasal` (lib/bpk.ts) | `ekstrak-ulang` biasa (konversi ulang dari PDF; PDF-nya kecil, 20-80 KB) |
 
-Setelah sebuah rilis dengan perbaikan ini terpasang, jalankan dari mana saja yang punya token (token dibaca dari variabel
-lingkungan, jangan diketik di baris perintah yang tersimpan di riwayat):
+Setelah rilis dengan perbaikan ini terpasang, jalankan dari mana saja yang punya token (token dibaca tanpa gema dan tidak masuk
+riwayat perintah). `dariTeks: true` cukup untuk keduanya: peraturan yang punya arsip teks diuraikan tanpa Workers AI, yang tidak
+punya dikonversi ulang dari PDF-nya. Karena `batas` maksimum 100 per pemanggilan dan ada 106 peraturan, jalankan dua kali dengan
+jeda beberapa menit (antrean perlu waktu untuk memproses yang pertama):
 
 ```bash
 read -rs -p 'ADMIN_TOKEN: ' T; echo
-# 14 UU besar: uraikan arsip teks yang sudah ada
-curl -sS -X POST https://lexa.<akun>.workers.dev/api/impor/ekstrak-ulang -H "x-admin-token: $T" -H 'content-type: application/json' \
-  -d '{"jenis":["UU"],"batas":100,"dariTeks":true}'
-# sisanya (tanpa arsip): konversi ulang dari PDF; ulangi sampai "diantrekan" tidak naik lagi
-curl -sS -X POST https://lexa.<akun>.workers.dev/api/impor/ekstrak-ulang -H "x-admin-token: $T" -H 'content-type: application/json' \
-  -d '{"jenis":["UU","PERPPU","PP"],"batas":100}'
+for i in 1 2; do
+  curl -sS -X POST https://lexa.<akun>.workers.dev/api/impor/ekstrak-ulang -H "x-admin-token: $T" -H 'content-type: application/json' \
+    -d '{"jenis":["UU","PERPPU","PP"],"batas":100,"dariTeks":true}'; echo
+  [ "$i" = 1 ] && sleep 180
+done
 unset T
 ```
 
