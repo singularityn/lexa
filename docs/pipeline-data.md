@@ -196,7 +196,12 @@ Beberapa hal yang dijaga di sisi server karena data produksi menuntutnya:
 - **Jenis tak pernah ditukar**: BPK pernah menamai Perppu 7/1964 "uu-no-7-tahun-1964". Bila slug dan teks tautan menunjuk
   dua peraturan yang berbeda, data Lexa yang memutuskan; bila dua-duanya ada di Lexa, hasilnya `ambigu` dan tak ada yang ditulis.
 - **Tautan yang keliru berarti PDF yang keliru**, dan PDF yang keliru menimpa pasal yang benar. Karena itu teks kartu hasil
-  hanya dipakai untuk tahun Tap MPR, bukan untuk mengenali sitasi.
+  hanya dipakai untuk tahun Tap MPR, bukan untuk mengenali sitasi. Sebagai jaring terakhir, `ekstrak_pdf` membandingkan judul
+  resmi di kepala naskah hasil konversi ("PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 5 TAHUN 2021") dengan peraturan yang
+  dituju; bila judul resmi itu ditemukan dan milik peraturan lain, **pasal tidak disimpan** (teks konversi tetap diarsipkan,
+  PDF tetap ada, `ekstraksi_log` dan `isi_catatan` mencatat "PDF memuat judul PP 5/2021, bukan PP 99/2025"). Tanpa judul resmi
+  yang dikenali (naskah lama, angka rusak oleh OCR, Tap MPR, UUD) naskah diproses seperti biasa; Undang-undang dan Perppu
+  dianggap sejenis karena BPK pernah mencampurnya.
 - Halaman rincian tanpa `Status` tidak menjadikan peraturan "berlaku"; judul BPK tanpa pokok (" tentang ") tidak menggantikan
   judul lama yang memilikinya, tetapi menggantikan judul bersampah yang berpokok (mis. UU 4/2026 yang judulnya hasil salin PDF).
 
@@ -284,8 +289,11 @@ SELECT jenis, COUNT(*) AS total, SUM(bpk_id IS NOT NULL AND bpk_id <> '') AS ber
 -- Hasil ekstraksi PDF terakhir
 SELECT vonis, COUNT(*) FROM ekstraksi_log GROUP BY vonis;
 SELECT job, status, detail, jumlah, created_at FROM sync_log WHERE job LIKE 'impor_bpk%' OR job = 'ekstrak_pdf' ORDER BY id DESC LIMIT 20;
--- Penanda tanpa berkas
-SELECT COUNT(*) FROM sync_state WHERE key LIKE 'bpk_tanpa_berkas:%';
+-- Penanda tanpa berkas, dan alasannya (alasan "tautan PDF-nya tak dikenali" berarti halaman dimuat tetapi pemilih skrip
+-- tak mengenali tombol unduhnya: periksa satu halaman itu dengan { periksa: true })
+SELECT value, COUNT(*) FROM sync_state WHERE key LIKE 'bpk_tanpa_berkas:%' GROUP BY value;
+-- PDF yang ternyata bukan naskah peraturannya (pasal tidak disimpan)
+SELECT frbr_uri, catatan FROM ekstraksi_log WHERE catatan LIKE 'PDF memuat judul%';
 -- Duplikat data (satu peraturan, beberapa baris): Tap MPR ditulis tiga cara, PP "01" dan "1"
 SELECT frbr_uri, nomor, tahun, jumlah_pasal FROM laws WHERE jenis = 'TAP_MPR' ORDER BY tahun, lower(nomor);
 ```

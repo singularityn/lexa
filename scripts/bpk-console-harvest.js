@@ -38,7 +38,7 @@
  *   hanyaJelajah  true: berhenti sesudah penjelajahan
  *   awal          alamat daftar yang dijelajahi, mis. ["https://peraturan.bpk.go.id/Search?jenis=10"]. Bila kosong, daftar
  *                 jenis dicari dari halaman /Jenis BPK; atau, bila halaman yang sedang dibuka sudah berupa daftar, dari sana
- *   halamanMaks   batas halaman per daftar (bawaan 600)
+ *   halamanMaks   batas halaman per daftar (bawaan 2000; penjelajahan berhenti lebih dulu bila daftar habis)
  *   halamanAwal   mulai dari halaman ini (bawaan 1), untuk melanjutkan penjelajahan yang terputus
  *   buat          false: jangan membuat peraturan baru di Lexa untuk entri BPK yang belum ada di sana (bawaan: membuat)
  *   batas         paling banyak berapa peraturan dalam satu putaran panen PDF (bawaan 50, maksimum 200)
@@ -68,8 +68,11 @@
   var POLA_TEKS_UNDUH = /unduh|download|pdf|dokumen|naskah/i;
   /** Berkas pendamping, bukan naskah peraturannya. */
   var POLA_PENDAMPING = /lampiran|abstrak|terjemah|translation|english/i;
-  /** Tanda halaman tantangan Cloudflare (bukan halaman BPK yang sebenarnya). */
-  var POLA_TANTANGAN = /just a moment|cf-chl|challenge-platform|verify you are human/i;
+  /**
+   * Tanda halaman tantangan Cloudflare (bukan halaman BPK yang sebenarnya): judulnya, atau teks yang tampak di awal halaman.
+   * Kata "challenge-platform" sengaja tidak dipakai: skrip pelacak Cloudflare yang menyertakannya ada juga di halaman biasa.
+   */
+  var POLA_TANTANGAN = /just a moment|attention required|checking your browser|verify you are human|enable javascript and cookies/i;
   /** Tautan ke halaman rincian sebuah dokumen: /Details/<id>/<slug> atau /Home/Details/<id>/<slug>. */
   var POLA_RINCIAN = /\/(?:Home\/)?Details\/(\d+)(?:\/([^\/?#"]+))?/i;
   /** Berapa kegagalan beruntun sebelum putaran dihentikan. */
@@ -141,16 +144,42 @@
   // Membaca halaman BPK
   // ---------------------------------------------------------------------------------------------------------------
 
-  /** Pasangan label -> nilai dari tabel metadata halaman rincian (baris dengan dua sel). */
+  /** Label metadata yang dikenal Lexa (shared bpk.ts: petakanDokumen); dipakai pembaca cadangan bila bukan tabel dua sel. */
+  var LABEL_METADATA = [
+    "Judul", "Bentuk", "Bentuk Singkat", "Jenis", "Nomor", "Tahun", "Status", "Tanggal Penetapan", "Tanggal Pengundangan",
+    "Tanggal Berlaku", "T.E.U.", "T.E.U. Badan", "Tempat Penetapan", "Subjek", "Bidang", "Sumber", "Lokasi",
+  ];
+
+  /**
+   * Pasangan label -> nilai dari halaman rincian. Utama: tabel dengan baris dua sel (<tr><th/td>label</><td>nilai</td>). Bila
+   * yang terbaca kurang dari dua, dicoba daftar definisi (<dt>label</dt><dd>nilai</dd>) lalu elemen berlabel yang dikenal
+   * (mis. <div class="col">Nomor</div><div class="col">13</div>) dengan nilai di elemen saudara sesudahnya.
+   */
   function bacaMetadata(doc) {
     var meta = {};
+    var tambah = function (label, nilai) {
+      label = String(label || "").replace(/:$/, "").trim();
+      nilai = String(nilai || "").trim();
+      if (label && nilai && nilai.length <= 2000 && !(label in meta)) meta[label] = nilai;
+    };
     doc.querySelectorAll("tr").forEach(function (tr) {
       var sel = tr.querySelectorAll(":scope > th, :scope > td");
-      if (sel.length === 2) {
-        var label = teks(sel[0]).replace(/:$/, "");
-        var nilai = teks(sel[1]);
-        if (label && nilai && !(label in meta)) meta[label] = nilai;
-      }
+      if (sel.length === 2) tambah(teks(sel[0]), teks(sel[1]));
+    });
+    if (Object.keys(meta).length >= 2) return meta;
+    doc.querySelectorAll("dt").forEach(function (dt) {
+      var dd = dt.nextElementSibling;
+      if (dd && dd.tagName === "DD") tambah(teks(dt), teks(dd));
+    });
+    if (Object.keys(meta).length >= 2) return meta;
+    var dikenal = {};
+    LABEL_METADATA.forEach(function (l) { dikenal[l.toLowerCase()] = l; });
+    doc.querySelectorAll("th, td, dt, div, span, label, strong, b, p").forEach(function (el) {
+      if (el.children.length > 1) return;
+      var t = teks(el).replace(/:$/, "").trim();
+      var baku = dikenal[t.toLowerCase()];
+      var saudara = el.nextElementSibling;
+      if (baku && saudara) tambah(baku, teks(saudara));
     });
     return meta;
   }
@@ -309,15 +338,22 @@
     }
   }
 
+  /** Apakah dokumen ini halaman tantangan Cloudflare: dinilai dari judul dan awal teks yang tampak, bukan dari seluruh HTML. */
+  function halamanTantangan(doc) {
+    var awal = (doc.title || "") + " " + (doc.body ? doc.body.textContent.replace(/\s+/g, " ").slice(0, 600) : "");
+    return POLA_TANTANGAN.test(awal);
+  }
+
   /** Halaman HTML sebagai dokumen. Melempar bila galat HTTP atau yang diterima halaman tantangan. */
   async function bacaHalaman(ctx, url) {
     var res = await ambil(ctx, url, { credentials: "include", headers: { Accept: "text/html" } });
     var html = await res.text();
     var tantangan = "tantangan_cloudflare: selesaikan tantangan di tab ini (muat ulang halaman), lalu jalankan lagi";
-    if (res.status === 403 || (res.status === 503 && POLA_TANTANGAN.test(html))) throw new Error(tantangan);
-    if (!res.ok) throw new Error("HTTP " + res.status + " pada " + jalur(url));
     var doc = new DOMParser().parseFromString(html, "text/html");
-    if (POLA_TANTANGAN.test(html) && !doc.querySelector("a[href*='ownload']") && !doc.querySelector("a[href*='Details']")) throw new Error(tantangan);
+    if (res.status === 403 || (res.status === 503 && halamanTantangan(doc))) throw new Error(tantangan);
+    if (!res.ok) throw new Error("HTTP " + res.status + " pada " + jalur(url));
+    // Halaman yang tampak seperti tantangan tetapi memuat isi situs (tautan rincian, unduhan, tabel metadata) adalah halaman biasa.
+    if (halamanTantangan(doc) && !doc.querySelector("a[href*='ownload']") && !doc.querySelector("a[href*='Details']") && Object.keys(bacaMetadata(doc)).length < 2) throw new Error(tantangan);
     return doc;
   }
 
@@ -422,7 +458,7 @@
       var kunjungan = {};
       var ringkasDaftar = { nama: seed.nama, kode: seed.kode, halaman: 0, entri: 0 };
       jel.daftar.push(ringkasDaftar);
-      var maks = Math.max(Number(opsi.halamanMaks) || 600, 1);
+      var maks = Math.max(Number(opsi.halamanMaks) || 2000, 1);
 
       for (var n = 0; n < maks && url && !berhenti; n++) {
         if (kunjungan[url]) break;
@@ -508,9 +544,19 @@
     }
   }
 
+  /** Apakah halaman memuat petunjuk adanya berkas (tombol atau tautan unduhan) walau tak ada tautan PDF yang dikenali. */
+  function adaPetunjukBerkas(doc) {
+    var ada = false;
+    doc.querySelectorAll("a, button, embed, iframe, object, [data-href], [data-url], [data-file]").forEach(function (el) {
+      var s = ["href", "src", "data", "data-href", "data-url", "data-file", "onclick"].map(function (k) { return el.getAttribute(k) || ""; }).join(" ") + " " + teks(el);
+      if (/unduh|download|\.pdf\b|berkas/i.test(s)) ada = true;
+    });
+    return ada;
+  }
+
   /**
-   * Ambil PDF sebuah peraturan. Mengembalikan { pdf }, { tanpaBerkas: true } (halaman rincian dimuat dan lengkap tetapi tak
-   * punya berkas), atau { lewati } (tak ada alamat BPK untuk peraturan ini).
+   * Ambil PDF sebuah peraturan. Mengembalikan { pdf }, { tanpaBerkas: alasan } (halaman rincian dimuat dan lengkap tetapi tak
+   * punya tautan PDF), atau { lewati } (tak ada alamat BPK untuk peraturan ini).
    */
   async function ambilPdfUntuk(ctx, item) {
     var langsung = ctx.pdfPerUri[item.frbr_uri];
@@ -526,7 +572,9 @@
     var tautan = cariTautanPdf(doc, item.detail_url);
     if (!tautan.length) {
       // Halaman rincian yang lengkap tetapi tanpa berkas: naskah lama yang di BPK hanya metadata. Bukan kegagalan sesi.
-      if (Object.keys(bacaMetadata(doc)).length >= 2) return { tanpaBerkas: true };
+      if (Object.keys(bacaMetadata(doc)).length >= 2) {
+        return { tanpaBerkas: adaPetunjukBerkas(doc) ? "halaman dikenali, tetapi tautan PDF-nya tak dikenali (periksa halamannya)" : "tanpa berkas PDF di BPK" };
+      }
       throw new Error("tautan PDF tak ditemukan di halaman rincian (jalankan dengan periksa: true di halaman itu)");
     }
     return { pdf: await unduhDariDaftar(ctx, tautan) };
@@ -562,7 +610,8 @@
             baris.hasil = "lewati: " + ambilan.lewati;
           } else if (ambilan.tanpaBerkas) {
             baris.hasil = "tanpa berkas di BPK";
-            if (!opsi.kering) await kirimJson(ctx.lexaMinta, "/api/impor/tanpa-berkas", { uris: [item.frbr_uri] });
+            if (/tak dikenali/.test(ambilan.tanpaBerkas)) console.warn("[Lexa panen] " + item.frbr_uri + ": " + ambilan.tanpaBerkas + " — " + item.detail_url + ". Jalankan { periksa: true } di halaman itu bila banyak yang begini.");
+            if (!opsi.kering) await kirimJson(ctx.lexaMinta, "/api/impor/tanpa-berkas", { uris: [item.frbr_uri], alasan: ambilan.tanpaBerkas });
             kemajuan++;
             gagalBeruntun = 0;
           } else {

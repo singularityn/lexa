@@ -210,6 +210,11 @@ impor.post("/manifest", async (c) => {
   const dipetakan: Array<{ doc: DokumenBpk } & NonNullable<ReturnType<typeof petakanDokumen>>> = [];
 
   for (const doc of body.dokumen) {
+    // Larik JSON dari peramban bisa memuat apa saja; yang bukan objek ditolak, tak menjatuhkan kiriman.
+    if (!doc || typeof doc !== "object") {
+      ditolak.push({ bpk_id: "", alasan: "entri bukan objek" });
+      continue;
+    }
     const hasil = petakanDokumen(doc);
     if (!hasil) {
       ditolak.push({ bpk_id: doc.bpk_id, alasan: "metadata inti tidak lengkap" });

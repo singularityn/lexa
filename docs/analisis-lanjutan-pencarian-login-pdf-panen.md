@@ -199,8 +199,14 @@ Beberapa keputusan yang dipaksa oleh data produksi:
 - **Tautan yang keliru berarti PDF yang keliru**, dan PDF yang keliru menimpa pasal yang benar. Karena itu hanya slug dan teks
   tautan yang dipakai mengenali sitasi; jenis tak pernah ditukar (BPK menamai Perppu 7/1964 "uu-no-7-tahun-1964"; bila slug dan
   teks berselisih, data Lexa yang memutuskan, dan bila dua-duanya ada hasilnya `ambigu`, tak ada yang ditulis).
-- Naskah lama yang di BPK tak berkas ditandai (`bpk_tanpa_berkas:<uri>` di `sync_state`, tanpa migrasi) supaya tak memenuhi
-  urutan terdepan daftar kerja di tiap putaran.
+- **PDF yang bukan naskah peraturannya tak menghasilkan pasal.** `ekstrak_pdf` membandingkan judul resmi di kepala naskah hasil
+  konversi dengan peraturan yang dituju dan menolak (mencatat, tidak menyimpan pasal) hanya bila ada bukti yang jelas: judul
+  resmi bentuk "… REPUBLIK INDONESIA NOMOR N TAHUN T" ditemukan dan bukan milik peraturan itu. Ini jaring terakhir terhadap
+  tautan BPK yang keliru, yang tak terlihat tanpa memeriksa ±3.700 berkas satu per satu dan yang tak bisa saya uji pada situs
+  BPK sungguhan. Tanpa judul seperti itu naskah diproses seperti biasa.
+- Naskah lama yang di BPK tak berkas ditandai (`bpk_tanpa_berkas:<uri>` di `sync_state`, tanpa migrasi, dengan alasannya)
+  supaya tak memenuhi urutan terdepan daftar kerja di tiap putaran; yang halamannya dikenali tetapi tombol unduhnya tak
+  dikenali pemilih skrip ditandai dengan alasan berbeda, tak dihitung sebagai kegagalan sesi, dan dicetak sebagai peringatan.
 - Halaman rincian tanpa `Status` tak lagi menjadikan peraturan "berlaku"; judul BPK tanpa pokok tak menimpa judul lama yang
   berpokok; metadata yang dikirim sambil memanen terikat ke satu peraturan (`lexa_uri`) dan ditolak bila sitasinya tak cocok.
 

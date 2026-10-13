@@ -92,7 +92,8 @@ function metaAmbil(meta: Record<string, string>, ...label: string[]): string | n
   const peta = new Map(Object.entries(meta).map(([k, v]) => [norm(k), v]));
   for (const l of label) {
     const v = peta.get(norm(l));
-    if (v && v.trim()) return v.trim();
+    // Nilai berasal dari halaman web yang dibaca skrip; yang bukan teks (angka, objek) diabaikan, bukan dijadikan galat.
+    if (typeof v === "string" && v.trim()) return v.trim();
   }
   return null;
 }
@@ -165,7 +166,7 @@ export function petakanDokumen(doc: DokumenBpk): {
   adaStatus: boolean;
   relasi: Array<{ to_uri: string; jenis_relasi: JenisRelasi; keterangan: string | null; sasaran: SitasiRelasi }>;
 } | null {
-  const meta = doc.meta ?? {};
+  const meta = doc && typeof doc.meta === "object" && doc.meta ? doc.meta : {};
 
   const judul = metaAmbil(meta, "Judul", "Tentang");
   if (!judul) return null;
@@ -202,11 +203,12 @@ export function petakanDokumen(doc: DokumenBpk): {
     bidang: metaAmbil(meta, "Bidang", "Subjek"),
     bpk_id: doc.bpk_id,
     sumber_url: doc.detail_url ?? null,
-    ringkasan: doc.abstrak?.length ? doc.abstrak.join(" ").slice(0, 2000) : null,
+    ringkasan: Array.isArray(doc.abstrak) && doc.abstrak.length ? doc.abstrak.filter((a) => typeof a === "string").join(" ").slice(0, 2000) || null : null,
     jumlah_pasal: 0,
   };
 
-  const relasi = (doc.relasi ?? [])
+  const relasi = (Array.isArray(doc.relasi) ? doc.relasi : [])
+    .filter((r) => r && typeof r.teks === "string" && typeof r.label === "string")
     .map((r) => {
       // Relasi hanya bisa dipakai bila peraturan tujuannya bisa diidentifikasi.
       // Coba dari teksnya ("UU No. 13 Tahun 2003"); bila gagal, lewati.
@@ -276,6 +278,56 @@ function tebakNomorDariJudul(judul: string): string | null {
 }
 function tebakTahunDariJudul(judul: string): number | null {
   return sitasiDariTeks(judul)?.tahun ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Pemeriksaan: apakah PDF memang naskah peraturan yang dituju
+// ---------------------------------------------------------------------------
+
+/**
+ * Judul resmi sebuah naskah, tertulis di kepala dokumen: "PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 5 TAHUN 2021",
+ * "UNDANG-UNDANG REPUBLIK INDONESIA NOMOR 6 TAHUN 2023", "PERATURAN PEMERINTAH PENGGANTI UNDANG-UNDANG REPUBLIK INDONESIA
+ * NOMOR 2 TAHUN 2022". Sengaja hanya bentuk ini (dengan "Republik Indonesia" di tengahnya): rujukan di dalam kalimat
+ * ("... Undang-Undang Nomor 11 Tahun 2020 ...") tak memuatnya, jadi tak salah dikira judul naskah.
+ */
+const POLA_JUDUL_NASKAH =
+  /\b(undang[\s-]*undang|peraturan\s+pemerintah\s+pengganti\s+undang[\s-]*undang|peraturan\s+pemerintah)\s+republik\s+indonesia\s+(?:nomor|no\.?)\s*(\d+[a-z]?)\s+tahun\s+(\d{4})\b/gi;
+
+export type KecocokanNaskah =
+  | { hasil: "cocok" }
+  | { hasil: "tak_diketahui" }
+  | { hasil: "tidak_cocok"; ditemukan: { jenis: string; nomor: string; tahun: number } };
+
+/**
+ * Periksa apakah naskah hasil konversi PDF memang milik `law`, dari judul resmi di kepalanya (3.000 karakter pertama).
+ *
+ * PDF yang keliru berarti pasal yang keliru, dan di korpus hukum itu lebih buruk daripada pasal yang kosong: tautan BPK bisa
+ * salah (halaman rincian memuat berkas lain, pencocokan sitasi keliru), dan tak ada yang memeriksa 3.700 berkas satu per satu.
+ * Karena itu "tidak cocok" dinyatakan hanya bila ada bukti yang jelas: judul resmi bentuk di atas ditemukan DAN tak satu pun
+ * dari judul yang ditemukan adalah milik peraturan ini. Selain itu (tak ada judul bentuk itu, angka rusak oleh OCR, Tap MPR
+ * dan UUD yang penulisannya lain) hasilnya "tak_diketahui" dan naskah diproses seperti biasa. Undang-undang dan Perppu
+ * satu deret penomoran, dan BPK pernah mencampurnya, jadi keduanya dianggap sejenis.
+ */
+export function periksaKecocokanNaskah(
+  naskah: string,
+  law: { jenis: string; nomor: string; tahun: number },
+): KecocokanNaskah {
+  if (!["UU", "PP", "PERPPU"].includes(law.jenis)) return { hasil: "tak_diketahui" };
+  const kepala = naskah.slice(0, 3000).replace(/[*#_`>|]/g, " ").replace(/\s+/g, " ");
+  const sejenis = (a: string, b: string) => a === b || (["UU", "PERPPU"].includes(a) && ["UU", "PERPPU"].includes(b));
+  const milikLaw = nomorKanonik(law.jenis, law.nomor);
+
+  const ditemukan: Array<{ jenis: string; nomor: string; tahun: number }> = [];
+  for (const m of kepala.matchAll(POLA_JUDUL_NASKAH)) {
+    const nama = m[1].toLowerCase().replace(/\s+/g, " ");
+    const jenis = nama.includes("pengganti") ? "PERPPU" : nama.startsWith("undang") ? "UU" : "PP";
+    ditemukan.push({ jenis, nomor: nomorKanonik(jenis, m[2]), tahun: Number(m[3]) });
+  }
+  if (!ditemukan.length) return { hasil: "tak_diketahui" };
+  if (ditemukan.some((d) => sejenis(d.jenis, law.jenis) && d.nomor.toLowerCase() === milikLaw.toLowerCase() && d.tahun === law.tahun)) {
+    return { hasil: "cocok" };
+  }
+  return { hasil: "tidak_cocok", ditemukan: ditemukan[0] };
 }
 
 // ---------------------------------------------------------------------------

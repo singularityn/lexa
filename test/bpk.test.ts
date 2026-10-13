@@ -4,6 +4,7 @@ import {
   idPasal,
   idPasalUnik,
   nilaiKualitasEkstraksi,
+  periksaKecocokanNaskah,
   petakanDokumen,
   relasiDari,
   sitasiDariTeks,
@@ -288,7 +289,81 @@ describe("petakanDokumen (manifest hasil panen BPK -> Law + relasi)", () => {
     expect(hasil?.law.status).toBe("berlaku"); // bawaan; pemanggil yang memutuskan memakainya atau tidak
   });
 
+  it("masukan yang bertipe aneh tidak melempar galat: yang tak terbaca diabaikan, yang inti hilang ditolak (null)", () => {
+    expect(petakanDokumen(null as never)).toBeNull();
+    expect(petakanDokumen({ bpk_id: "1", meta: "bukan objek" } as never)).toBeNull();
+    expect(petakanDokumen({ bpk_id: "1", meta: { Judul: 5, Nomor: {}, Tahun: "2020" } } as never)).toBeNull();
+    const hasil = petakanDokumen({ bpk_id: "1", meta: { Judul: "PP 5/2021", "Bentuk Singkat": "PP", Nomor: "5", Tahun: "2021" }, relasi: "bukan larik", abstrak: "bukan larik" } as never);
+    expect(hasil?.law).toMatchObject({ jenis: "PP", nomor: "5", ringkasan: null });
+    expect(hasil?.relasi).toEqual([]);
+    const campur = petakanDokumen({
+      bpk_id: "1", meta: { Judul: "PP 5/2021", "Bentuk Singkat": "PP", Nomor: "5", Tahun: "2021" },
+      relasi: [null, { label: "Mengubah" }, { label: "Mengubah", teks: "Peraturan Pemerintah Nomor 35 Tahun 2021" }], abstrak: ["satu", 2, "tiga"],
+    } as never);
+    expect(campur?.relasi.map((r) => r.to_uri)).toEqual(["/akn/id/act/pp/2021/35"]);
+    expect(campur?.law.ringkasan).toBe("satu tiga");
+  });
+
   it("menolak dokumen tanpa nomor dan tahun", () => {
     expect(petakanDokumen({ bpk_id: "1", meta: { Judul: "Tanpa nomor dan tahun" } })).toBeNull();
+  });
+});
+
+describe("periksaKecocokanNaskah (apakah PDF memang milik peraturan yang dituju)", () => {
+  const pp5 = { jenis: "PP", nomor: "5", tahun: 2021 };
+  const judul = (baris: string) => `PRESIDEN\nREPUBLIK INDONESIA\n${baris}\nTENTANG PENYELENGGARAAN CONTOH\n\nDENGAN RAHMAT TUHAN YANG MAHA ESA\nMenimbang: ...`;
+
+  it("judul resmi di kepala naskah sama dengan peraturannya: cocok", () => {
+    expect(periksaKecocokanNaskah(judul("PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 5 TAHUN 2021"), pp5)).toEqual({ hasil: "cocok" });
+    expect(periksaKecocokanNaskah(judul("UNDANG-UNDANG REPUBLIK INDONESIA NOMOR 6 TAHUN 2023"), { jenis: "UU", nomor: "6", tahun: 2023 })).toEqual({ hasil: "cocok" });
+    expect(periksaKecocokanNaskah(judul("PERATURAN PEMERINTAH PENGGANTI UNDANG-UNDANG REPUBLIK INDONESIA NOMOR 2 TAHUN 2022"), { jenis: "PERPPU", nomor: "2", tahun: 2022 })).toEqual({ hasil: "cocok" });
+  });
+
+  it("judul resmi milik peraturan lain: tidak cocok, dengan yang ditemukan", () => {
+    expect(periksaKecocokanNaskah(judul("PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 9 TAHUN 2020"), pp5)).toEqual({
+      hasil: "tidak_cocok", ditemukan: { jenis: "PP", nomor: "9", tahun: 2020 },
+    });
+    // Nomor sama, tahun berbeda; dan nomor berbeda, tahun sama.
+    expect(periksaKecocokanNaskah(judul("PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 5 TAHUN 2020"), pp5).hasil).toBe("tidak_cocok");
+    expect(periksaKecocokanNaskah(judul("PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 6 TAHUN 2021"), pp5).hasil).toBe("tidak_cocok");
+    // Jenis berbeda dengan nomor dan tahun sama (PP 5/2021 bukan UU 5/2021).
+    expect(periksaKecocokanNaskah(judul("UNDANG-UNDANG REPUBLIK INDONESIA NOMOR 5 TAHUN 2021"), pp5).hasil).toBe("tidak_cocok");
+  });
+
+  it("rujukan di dalam kalimat bukan judul naskah: tak cukup untuk menyatakan tidak cocok", () => {
+    const naskah = "Menimbang bahwa Undang-Undang Nomor 11 Tahun 2020 tentang Cipta Kerja perlu dilaksanakan; Peraturan Pemerintah Nomor 35 Tahun 2021 diubah.";
+    expect(periksaKecocokanNaskah(naskah, pp5)).toEqual({ hasil: "tak_diketahui" });
+  });
+
+  it("judul peraturannya sendiri ada, walau naskah juga menyebut judul lain (bundel, lampiran): cocok", () => {
+    const naskah = judul("PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 5 TAHUN 2021") + "\nLampiran: PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 9 TAHUN 2020";
+    expect(periksaKecocokanNaskah(naskah, pp5)).toEqual({ hasil: "cocok" });
+  });
+
+  it("undang-undang dan Perppu satu deret penomoran: sejenis (BPK pernah menamai Perppu 7/1964 sebagai UU)", () => {
+    expect(periksaKecocokanNaskah(judul("PERATURAN PEMERINTAH PENGGANTI UNDANG-UNDANG REPUBLIK INDONESIA NOMOR 7 TAHUN 1964"), { jenis: "UU", nomor: "7", tahun: 1964 })).toEqual({ hasil: "cocok" });
+    expect(periksaKecocokanNaskah(judul("UNDANG-UNDANG REPUBLIK INDONESIA NOMOR 7 TAHUN 1964"), { jenis: "PERPPU", nomor: "7", tahun: 1964 })).toEqual({ hasil: "cocok" });
+  });
+
+  it("nomor bernol di depan, huruf kecil, dan penanda markdown tak membuat yang cocok dianggap lain", () => {
+    expect(periksaKecocokanNaskah("# **PERATURAN PEMERINTAH** REPUBLIK INDONESIA\n**NOMOR 1 TAHUN 2022**", { jenis: "PP", nomor: "01", tahun: 2022 })).toEqual({ hasil: "cocok" });
+    expect(periksaKecocokanNaskah("Peraturan Pemerintah Republik Indonesia Nomor 5a Tahun 2021", { jenis: "PP", nomor: "5A", tahun: 2021 })).toEqual({ hasil: "cocok" });
+  });
+
+  it("tanpa judul bentuk resmi, atau angkanya rusak oleh OCR: tak diketahui (diproses seperti biasa)", () => {
+    expect(periksaKecocokanNaskah("PP 99/2025\nBAB I\nPasal 1\nIsi.", pp5)).toEqual({ hasil: "tak_diketahui" });
+    expect(periksaKecocokanNaskah("UNDANG-UNDANG REPUBLIK INDONESIA NOMOR 6 TAHUN 2O23 TENTANG PENETAPAN PERATURAN PEMERINTAH PENGGANTI UNDANG-UNDANG NOMOR 2 TAHUN 2022", { jenis: "UU", nomor: "6", tahun: 2023 })).toEqual({ hasil: "tak_diketahui" });
+    expect(periksaKecocokanNaskah("", pp5)).toEqual({ hasil: "tak_diketahui" });
+  });
+
+  it("hanya 3.000 karakter pertama yang diperiksa", () => {
+    const jauh = "x".repeat(3500) + " PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 9 TAHUN 2020";
+    expect(periksaKecocokanNaskah(jauh, pp5)).toEqual({ hasil: "tak_diketahui" });
+  });
+
+  it("Tap MPR dan UUD tak diperiksa (penulisan judulnya lain)", () => {
+    const naskah = "PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 9 TAHUN 2020";
+    expect(periksaKecocokanNaskah(naskah, { jenis: "TAP_MPR", nomor: "xvi-mpr-1998", tahun: 1998 })).toEqual({ hasil: "tak_diketahui" });
+    expect(periksaKecocokanNaskah(naskah, { jenis: "UUD", nomor: "1945", tahun: 1945 })).toEqual({ hasil: "tak_diketahui" });
   });
 });

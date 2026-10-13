@@ -3,7 +3,7 @@
  * disimpan tak menjatuhkan yang lain, penanda "tanpa berkas", ringkasan kemajuan, dan ekstraksi ulang PDF.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buatLingkungan, json, kirim, panggil, sisipkan, sqliteAda, TOKEN_ADMIN, type Lingkungan, type PeraturanUji } from "./harness";
+import { buatLingkungan, json, kirim, kurasSemua, panggil, sisipkan, sqliteAda, TOKEN_ADMIN, type Lingkungan, type PeraturanUji } from "./harness";
 
 const adm = { "x-admin-token": TOKEN_ADMIN };
 const PDF = new TextEncoder().encode("%PDF-1.4\n...isi pdf palsu...");
@@ -81,6 +81,25 @@ describe.skipIf(!sqliteAda)("panen BPK (sisi server)", () => {
         { to_uri: "/akn/id/act/perpu/2022/2", jenis_relasi: "mengubah" },
         { to_uri: "/akn/id/act/pp/2021/35", jenis_relasi: "mengubah" },
       ]);
+    });
+  });
+
+  describe("kiriman yang berisi entri aneh", () => {
+    it("null, angka, dan metadata bukan objek ditolak satu per satu; dokumen yang sah tetap tersimpan (bukan 500)", async () => {
+      const res = await panggil(l, "/api/impor/manifest", kirim("POST", {
+        versi: 1,
+        dokumen: [null, 5, { bpk_id: "7", meta: "bukan objek" }, dokumen("1", { Judul: "Peraturan Pemerintah Nomor 5 Tahun 2021 tentang Contoh", Nomor: "5", Tahun: "2021" })],
+      }, adm));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        diterima: 1,
+        ditolak: [
+          { bpk_id: "", alasan: "entri bukan objek" },
+          { bpk_id: "", alasan: "entri bukan objek" },
+          { bpk_id: "7", alasan: "metadata inti tidak lengkap" },
+        ],
+        butuh_pdf: ["/akn/id/act/pp/2021/5"],
+      });
     });
   });
 
@@ -205,6 +224,59 @@ describe.skipIf(!sqliteAda)("panen BPK (sisi server)", () => {
       expect(b.per_jenis.find((r) => r.jenis === "UU")).toMatchObject({ total: 1, perlu_pdf: 1 });
       expect(b.tanpa_berkas).toBe(1);
       expect((await panggil(l, "/api/impor/ringkasan")).status).toBe(401);
+    });
+  });
+
+  describe("PDF yang bukan naskah peraturannya", () => {
+    const URI = "/akn/id/act/pp/2025/99";
+    const baris = (judul: string) => ["PRESIDEN", "REPUBLIK INDONESIA", judul, "TENTANG PENGELOLAAN SAMPAH", "BAB I", "Pasal 1", "Sampah dikelola.", "Pasal 2", "Setiap orang wajib memilah sampah."].join("\n");
+    const unggah = () => panggil(l, `/api/impor/pdf?uri=${encodeURIComponent(URI)}`, { method: "PUT", headers: adm, body: PDF });
+
+    beforeEach(async () => {
+      await manifest([dokumen("555", { Judul: "Peraturan Pemerintah Nomor 99 Tahun 2025 tentang Pengelolaan Sampah", Nomor: "99", Tahun: "2025" })]);
+    });
+
+    it("judul resmi milik peraturan lain: pasal tidak disimpan, dicatat dengan jelas, dan tak masuk daftar kerja lagi", async () => {
+      l.ai.markdown.set("99.pdf", baris("PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 5 TAHUN 2021"));
+      await unggah();
+      await kurasSemua(l);
+      expect(await l.db.prepare(`SELECT jumlah_pasal, isi_status, r2_text_key FROM laws`).first()).toEqual({ jumlah_pasal: 0, isi_status: "menunggu", r2_text_key: null });
+      expect((await l.db.prepare(`SELECT COUNT(*) AS n FROM articles`).first<{ n: number }>())?.n).toBe(0);
+      const catatan = "PDF memuat judul PP 5/2021, bukan PP 99/2025: pasal tidak disimpan";
+      expect(await l.db.prepare(`SELECT vonis, jumlah_pasal, catatan FROM ekstraksi_log`).first()).toEqual({ vonis: "gagal", jumlah_pasal: 0, catatan });
+      expect(await l.db.prepare(`SELECT isi_catatan FROM laws`).first()).toEqual({ isi_catatan: catatan });
+      expect((await l.db.prepare(`SELECT status, detail FROM sync_log WHERE job = 'ekstrak_pdf'`).all()).results).toEqual([{ status: "gagal", detail: `${URI}: ${catatan}` }]);
+      expect(l.vektor.simpan.size).toBe(0);
+      // Teks konversi diarsipkan untuk diperiksa, PDF-nya tetap ada, dan peraturannya tak diminta PDF lagi.
+      expect(await l.r2.get("teks/akn/id/act/pp/2025/99.md").then((o) => o?.text())).toContain("NOMOR 5 TAHUN 2021");
+      expect(l.r2.objek.has("pdf/akn/id/act/pp/2025/99.pdf")).toBe(true);
+      expect((await json<{ daftar: unknown[] }>(await panggil(l, "/api/impor/butuh-teks", { headers: adm }))).daftar).toEqual([]);
+    });
+
+    it("judul resmi milik peraturannya: diproses seperti biasa", async () => {
+      l.ai.markdown.set("99.pdf", baris("PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 99 TAHUN 2025"));
+      await unggah();
+      await kurasSemua(l);
+      expect(await l.db.prepare(`SELECT jumlah_pasal, isi_status FROM laws`).first()).toEqual({ jumlah_pasal: 2, isi_status: "lengkap" });
+      expect(await l.db.prepare(`SELECT vonis, catatan FROM ekstraksi_log`).first()).toEqual({ vonis: "bersih", catatan: null });
+    });
+
+    it("tanpa judul resmi yang dikenali: diproses seperti biasa (tak ada bukti yang jelas untuk menolak)", async () => {
+      l.ai.markdown.set("99.pdf", ["# PP 99/2025", "Pasal 1", "Sampah dikelola."].join("\n"));
+      await unggah();
+      await kurasSemua(l);
+      expect((await l.db.prepare(`SELECT jumlah_pasal FROM laws`).first<{ jumlah_pasal: number }>())?.jumlah_pasal).toBe(1);
+    });
+
+    it("ekstrak-ulang mencoba lagi dari PDF yang tersimpan, dan lolos bila naskahnya kini cocok", async () => {
+      l.ai.markdown.set("99.pdf", baris("PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 5 TAHUN 2021"));
+      await unggah();
+      await kurasSemua(l);
+      expect((await l.db.prepare(`SELECT jumlah_pasal FROM laws`).first<{ jumlah_pasal: number }>())?.jumlah_pasal).toBe(0);
+      l.ai.markdown.set("99.pdf", baris("PERATURAN PEMERINTAH REPUBLIK INDONESIA NOMOR 99 TAHUN 2025"));
+      await panggil(l, "/api/impor/ekstrak-ulang", kirim("POST", {}, adm));
+      await kurasSemua(l);
+      expect((await l.db.prepare(`SELECT jumlah_pasal FROM laws`).first<{ jumlah_pasal: number }>())?.jumlah_pasal).toBe(2);
     });
   });
 

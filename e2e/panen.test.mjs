@@ -142,6 +142,28 @@ describe("skrip panen BPK: panen PDF", () => {
     expect(hasil.hasil[0].hasil).toContain("tautan PDF tak ditemukan");
   });
 
+  it("halaman rincian biasa yang memuat skrip pelacak Cloudflare ('challenge-platform') bukan tantangan: tanpa berkas tetap dikenali", async () => {
+    await kirimManifest([dokumen(558, 96)]);
+    const biasa = `<html><head><title>PP 96/2025 - JDIH BPK</title><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></head><body>
+      <table><tr><th>Judul</th><td>Peraturan Pemerintah Nomor 96 Tahun 2025</td></tr><tr><th>Status</th><td>Berlaku</td></tr></table><p>Tidak ada berkas.</p></body></html>`;
+    await pasangBpk({ "/Details/558/pp-no-96-tahun-2025": { isi: biasa } });
+    const hasil = await jalankan({});
+    expect(hasil.ringkas).toMatchObject({ diproses: 1, tanpaBerkas: 1, gagal: 0 });
+  });
+
+  it("tombol unduh yang tautannya tak dikenali: halaman dikenali dan ditandai (bukan kegagalan sesi), dengan peringatan yang menyebut halamannya", async () => {
+    await kirimManifest([dokumen(559, 95)]);
+    const tombol = `<html><head><title>PP 95/2025</title></head><body>
+      <table><tr><th>Judul</th><td>Peraturan Pemerintah Nomor 95 Tahun 2025</td></tr><tr><th>Status</th><td>Berlaku</td></tr></table>
+      <button class="btn" onclick="unduh(559)">Unduh dokumen</button></body></html>`;
+    await pasangBpk({ "/Details/559/pp-no-95-tahun-2025": { isi: tombol } });
+    const peringatan = [];
+    page.on("console", (m) => { if (m.type() === "warning") peringatan.push(m.text()); });
+    const hasil = await jalankan({});
+    expect(hasil.ringkas).toMatchObject({ diproses: 1, tanpaBerkas: 1, gagal: 0 });
+    expect(peringatan.some((t) => t.includes("tautan PDF-nya tak dikenali") && t.includes("/Details/559/pp-no-95-tahun-2025"))).toBe(true);
+  });
+
   it("memperbarui metadata dari halaman rincian (judul resmi, status) untuk peraturan yang dipanen", async () => {
     await kirimManifest([tanpaTautan(555, 2025)]);
     await kirimManifest([{ bpk_id: "555", detail_url: `${BPK}/Details/555/pp-no-555-tahun-2025`, meta: { Judul: "Peraturan Pemerintah Nomor 555 Tahun 2025", "Bentuk Singkat": "PP", Nomor: "555", Tahun: "2025", Status: "Berlaku" } }]);
@@ -408,6 +430,26 @@ describe("skrip panen BPK: analisis halaman (periksa)", () => {
     expect(r.entri[0].konteks).toContain("tentang Contoh 1");
     expect(r.entri[1].pdf_url).toBeNull();
     expect(r.halaman).toMatchObject({ nomor: 1, total: 462, relNext: true, berikut: `${BPK}/Search?jenis=10&page=2` });
+  });
+
+  it("metadata terbaca dari tabel dua sel, daftar definisi (dt/dd), atau label dikenal dengan elemen saudara", async () => {
+    await pasangBpk({});
+    const r = await page.evaluate(() => {
+      const baca = (html) => window.lexaPanenBpkBantu.bacaMetadata(new DOMParser().parseFromString(html, "text/html"));
+      return {
+        tabel: baca("<table><tr><th>Judul:</th><td>A</td></tr><tr><td>Nomor</td><td>13</td></tr></table>"),
+        dl: baca("<dl><dt>Judul</dt><dd>UU Contoh</dd><dt>Nomor</dt><dd>13</dd><dt>Tahun</dt><dd>2003</dd></dl>"),
+        div: baca('<div class="row"><div>Nomor:</div><div>13</div></div><div class="row"><div>Tahun</div><div>2003</div></div><div class="row"><div>Penulis</div><div>diabaikan</div></div>'),
+        kosong: baca("<p>tak ada metadata</p>"),
+        // Tabel yang sudah cukup tidak ditambah tebakan dari elemen lain.
+        utama: baca("<table><tr><th>Judul</th><td>A</td></tr><tr><th>Status</th><td>Berlaku</td></tr></table><div>Nomor</div><div>99</div>"),
+      };
+    });
+    expect(r.tabel).toEqual({ Judul: "A", Nomor: "13" });
+    expect(r.dl).toEqual({ Judul: "UU Contoh", Nomor: "13", Tahun: "2003" });
+    expect(r.div).toEqual({ Nomor: "13", Tahun: "2003" });
+    expect(r.kosong).toEqual({});
+    expect(r.utama).toEqual({ Judul: "A", Status: "Berlaku" });
   });
 
   it("pembantu: pemilihan jenis, nama jenis tanpa jumlah, dan halaman berikutnya tanpa tautan 'next' menaikkan parameter page", async () => {

@@ -14,7 +14,7 @@
 import { labelSitasi } from "../../shared/label";
 import { dalamCakupan, uriJelasDiLuarCakupan, type Cakupan } from "../../shared/cakupan";
 import type { PasalClient } from "./pasal";
-import { uraikanPasal, idPasalUnik, nilaiKualitasEkstraksi, type LaporanKualitas } from "./bpk";
+import { uraikanPasal, idPasalUnik, nilaiKualitasEkstraksi, periksaKecocokanNaskah, type LaporanKualitas } from "./bpk";
 
 export type PesanIngest =
   /** Alur lama (tidak lagi dibuat); sisa di antrean dibuang. Lihat komentar di atas. */
@@ -205,9 +205,9 @@ export async function ekstrakPdf(
   const mulai = Date.now();
   // Peraturan di luar cakupan tidak diekstrak (konversi PDF memakai Workers AI).
   const baris = await ctx.db
-    .prepare(`SELECT jenis, jumlah_pasal FROM laws WHERE frbr_uri = ?`)
+    .prepare(`SELECT jenis, nomor, tahun, jumlah_pasal FROM laws WHERE frbr_uri = ?`)
     .bind(frbrUri)
-    .first<{ jenis: string; jumlah_pasal: number }>();
+    .first<{ jenis: string; nomor: string; tahun: number; jumlah_pasal: number }>();
   if (baris && !dalamCakupan(ctx.cakupan, baris.jenis)) return 0;
   const objek = await ctx.docs.get(r2Key);
   if (!objek) throw new Error(`Berkas ${r2Key} tidak ada di R2`);
@@ -257,6 +257,21 @@ export async function ekstrakPdf(
       httpMetadata: { contentType: "text/markdown; charset=utf-8" },
     })
     .catch(() => {});
+
+  // PDF yang bukan naskah peraturan ini (tautan BPK keliru, berkas lain di halaman rincian) tak boleh menghasilkan pasalnya:
+  // pasal yang keliru lebih buruk daripada pasal yang kosong. Teks konversi tetap diarsipkan di atas, untuk diperiksa;
+  // PDF-nya tetap tersimpan, jadi ekstrak-ulang bisa mencobanya lagi bila pemeriksaannya kelak diperbaiki.
+  if (baris) {
+    const cocok = periksaKecocokanNaskah(markdown, baris);
+    if (cocok.hasil === "tidak_cocok") {
+      const d = cocok.ditemukan;
+      const catatan = `PDF memuat judul ${d.jenis} ${d.nomor}/${d.tahun}, bukan ${baris.jenis} ${baris.nomor}/${baris.tahun}: pasal tidak disimpan`;
+      await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, catatan);
+      await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: ${catatan}`);
+      await ctx.db.prepare(`UPDATE laws SET isi_catatan = ? WHERE frbr_uri = ?`).bind(catatan, frbrUri).run().catch(() => {});
+      return 0;
+    }
+  }
 
   const pasal = uraikanPasal(markdown);
   const laporan = nilaiKualitasEkstraksi(markdown, pasal);
