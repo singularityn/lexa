@@ -99,6 +99,79 @@ describe("uraikanPasal: angka nol yang terbaca huruf O", () => {
   });
 });
 
+describe('uraikanPasal: judul gaya lama bertitik ("Pasal 1.")', () => {
+  const nomor = (naskah: string) => uraikanPasal(naskah).map((p) => p.nomor_pasal);
+
+  it('"Pasal 1." dan "Pasal 2." (titik tunggal) adalah judul, bukan catchword; titiknya tidak ikut menjadi isi', () => {
+    // Di produksi 89 UU 1946-1954 tak menghasilkan satu pasal pun karena sisa baris "." dibuang sebagai catchword.
+    const pasal = uraikanPasal(["UNDANG-UNDANG", "MEMUTUSKAN:", "Pasal 1.", "Yang dimaksud ialah A.", "Pasal 2.", "Undang-undang ini berlaku."].join("\n"));
+    expect(pasal.map((p) => [p.nomor_pasal, p.isi])).toEqual([
+      ["1", "Yang dimaksud ialah A."],
+      ["2", "Undang-undang ini berlaku."],
+    ]);
+  });
+
+  it("angka romawi dan huruf kapital semua: 'Pasal I.' dan 'PASAL 2.'", () => {
+    expect(nomor(["Pasal I.", "Satu.", "Pasal II.", "Dua."].join("\n"))).toEqual(["I", "II"]);
+    expect(nomor(["PASAL 1.", "Satu.", "PASAL 2.", "Dua."].join("\n"))).toEqual(["1", "2"]);
+  });
+
+  it("isi yang menempel sesudah titik dimulai dari isinya: 'Pasal 3. Ketentuan...' dan 'Pasal 4.Ketentuan...'", () => {
+    const pasal = uraikanPasal(["Pasal 3. Ketentuan tiga.", "Pasal 4.Ketentuan empat."].join("\n"));
+    expect(pasal.map((p) => [p.nomor_pasal, p.isi])).toEqual([["3", "Ketentuan tiga."], ["4", "Ketentuan empat."]]);
+  });
+
+  it("penutup '.-' dan '-' tidak menjadi isi", () => {
+    const pasal = uraikanPasal(["Pasal 1.-", "Satu.", "Pasal 2 -", "Dua."].join("\n"));
+    expect(pasal.map((p) => [p.nomor_pasal, p.isi])).toEqual([["1", "Satu."], ["2", "Dua."]]);
+  });
+
+  it("nomor yang melompat tetap judul bila kalimat sebelumnya selesai, atau baris sebelumnya judul bab berhuruf kapital", () => {
+    expect(nomor(["Pasal 1.", "Satu.", "Pasal 5.", "Lima."].join("\n"))).toEqual(["1", "5"]);
+    expect(nomor(["Pasal 1.", "Satu", "BAB II", "PERIZINAN", "Pasal 8.", "Delapan."].join("\n"))).toEqual(["1", "8"]);
+  });
+
+  it("ujung rujukan silang yang terpotong ('... dimaksud dalam' / 'Pasal 15.') tetap isi pasal yang berjalan", () => {
+    const pasal = uraikanPasal(["Pasal 3.", "Pengecualian sebagaimana dimaksud dalam", "Pasal 15.", "tidak berlaku.", "Pasal 4.", "Empat."].join("\n"));
+    expect(pasal.map((p) => p.nomor_pasal)).toEqual(["3", "4"]);
+    expect(pasal[0].isi).toBe("Pengecualian sebagaimana dimaksud dalam\nPasal 15.\ntidak berlaku.");
+  });
+
+  it("catchword kaki halaman tetap dibuang: 'Pasal 15 . . .' dan 'Pasal 15…'", () => {
+    const pasal = uraikanPasal(["Pasal 4.", "Isi empat dan seterusnya", "Pasal 15 . . .", "lanjutan.", "Pasal 5.", "Lima."].join("\n"));
+    expect(pasal.map((p) => p.nomor_pasal)).toEqual(["4", "5"]);
+    expect(pasal[0].isi).toBe("Isi empat dan seterusnya\nlanjutan.");
+    expect(nomor(["Pasal 1", "Satu.", "Pasal 15…", "lanjutan.", "Pasal 2", "Dua."].join("\n"))).toEqual(["1", "2"]);
+  });
+
+  it("naskah 1946 lengkap dengan kepala undang-undang dan penutup: pasal terbaca dalam urutan, bab terbawa", () => {
+    const naskah = [
+      "UNDANG-UNDANG REPUBLIK INDONESIA",
+      "NOMOR 12 TAHUN 1946",
+      "tentang Peraturan Mengenai Sesuatu",
+      "Dengan persetujuan Badan Pekerja Komite Nasional Pusat,",
+      "MEMUTUSKAN:",
+      "Menetapkan: Undang-undang tentang Peraturan Mengenai Sesuatu.",
+      "BAB I",
+      "Pasal 1.",
+      "Yang dimaksud dengan Sesuatu ialah hal yang diatur.",
+      "Pasal 2.",
+      "(1) Sesuatu dikerjakan oleh Menteri.",
+      "(2) Menteri mengatur lebih lanjut.",
+      "BAB II",
+      "Pasal 3.",
+      "Undang-undang ini mulai berlaku pada hari diundangkan.",
+    ].join("\n");
+    const pasal = uraikanPasal(naskah);
+    expect(pasal.map((p) => [p.nomor_pasal, p.ayat, p.bab])).toEqual([
+      ["1", null, "BAB I"],
+      ["2", "1", "BAB I"],
+      ["2", "2", "BAB I"],
+      ["3", null, "BAB II"],
+    ]);
+  });
+});
+
 describe("uraikanPasal", () => {
   const naskah = [
     "# UNDANG-UNDANG",

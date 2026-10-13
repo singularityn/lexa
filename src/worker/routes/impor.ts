@@ -448,15 +448,20 @@ impor.post("/tanpa-berkas", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/impor/ekstrak-ulang — { uri?: string, batas?: number, jenis?: string[] }
+// POST /api/impor/ekstrak-ulang — { uri?: string, batas?: number, jenis?: string[], dariTeks?: boolean }
 //
 // Mengantrekan ulang ekstraksi PDF yang sudah tersimpan di R2 tetapi belum menghasilkan pasal (mis. setelah pengurai
 // pasal diperbaiki). Tanpa `uri`: peraturan ber-PDF yang jumlah_pasal-nya 0, yang belum pernah dicoba didahulukan, paling
 // banyak `batas` (1-100, bawaan 25). Dengan `uri`: peraturan itu saja, walau sudah berpasal (hasil yang lebih sedikit dari
 // yang tersimpan tidak menggantikannya; lihat ekstrakPdf).
+//
+// `dariTeks: true` menguraikan arsip teks hasil konversi yang sudah ada (laws.r2_text_key), tanpa membaca PDF dan tanpa
+// konversi Workers AI: cukup untuk memulihkan hasil perbaikan pengurai. Peraturan tanpa arsip tetap dikonversi dari PDF-nya.
+// Jangan dipakai bila PDF-nya baru diganti dan konversinya belum berhasil: arsip itu milik PDF yang lama.
 // ---------------------------------------------------------------------------
 impor.post("/ekstrak-ulang", async (c) => {
-  const body = await c.req.json<{ uri?: unknown; batas?: unknown; jenis?: unknown }>().catch(() => null);
+  const body = await c.req.json<{ uri?: unknown; batas?: unknown; jenis?: unknown; dariTeks?: unknown }>().catch(() => null);
+  const dariTeks = body?.dariTeks === true;
   const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
   const batas = Math.min(Math.max(Number(body?.batas) || 25, 1), 100);
   const diminta = Array.isArray(body?.jenis) ? body.jenis.filter((j): j is string => typeof j === "string").map((j) => j.trim().toUpperCase()) : [];
@@ -479,7 +484,9 @@ impor.post("/ekstrak-ulang", async (c) => {
 
   if (results.length) {
     await c.env.INGEST_QUEUE.sendBatch(
-      results.map((r) => ({ body: { tipe: "ekstrak_pdf", frbr_uri: r.frbr_uri, r2_key: r.r2_pdf_key } satisfies PesanIngest })),
+      results.map((r) => ({
+        body: { tipe: "ekstrak_pdf", frbr_uri: r.frbr_uri, r2_key: r.r2_pdf_key, ...(dariTeks ? { dari_teks: true } : {}) } satisfies PesanIngest,
+      })),
     );
   }
   const sisa = await c.env.DB.prepare(

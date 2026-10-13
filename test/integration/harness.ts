@@ -283,6 +283,10 @@ export class AiPalsu {
   galatObrolan: Error | null = null;
   /** Bila diisi, toMarkdown() mengembalikan kegagalan konversi ini untuk semua berkas. */
   galatKonversi: string | null = null;
+  /** Nama berkas yang dikonversi toMarkdown(), berurutan (menguji bahwa uraian-ulang dari arsip tak mengonversi). */
+  readonly konversi: string[] = [];
+  /** Penundaan (ms) sebelum embedding menjawab: menguji batas waktu pencarian makna. */
+  tundaEmbedding = 0;
 
   /** Panggilan ke model teks (bukan embedding), untuk memeriksa prompt. */
   get panggilanObrolan() {
@@ -292,7 +296,10 @@ export class AiPalsu {
   async run(model: string, masukan: { text?: string[] } & Partial<Obrolan>): Promise<unknown> {
     this.panggilan.push({ model, masukan });
     if (this.galat) throw this.galat;
-    if (Array.isArray(masukan.text)) return { shape: [masukan.text.length, DIMENSI], data: masukan.text.map(embedPalsu) };
+    if (Array.isArray(masukan.text)) {
+      if (this.tundaEmbedding) await new Promise((selesai) => setTimeout(selesai, this.tundaEmbedding));
+      return { shape: [masukan.text.length, DIMENSI], data: masukan.text.map(embedPalsu) };
+    }
     if (masukan.messages) {
       if (this.galatObrolan) throw this.galatObrolan;
       const m = masukan as Obrolan;
@@ -302,6 +309,7 @@ export class AiPalsu {
   }
 
   async toMarkdown(berkas: Array<{ name: string; blob: Blob }>) {
+    this.konversi.push(...berkas.map((b) => b.name));
     return berkas.map((b) =>
       this.galatKonversi !== null
         ? { name: b.name, mimeType: "application/pdf", format: "error" as const, error: this.galatKonversi }

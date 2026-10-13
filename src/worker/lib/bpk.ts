@@ -383,6 +383,45 @@ const RE_RUJUKAN_AYAT = /^(?:ayat\b|[;,])/i;
 // `+`, bukan `*`: dengan `*` pola ini juga cocok dengan string kosong, sehingga
 // judul pasal klasik "Pasal 1" (yang sisa barisnya memang kosong) ikut terbuang.
 const RE_CATCHWORD = /^[.·…]+[.\s·…]*$/;
+/**
+ * Sisa baris yang hanya satu titik: "Pasal 1." dan "Pasal I." adalah cara undang-undang lama menulis judul pasal
+ * (UU 1946-1954 di produksi: 89 naskah tanpa satu pasal pun terdeteksi). Pola catchword di atas ikut menelannya
+ * karena "." juga cocok dengannya, padahal catchword kaki halaman selalu berupa deretan titik ("Pasal 15 . . .").
+ */
+const RE_TITIK_TUNGGAL = /^\.$/;
+/** Sisa baris yang hanya penutup judul (".", ".-", "-", ".–"): bukan isi pasal. */
+const RE_PENUTUP_JUDUL = /^(?:\.\s*[-–—]*|[-–—]+)$/;
+
+/** Nilai bilangan nomor pasal ("12" dan "12A" -> 12, "IV" -> 4); null bila bukan angka maupun romawi. */
+function nilaiNomorPasal(nomor: string): number | null {
+  const angka = /^(\d+)/.exec(nomor);
+  if (angka) return Number(angka[1]);
+  if (!/^[IVXLC]+$/.test(nomor)) return null;
+  const bobot: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100 };
+  let jumlah = 0;
+  for (let i = 0; i < nomor.length; i++) {
+    const kini = bobot[nomor[i]];
+    const berikut = bobot[nomor[i + 1]] ?? 0;
+    jumlah += kini < berikut ? -kini : kini;
+  }
+  return jumlah;
+}
+
+/**
+ * Apakah "Pasal N." (titik tunggal, tanpa isi lain di baris itu) judul pasal, bukan ujung rujukan silang yang terpotong
+ * ("... sebagaimana dimaksud dalam" / "Pasal 15.")? Judul bila salah satu:
+ *  - nomornya urutan yang diharapkan: pasal pertama (1 atau I), atau tepat sesudah pasal sebelumnya;
+ *  - kalimat sebelumnya sudah selesai (berakhir . ; : ! ? ) atau tanda kutip);
+ *  - baris sebelumnya judul bab/bagian yang ditulis huruf kapital semua ("KETENTUAN UMUM").
+ * Nomor yang melompat dan didahului kalimat yang menggantung adalah rujukan: tetap menjadi isi pasal yang berjalan.
+ */
+function judulBertitikSah(nomor: string, terakhir: number | null, barisSebelumnya: string): boolean {
+  const n = nilaiNomorPasal(nomor);
+  if (n !== null && (terakhir === null ? n === 1 : n === terakhir + 1)) return true;
+  if (barisSebelumnya === "") return true;
+  if (/[.;:!?)”"]\s*$/.test(barisSebelumnya)) return true;
+  return barisSebelumnya === barisSebelumnya.toUpperCase() && /[A-Z]/.test(barisSebelumnya);
+}
 
 const RE_AYAT = /^\((\d+[a-z]?)\)\s+/;
 /**
@@ -455,6 +494,9 @@ export function uraikanPasal(naskah: string): PasalTerurai[] {
   let bagian: string | null = null;
   let nomorPasal: string | null = null;
   let buffer: string[] = [];
+  /** Nilai bilangan judul pasal yang terakhir diterima, dan baris tak kosong sebelum baris yang sedang diperiksa. */
+  let nilaiTerakhir: number | null = null;
+  let barisTerakhir = "";
 
   function tutupPasal() {
     if (!nomorPasal) return;
@@ -484,6 +526,10 @@ export function uraikanPasal(naskah: string): PasalTerurai[] {
       break;
     }
 
+    // Baris tak kosong sebelum baris ini; dipakai menilai judul bertitik ("Pasal 1.") di bawah.
+    const sebelumnya = barisTerakhir;
+    if (b.trim()) barisTerakhir = b.trim();
+
     const mBab = b.match(RE_BAB);
     if (mBab) {
       tutupPasal();
@@ -501,10 +547,20 @@ export function uraikanPasal(naskah: string): PasalTerurai[] {
 
     const mPasal = b.match(RE_PASAL);
     if (mPasal) {
-      const sisa = mPasal[2].trim();
+      let sisa = mPasal[2].trim();
+      // Angka nol yang terbaca huruf O oleh OCR ("Pasal 1O" untuk 10) dibereskan sejak ingest.
+      const nomorBaru = rapikanNomorPasal(mPasal[1].toUpperCase());
 
-      // Catchword kaki halaman: buang seluruh barisnya, ia bukan isi apa pun.
-      if (RE_CATCHWORD.test(sisa)) continue;
+      if (RE_CATCHWORD.test(sisa)) {
+        // Catchword kaki halaman ("Pasal 15 . . ."): buang seluruh barisnya, ia bukan isi apa pun. Satu titik saja
+        // ("Pasal 1.") judul gaya lama, selama urutan atau kalimat sebelumnya mendukung; kalau tidak, ia ujung rujukan
+        // silang yang terpotong dan menjadi isi pasal yang sedang berjalan.
+        if (!RE_TITIK_TUNGGAL.test(sisa)) continue;
+        if (!judulBertitikSah(nomorBaru, nilaiTerakhir, sebelumnya)) {
+          if (nomorPasal) buffer.push(b);
+          continue;
+        }
+      }
 
       // Sambungan rujukan silang: bukan judul, tetapi kalimatnya nyata —
       // jadi tetap dimasukkan sebagai isi pasal yang sedang berjalan.
@@ -514,8 +570,11 @@ export function uraikanPasal(naskah: string): PasalTerurai[] {
       }
 
       tutupPasal();
-      // Angka nol yang terbaca huruf O oleh OCR ("Pasal 1O" untuk 10) dibereskan sejak ingest.
-      nomorPasal = rapikanNomorPasal(mPasal[1].toUpperCase());
+      nomorPasal = nomorBaru;
+      nilaiTerakhir = nilaiNomorPasal(nomorBaru) ?? nilaiTerakhir;
+      // Penutup judul ("Pasal 1." / "Pasal 1.-") bukan isi; ". Isi ..." yang menempel dimulai dari isinya.
+      if (RE_PENUTUP_JUDUL.test(sisa)) sisa = "";
+      else sisa = sisa.replace(/^\.\s*(?=[\p{L}\p{N}("“])/u, "");
       // Isi yang menempel pada baris judul menjadi awal badan pasal.
       if (sisa) buffer.push(sisa);
       continue;

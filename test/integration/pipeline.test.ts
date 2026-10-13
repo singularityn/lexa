@@ -344,6 +344,24 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       expect(l.r2.objek.has("teks/akn/id/act/pp/2025/99.md")).toBe(true);
     });
 
+    it("teks tanpa struktur pasal tetap bisa dibaca lewat /api/dokumen/teks: kuncinya dicatat di D1", async () => {
+      const teksPindaian = "Halaman pindaian tanpa struktur apa pun yang bisa dikenali sebagai pasal.";
+      l.ai.markdown.set("99.pdf", teksPindaian);
+      await jalankanAntrean(l, l.antrean.kuras());
+      expect(await l.db.prepare(`SELECT jumlah_pasal, isi_status, r2_text_key FROM laws`).first()).toEqual({
+        jumlah_pasal: 0, isi_status: "menunggu", r2_text_key: "teks/akn/id/act/pp/2025/99.md",
+      });
+      const teks = await panggil(l, `/api/dokumen/teks?uri=${uriEnc}`);
+      expect(teks.status).toBe(200);
+      expect(await teks.text()).toBe(teksPindaian);
+    });
+
+    it("PDF yang bukan naskah peraturannya tidak mengaitkan teksnya ke peraturan ini", async () => {
+      l.ai.markdown.set("99.pdf", "UNDANG-UNDANG REPUBLIK INDONESIA NOMOR 13 TAHUN 2003\nPasal 1\nIsi lain.");
+      await jalankanAntrean(l, l.antrean.kuras());
+      expect(await l.db.prepare(`SELECT jumlah_pasal, r2_text_key FROM laws`).first()).toEqual({ jumlah_pasal: 0, r2_text_key: null });
+    });
+
     it("konversi PDF gagal: pesan di-retry dan kegagalan dicatat dengan vonis 'gagal'", async () => {
       l.ai.galatKonversi = "PDF terenkripsi";
       const hasil = await jalankanAntrean(l, l.antrean.kuras());
@@ -373,6 +391,87 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       expect(hasil.diakui).toBe(1);
       expect(hasil.diulang).toHaveLength(1); // hanya ringkasan yang diulang
       expect((await l.db.prepare(`SELECT jumlah_pasal, indexed_at FROM laws`).first())).toMatchObject({ jumlah_pasal: 3, indexed_at: expect.any(String) });
+    });
+  });
+
+  describe("uraikan ulang dari arsip teks (dari_teks)", () => {
+    const KUNCI_PDF = "pdf/akn/id/act/pp/2025/99.pdf";
+    const KUNCI_TEKS = "teks/akn/id/act/pp/2025/99.md";
+    const pesan = (ubah: Record<string, unknown> = {}) => ({ tipe: "ekstrak_pdf", frbr_uri: URI_PP99, r2_key: KUNCI_PDF, dari_teks: true, ...ubah });
+    const tanamArsip = async (teks: string, kunci = KUNCI_TEKS) => {
+      await l.r2.put(kunci, teks);
+      await l.db.prepare(`UPDATE laws SET r2_text_key = ? WHERE frbr_uri = ?`).bind(kunci, URI_PP99).run();
+    };
+
+    beforeEach(async () => {
+      await manifest([dokumenBpk()]);
+      await unggahPdf();
+      l.antrean.kuras(); // ekstraksi dari unggahan sengaja tidak dijalankan: yang diuji arsipnya
+    });
+
+    it("menguraikan arsip tanpa membaca PDF dan tanpa konversi Workers AI (pemulihan sesudah pengurai diperbaiki)", async () => {
+      await tanamArsip(NASKAH);
+      l.r2.objek.delete(KUNCI_PDF); // PDF tak boleh disentuh
+      expect(await jalankanAntrean(l, [pesan()])).toEqual({ diakui: 1, diulang: [] });
+      expect(l.ai.konversi).toEqual([]);
+      expect(await l.db.prepare(`SELECT jumlah_pasal, isi_status, r2_text_key FROM laws`).first()).toEqual({
+        jumlah_pasal: 3, isi_status: "lengkap", r2_text_key: KUNCI_TEKS,
+      });
+      expect((await l.db.prepare(`SELECT nomor_pasal, ayat FROM articles ORDER BY urutan`).all()).results).toEqual([
+        { nomor_pasal: "1", ayat: null }, { nomor_pasal: "2", ayat: "1" }, { nomor_pasal: "2", ayat: "2" },
+      ]);
+      // Rantai lanjutannya sama dengan ekstraksi biasa: indeks vektor dan ringkasan.
+      expect(l.antrean.pesan.map((p) => (p as { tipe: string }).tipe).sort()).toEqual(["indeks_vektor", "ringkas"]);
+    });
+
+    it("kunci arsip yang sudah tercatat dipertahankan (mis. arsip .txt dari jalur pasal.id)", async () => {
+      await tanamArsip(NASKAH, "teks/akn/id/act/pp/2025/99.txt");
+      await jalankanAntrean(l, [pesan()]);
+      expect(await l.db.prepare(`SELECT jumlah_pasal, r2_text_key FROM laws`).first()).toEqual({ jumlah_pasal: 3, r2_text_key: "teks/akn/id/act/pp/2025/99.txt" });
+      expect(l.ai.konversi).toEqual([]);
+    });
+
+    it("tanpa arsip, atau arsipnya kosong atau hilang: jatuh ke konversi PDF seperti biasa", async () => {
+      // 1. tidak ada kunci arsip sama sekali
+      await jalankanAntrean(l, [pesan()]);
+      expect(l.ai.konversi).toEqual(["99.pdf"]);
+      expect((await l.db.prepare(`SELECT jumlah_pasal FROM laws`).first<{ jumlah_pasal: number }>())?.jumlah_pasal).toBe(3);
+
+      // 2. kunci tercatat tetapi objeknya kosong, lalu hilang
+      for (const isi of ["  \n", null]) {
+        await l.db.prepare(`UPDATE laws SET jumlah_pasal = 0, r2_text_key = ? WHERE frbr_uri = ?`).bind(KUNCI_TEKS, URI_PP99).run();
+        if (isi === null) l.r2.objek.delete(KUNCI_TEKS);
+        else await l.r2.put(KUNCI_TEKS, isi);
+        l.ai.konversi.length = 0;
+        await jalankanAntrean(l, [pesan()]);
+        expect(l.ai.konversi).toEqual(["99.pdf"]);
+      }
+    });
+
+    it("tanpa dari_teks arsip diabaikan: PDF dikonversi ulang (arsip bisa milik PDF yang sudah diganti)", async () => {
+      await tanamArsip("Teks lama yang tak ada hubungannya dengan PDF ini.");
+      await jalankanAntrean(l, [pesan({ dari_teks: undefined })]);
+      expect(l.ai.konversi).toEqual(["99.pdf"]);
+      expect((await l.db.prepare(`SELECT jumlah_pasal FROM laws`).first<{ jumlah_pasal: number }>())?.jumlah_pasal).toBe(3);
+    });
+
+    it("arsip milik peraturan lain ditolak seperti PDF yang keliru: pasalnya tidak disimpan", async () => {
+      await tanamArsip("UNDANG-UNDANG REPUBLIK INDONESIA NOMOR 13 TAHUN 2003\nPasal 1\nIsi lain.");
+      await jalankanAntrean(l, [pesan()]);
+      expect(await l.db.prepare(`SELECT jumlah_pasal, isi_catatan FROM laws`).first()).toEqual({
+        jumlah_pasal: 0, isi_catatan: "PDF memuat judul UU 13/2003, bukan PP 99/2025: pasal tidak disimpan",
+      });
+    });
+
+    it("arsip yang masih tanpa pasal tetap tanpa pasal, dan tidak menimpa pasal peraturan yang sudah berpasal", async () => {
+      await tanamArsip("Halaman tanpa struktur pasal.");
+      await jalankanAntrean(l, [pesan()]);
+      expect(await l.db.prepare(`SELECT jumlah_pasal, r2_text_key FROM laws`).first()).toEqual({ jumlah_pasal: 0, r2_text_key: KUNCI_TEKS });
+
+      // Peraturan yang sudah punya pasal dari jalur lain: arsip baru tidak mengganti kuncinya.
+      await l.db.prepare(`UPDATE laws SET jumlah_pasal = 9, r2_text_key = 'teks/lain.txt' WHERE frbr_uri = ?`).bind(URI_PP99).run();
+      await jalankanAntrean(l, [pesan()]);
+      expect(await l.db.prepare(`SELECT jumlah_pasal, r2_text_key FROM laws`).first()).toEqual({ jumlah_pasal: 9, r2_text_key: "teks/lain.txt" });
     });
   });
 

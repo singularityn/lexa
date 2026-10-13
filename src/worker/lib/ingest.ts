@@ -20,7 +20,7 @@ export type PesanIngest =
   /** Alur lama (tidak lagi dibuat); sisa di antrean dibuang. Lihat komentar di atas. */
   | { tipe: "peraturan"; frbr_uri: string; alasan?: string; pasal_id?: number; jenis?: string }
   | { tipe: "indeks_vektor"; frbr_uri: string }
-  | { tipe: "ekstrak_pdf"; frbr_uri: string; r2_key: string }
+  | { tipe: "ekstrak_pdf"; frbr_uri: string; r2_key: string; dari_teks?: boolean }
   | { tipe: "ringkas"; frbr_uri: string }
   /** Satu tik pekerjaan latar; rantai cadangan bila Cron per menit tak berjalan (lib/cadangan.ts). */
   | { tipe: "tik"; g?: number };
@@ -201,62 +201,90 @@ export async function ekstrakPdf(
   ctx: KonteksIngest,
   frbrUri: string,
   r2Key: string,
+  opsi: { dariTeks?: boolean } = {},
 ): Promise<number> {
   const mulai = Date.now();
   // Peraturan di luar cakupan tidak diekstrak (konversi PDF memakai Workers AI).
   const baris = await ctx.db
-    .prepare(`SELECT jenis, nomor, tahun, jumlah_pasal FROM laws WHERE frbr_uri = ?`)
+    .prepare(`SELECT jenis, nomor, tahun, jumlah_pasal, r2_text_key FROM laws WHERE frbr_uri = ?`)
     .bind(frbrUri)
-    .first<{ jenis: string; nomor: string; tahun: number; jumlah_pasal: number }>();
+    .first<{ jenis: string; nomor: string; tahun: number; jumlah_pasal: number; r2_text_key: string | null }>();
   if (baris && !dalamCakupan(ctx.cakupan, baris.jenis)) return 0;
-  const objek = await ctx.docs.get(r2Key);
-  if (!objek) throw new Error(`Berkas ${r2Key} tidak ada di R2`);
-
-  const bytes = await objek.arrayBuffer();
-  const ukuranPdf = bytes.byteLength;
-
-  let hasil;
-  try {
-    hasil = await ctx.ai.toMarkdown([
-      {
-        name: r2Key.split("/").pop() ?? "dokumen.pdf",
-        blob: new Blob([bytes], { type: "application/pdf" }),
-      },
-    ]);
-  } catch (e) {
-    // Kegagalan konversi tetap dicatat: dokumen yang tidak bisa dibaca sama
-    // pentingnya bagi pengukuran seperti dokumen yang berhasil.
-    await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, String(e).slice(0, 300));
-    throw e;
-  }
-
-  // `toMarkdown` mengembalikan union: keberhasilan membawa `data`, kegagalan
-  // membawa `format: "error"`. Kegagalan dilaporkan apa adanya, bukan dibiarkan
-  // lolos sebagai teks kosong yang menyesatkan.
-  const konversi = Array.isArray(hasil) ? hasil[0] : undefined;
-  if (!konversi) throw new Error(`Konversi ${r2Key} tidak mengembalikan hasil`);
-  if (konversi.format === "error") {
-    await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, konversi.error.slice(0, 300));
-    throw new Error(`Konversi ${r2Key} gagal: ${konversi.error}`);
-  }
-
-  const markdown = konversi.data ?? "";
-  if (!markdown.trim()) {
-    await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, "teks hasil konversi kosong");
-    throw new Error(`Konversi ${r2Key} menghasilkan teks kosong`);
-  }
 
   const kunciTeks = `teks/${frbrUri.replace(/^\//, "")}.md`;
+  let markdown = "";
+  let ukuranPdf = 0;
+  let dariArsip = false;
 
-  // Teks disimpan lebih dulu, apa pun hasil penguraiannya. Sebelumnya
-  // penyimpanan terjadi setelah penulisan ke D1, sehingga dokumen yang gagal
-  // disimpan juga kehilangan teksnya — justru dokumen yang paling perlu
-  // diperiksa manual.
-  await ctx.docs
-    .put(kunciTeks, markdown, {
-      httpMetadata: { contentType: "text/markdown; charset=utf-8" },
-    })
-    .catch(() => {});
+  // Mode dari_teks (ekstrak-ulang setelah pengurai pasal diperbaiki): uraikan arsip teks yang sudah ada, tanpa membaca
+  // PDF-nya dan tanpa konversi Workers AI. Arsip yang tak ada atau kosong jatuh ke jalur biasa di bawah.
+  if (opsi.dariTeks && baris?.r2_text_key) {
+    const arsip = await ctx.docs.get(baris.r2_text_key).catch(() => null);
+    const teksArsip = arsip ? await arsip.text() : "";
+    if (teksArsip.trim()) {
+      markdown = teksArsip;
+      dariArsip = true;
+      const log = await ctx.db
+        .prepare(`SELECT ukuran_pdf FROM ekstraksi_log WHERE frbr_uri = ?`)
+        .bind(frbrUri)
+        .first<{ ukuran_pdf: number }>()
+        .catch(() => null);
+      ukuranPdf = log?.ukuran_pdf ?? 0;
+    }
+  }
+
+  if (!dariArsip) {
+    const objek = await ctx.docs.get(r2Key);
+    if (!objek) throw new Error(`Berkas ${r2Key} tidak ada di R2`);
+
+    const bytes = await objek.arrayBuffer();
+    ukuranPdf = bytes.byteLength;
+
+    let hasil;
+    try {
+      hasil = await ctx.ai.toMarkdown([
+        {
+          name: r2Key.split("/").pop() ?? "dokumen.pdf",
+          blob: new Blob([bytes], { type: "application/pdf" }),
+        },
+      ]);
+    } catch (e) {
+      // Kegagalan konversi tetap dicatat: dokumen yang tidak bisa dibaca sama
+      // pentingnya bagi pengukuran seperti dokumen yang berhasil.
+      await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, String(e).slice(0, 300));
+      throw e;
+    }
+
+    // `toMarkdown` mengembalikan union: keberhasilan membawa `data`, kegagalan
+    // membawa `format: "error"`. Kegagalan dilaporkan apa adanya, bukan dibiarkan
+    // lolos sebagai teks kosong yang menyesatkan.
+    const konversi = Array.isArray(hasil) ? hasil[0] : undefined;
+    if (!konversi) throw new Error(`Konversi ${r2Key} tidak mengembalikan hasil`);
+    if (konversi.format === "error") {
+      await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, konversi.error.slice(0, 300));
+      throw new Error(`Konversi ${r2Key} gagal: ${konversi.error}`);
+    }
+
+    markdown = konversi.data ?? "";
+    if (!markdown.trim()) {
+      await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, "teks hasil konversi kosong");
+      throw new Error(`Konversi ${r2Key} menghasilkan teks kosong`);
+    }
+
+    // Teks disimpan lebih dulu, apa pun hasil penguraiannya. Sebelumnya
+    // penyimpanan terjadi setelah penulisan ke D1, sehingga dokumen yang gagal
+    // disimpan juga kehilangan teksnya — justru dokumen yang paling perlu
+    // diperiksa manual.
+    await ctx.docs
+      .put(kunciTeks, markdown, {
+        httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+      })
+      .catch(() => {});
+  }
+
+  // Kunci arsip yang dicatat di D1. Mode dari_teks memakai arsip yang sudah ada, yang kuncinya bisa berbeda dari kunci
+  // baku (mis. arsip .txt dari jalur pasal.id), jadi tautan ke arsipnya tidak boleh diganti.
+  const kunciSimpan = dariArsip && baris?.r2_text_key ? baris.r2_text_key : kunciTeks;
 
   // PDF yang bukan naskah peraturan ini (tautan BPK keliru, berkas lain di halaman rincian) tak boleh menghasilkan pasalnya:
   // pasal yang keliru lebih buruk daripada pasal yang kosong. Teks konversi tetap diarsipkan di atas, untuk diperiksa;
@@ -281,6 +309,14 @@ export async function ekstrakPdf(
     // bisa dikenali. Catat, lalu berhenti — jangan retry, hasilnya akan sama.
     await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai, "tidak ada pasal terdeteksi");
     await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: tidak ada pasal terdeteksi`);
+    // Teksnya milik PDF ini, hanya pengurainya yang belum mengenali strukturnya. Kuncinya dicatat supaya teks bisa dibaca
+    // (tab Dokumen) dan diperiksa untuk memperbaiki pengurai, lalu diuraikan ulang tanpa konversi (dari_teks). Peraturan yang
+    // sudah punya pasal dari jalur lain tidak disentuh: arsipnya sudah milik jalur itu.
+    await ctx.db
+      .prepare(`UPDATE laws SET r2_text_key = ? WHERE frbr_uri = ? AND jumlah_pasal = 0`)
+      .bind(kunciSimpan, frbrUri)
+      .run()
+      .catch(() => {});
     return 0;
   }
 
@@ -322,7 +358,7 @@ export async function ekstrakPdf(
                          isi_diambil_at = datetime('now'), isi_catatan = NULL
           WHERE frbr_uri = ?`,
       )
-      .bind(pasal.length, kunciTeks, frbrUri),
+      .bind(pasal.length, kunciSimpan, frbrUri),
   );
 
   // Pencatatan mutu dilakukan SETELAH penyimpanan berhasil. Urutan sebaliknya
@@ -441,5 +477,5 @@ export async function prosesPesanIngest(
     return;
   }
 
-  await ekstrakPdf(ctx, pesan.frbr_uri, pesan.r2_key);
+  await ekstrakPdf(ctx, pesan.frbr_uri, pesan.r2_key, { dariTeks: pesan.dari_teks === true });
 }

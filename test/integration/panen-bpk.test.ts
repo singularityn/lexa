@@ -298,6 +298,29 @@ describe.skipIf(!sqliteAda)("panen BPK (sisi server)", () => {
       expect(l.antrean.pesan).toEqual([{ tipe: "ekstrak_pdf", frbr_uri: a, r2_key: "pdf/akn/id/act/pp/2021/1.pdf" }]);
     });
 
+    it("dariTeks: true menandai pesan agar arsip teks diuraikan tanpa konversi; nilai lain diabaikan dan pesan lama tak berubah", async () => {
+      const a = await pdfBerisi(1);
+      await ulang({ dariTeks: true });
+      expect(l.antrean.kuras()).toEqual([{ tipe: "ekstrak_pdf", frbr_uri: a, r2_key: "pdf/akn/id/act/pp/2021/1.pdf", dari_teks: true }]);
+      await ulang({ dariTeks: "ya" });
+      await ulang({ dariTeks: false });
+      expect(l.antrean.kuras()).toEqual([
+        { tipe: "ekstrak_pdf", frbr_uri: a, r2_key: "pdf/akn/id/act/pp/2021/1.pdf" },
+        { tipe: "ekstrak_pdf", frbr_uri: a, r2_key: "pdf/akn/id/act/pp/2021/1.pdf" },
+      ]);
+    });
+
+    it("dariTeks: true memulihkan pasal dari arsip teks yang ada, tanpa konversi dan tanpa PDF", async () => {
+      const uri = await pdfBerisi(1);
+      await l.r2.put("teks/akn/id/act/pp/2021/1.md", ["BAB I", "Pasal 1.", "Sampah rumah tangga dikelola.", "Pasal 2.", "Setiap orang wajib memilah sampah."].join("\n"));
+      await l.db.prepare(`UPDATE laws SET r2_text_key = 'teks/akn/id/act/pp/2021/1.md' WHERE frbr_uri = ?`).bind(uri).run();
+      await ulang({ dariTeks: true });
+      const { jalankanAntrean } = await import("./harness");
+      await jalankanAntrean(l, l.antrean.kuras());
+      expect(l.ai.konversi).toEqual([]);
+      expect((await l.db.prepare(`SELECT jumlah_pasal FROM laws WHERE frbr_uri = ?`).bind(uri).first<{ jumlah_pasal: number }>())?.jumlah_pasal).toBe(2);
+    });
+
     it("yang belum pernah dicoba didahulukan, dan batas dihormati", async () => {
       const uris = [await pdfBerisi(1), await pdfBerisi(2), await pdfBerisi(3)];
       await l.db.prepare(`INSERT INTO ekstraksi_log (frbr_uri, vonis, created_at) VALUES (?, 'tanpa_pasal', '2026-10-01 00:00:00')`).bind(uris[0]).run();
