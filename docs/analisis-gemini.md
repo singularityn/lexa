@@ -230,7 +230,8 @@ Yang diajarkannya, dan yang diubah:
    jawaban, atau penandanya tak cocok dipecah dua sampai satu halaman, potongan yang selesai disimpan di R2 (`teks-ai-bagian/`) supaya
    kuota atau tenggat tak membuat yang sudah dibayar dibaca ulang, dan satu pesan antrean berhenti memulai panggilan baru sesudah 7
    menit (galat sementara `tertunda`, dilanjutkan percobaan berikutnya). PDF terenkripsi atau rusak yang tak bisa dipecah dibaca
-   utuh bila paling banyak 30 halaman, selain itu ditolak (`terlalu_panjang`) tanpa memanggil Gemini.
+   utuh bila paling banyak 30 halaman, selain itu ditolak (`terlalu_panjang`) tanpa memanggil Gemini. PDF yang lebih panjang dari
+   `GEMINI_HALAMAN_MAKS` (bawaan 120 halaman) juga ditolak (butir 5).
 2. **Token berpikir lebih banyak daripada token keluaran** (4.443 dari 7.748 yang dihasilkan), padahal transkripsi tak butuh bernalar.
    Dibangun: variabel `GEMINI_BERPIKIR` (angka = `thinkingBudget`, kata = `thinkingLevel`), tanpa bawaan karena bentuknya berbeda per seri
    model. `geminiCek` mengirim pengaturan yang sama, jadi nilai yang ditolak model muncul sebagai galat 400 dengan pesan Google sebelum
@@ -239,23 +240,38 @@ Yang diajarkannya, dan yang diubah:
 4. **Waktu 37 detik per halaman** (bila tak ada percobaan ulang di dalamnya) menentukan apakah calon selesai dalam hari atau minggu:
    dengan anggaran harian bawaan ±170 peraturan 20 halaman sehari, jadi ±420 calon selesai dalam tiga hari, dan waktunya terbatas
    kuota Google dan paralelnya (tiga potongan sekaligus), bukan Worker.
+5. **Undang-undang raksasa tak boleh menjadi calon otomatis begitu saja.** Satu-satunya pagar sebelumnya adalah anggaran harian.
+   Data produksi: UU 11/2020 (Cipta Kerja) punya PDF di R2 dan oleh pengukur lama dinilai `bersih` dengan nomor pasal yang melompat
+   sampai 1.568 dan 1.263 celah; pengukur versi 4 dapat menjadikannya calon. Membacanya berarti 1.000+ halaman, ±1,7 juta token
+   (sepertiga anggaran bawaan sehari), dan pada kecepatan terukur ±130 halaman adalah yang selesai dalam empat giliran antrean
+   (empat kali 7 menit, tiga potongan paralel): sisanya diulang Cron berjam-jam sementara putaran berikutnya menunggu. Dibangun:
+   **`GEMINI_HALAMAN_MAKS`** (bawaan 120, 1-5000). PDF yang lebih panjang ditolak `terlalu_panjang` sebelum satu pun panggilan, dicatat
+   `gagal` di `pembacaan_ai` (tak dipilih lagi, tak memakan jatah uji), dan `geminiCek` melaporkan nilainya (`halaman_maks`). Membaca
+   yang lebih panjang adalah keputusan sadar: naikkan variabelnya di dashboard, lalu antrekan peraturan itu saja lewat
+   `POST /api/impor/ekstrak-ulang` dengan body `{"gemini": true, "uri": "/akn/id/act/uu/2020/11"}` (header `x-admin-token`; `uri`
+   melewati penyaring vonis dan catatan "sudah dicoba"). Angka 130 halaman hitungan kasar dari satu pengukuran, dan antrean di
+   dashboard bisa disetel berbeda.
 
 Belum diketahui dari satu sampel: apakah 25 pasal itu semuanya benar dan lengkap. Teksnya ada di R2 `teks-ai/akn/id/act/pp/1961/3.md`
 (bandingkan beberapa pasal dengan PDF-nya), dan `kesesuaian_dengan_teks_lama` tak berguna untuk peraturan yang lapisan teksnya nyaris kosong.
 
 ## Pengujian
 
-* Klien, pagar, dan anggaran: `test/gemini.test.ts` (51 tes, tanpa jaringan: `fetch` diganti jawaban palsu, jeda ulang diganti pencatat).
-* Penyimpanan dan keputusan di atas SQLite sungguhan dengan Worker asli: `test/integration/gemini.test.ts` (55 tes): peraturan tanpa
+* Klien, pagar, dan anggaran: `test/gemini.test.ts` (87 tes, tanpa jaringan: `fetch` diganti jawaban palsu, jeda ulang diganti pencatat).
+* Penyimpanan dan keputusan di atas SQLite sungguhan dengan Worker asli: `test/integration/gemini.test.ts` (78 tes): peraturan tanpa
   pasal, pasal tersimpan lebih utuh, halaman terlewat, PDF peraturan lain, tanpa kunci, anggaran habis, kuota, kunci salah, PDF
-  ditolak, batas waktu konsumer, pesan ganda, teks bawaan yang tertimpa, uji kering, pengantrean massal, dan catatan di detail.
+  ditolak, batas waktu konsumer, pesan ganda, teks bawaan yang tertimpa, uji kering, pengantrean massal, catatan di detail, PDF
+  sungguhan (pdf-lib) dibaca per potongan dan dilanjutkan, dan batas halaman total. Mode otomatis (Cron):
+  `test/integration/gemini-otomatis.test.ts` (26 tes).
 * Skrip dan antarmuka di Chromium dengan Gemini palsu: `e2e/gemini.test.mjs` (10 tes).
 * Uji mutasi pada klien, pemeriksa, anggaran, penyimpanan, dan route: 164 perubahan kecil pada kode (batas, kondisi, nama header,
   urutan) disuntikkan satu per satu. Putaran pertama menyisakan 34 yang lolos; dari situ tes ditambah (batas anggaran tepat di
   angka, ambang `[tidak terbaca]`, status 408, jeda `Retry-After`, galat tak terduga yang tak boleh ditelan, dan lain-lain) dan satu
   kode mati dibuang. Akhirnya 161 terbunuh dan 3 setara fungsional (memotong di kemunculan pertama alih-alih terakhir bila keluaran
   Gemini sendiri sudah rusak karena penanda halaman ganda, satu mutan yang salah ketik, dan pembuangan BOM yang sudah dikerjakan
-  `trim()`).
+  `trim()`). Batas halaman total ditambahkan belakangan dan diuji terpisah: 15 perubahan kecil (`>` menjadi `>=`, batas digeser satu,
+  pemeriksaan dihapus atau dilonggarkan untuk PDF pendek, `min` diganti `max`, bawaan 119/121, batas bawah dan atas, nama variabel
+  salah, jenis galat salah, `halaman_maks` hilang dari `geminiCek`), semuanya terbunuh.
 * Yang **tidak** teruji: Gemini sungguhan. Tak ada panggilan ke Google yang dilakukan dari lingkungan pengembangan.
 
 ## Fakta Gemini API: yang terverifikasi dan yang belum
@@ -315,6 +331,7 @@ itu salah satu alasan tidak dipilih.
 | Teks hukum berubah diam-diam (kata, angka, tanggal) | perintah salin setia + larangan menebak + `[tidak terbaca]`; pagar di atas; catatan "dibaca AI" di antarmuka; PDF asli tetap ada dan tombol "Lihat di PDF" per pasal; teks Gemini diarsipkan | **salah baca satu angka di dalam isi pasal tak bisa dideteksi otomatis.** Itulah sebabnya hasil diberi catatan dan uji kering membandingkan dengan lapisan teks lama bila ada |
 | Gemini menolak naskah tertentu (`RECITATION` karena naskah dikenali, `SAFETY` untuk pidana atau narkotika) | kategori keamanan dilonggarkan (`BLOCK_NONE`); penolakan dicatat `gagal`, tidak diulang | laju penolakan belum diketahui; diukur pada uji kering |
 | Biaya tak terkendali | anggaran harian, batas per putaran (maks 20), tunggu selesai sebelum mengantrekan lagi, 429 diulang dengan jeda | kecil |
+| Undang-undang raksasa (1.000+ halaman) menghabiskan anggaran atau menahan antrean otomatis | `GEMINI_HALAMAN_MAKS` (bawaan 120): ditolak `terlalu_panjang` sebelum Gemini dipanggil, dicatat `gagal`, tak dipilih lagi | yang 100-120 halaman masih memakan beberapa giliran antrean; membaca yang lebih panjang adalah keputusan sadar (naikkan batasnya) |
 | Model dipensiunkan atau diganti | variabel + alias + versi dicatat | bila alias berganti model, mutu bisa berubah tanpa pemberitahuan: pantau `pembacaan_ai.model` |
 | Kunci bocor | secret, header, penyamaran galat; tak ada di D1, KV, R2, log | rotasi kunci bila curiga |
 | Konsumer antrean terpotong waktu | batas giliran 8 menit untuk pesan Gemini; batas waktu 4 menit per pemanggilan, tak diulang di tempat | pesan yang terpotong diulang antrean (dan mengulang biaya satu dokumen) |
@@ -326,7 +343,8 @@ itu salah satu alasan tidak dipilih.
 Prasyarat: secret `GEMINI_API` ada di Worker (Cloudflare > Workers > lexa > Settings > Variables and Secrets, **tipe Secret**;
 `keep_vars` sudah aktif, tetapi variabel teks terlihat di dashboard). Migrasi 0008 (tabel `pembacaan_ai`) sudah diterapkan di
 produksi. Variabel opsional: `GEMINI_MODEL`, `GEMINI_BATAS_HARIAN`, `GEMINI_BASE_URL` (untuk AI Gateway Cloudflare), `GEMINI_BERPIKIR`
-(angka atau kata; mengecilkan token berpikir), `GEMINI_HALAMAN` (halaman per panggilan, bawaan 4), dan `GEMINI_PARALEL` (bawaan 3).
+(angka atau kata; mengecilkan token berpikir), `GEMINI_HALAMAN` (halaman per panggilan, bawaan 4), `GEMINI_PARALEL` (bawaan 3), dan
+`GEMINI_HALAMAN_MAKS` (PDF yang lebih panjang ditolak tanpa memanggil Gemini, bawaan 120).
 
 Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bpk-console-harvest.js`:
 
@@ -336,7 +354,7 @@ Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bp
    Gemini untuk yang bisa diperbaiki secara deterministik; yang `tanpa_pasal`, `berat`, atau `gagal` sesudahnya barulah calonnya
    (perkiraan ±420; `calon_belum_dicoba` di `/api/impor/ringkasan` menyebut yang pasti).
 1. **Cek sambungan.** `window.LEXA_PANEN = { geminiCek: true }`. Hasil yang baik mencetak model, versi model, anggaran, dan pengaturan
-   yang berlaku (`berpikir`, `halaman_per_panggilan`, `paralel`). Galat menyebut penyebabnya (kunci salah, model tak ada, kuota).
+   yang berlaku (`berpikir`, `halaman_per_panggilan`, `paralel`, `halaman_maks`). Galat menyebut penyebabnya (kunci salah, model tak ada, kuota).
    **Mengecilkan token berpikir:** setel `GEMINI_BERPIKIR` di dashboard (mis. `0` pada seri 2.5, atau `LOW` pada seri 3), lalu
    `geminiCek` lagi. Permintaan `geminiCek` membawa pengaturan yang sama dengan pembacaan, jadi nilai yang tak diterima model muncul
    sebagai galat 400 berisi pesan Google (mis. "Thinking level MINIMAL is not supported"), dan token berpikir turun di `token.pikir` pada

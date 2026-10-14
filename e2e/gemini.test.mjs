@@ -93,12 +93,18 @@ async function peraturanTanpaTeks() {
 }
 
 describe("skrip panen BPK: geminiCek", () => {
-  it("mencetak model, versi model, dan anggaran hari ini; tak menyentuh BPK", async () => {
+  it("mencetak model, versi model, anggaran hari ini, dan pengaturan yang berlaku (termasuk batas halaman); tak menyentuh BPK", async () => {
+    const konsol = [];
+    page.on("console", (m) => konsol.push(m.text()));
     const hasil = await jalankan({ geminiCek: true });
     expect(hasil.geminiCek).toMatchObject({
       tersedia: true, model: "gemini-pratinjau", versi_model: "gemini-pratinjau-001", alamat: "gemini.pratinjau.test", balasan: "siap",
-      anggaran: { terpakai: 12, batas: 5_000_000 },
+      anggaran: { terpakai: 12, batas: 5_000_000 }, berpikir: null, halaman_per_panggilan: 4, paralel: 3, halaman_maks: 120,
     });
+    const baris = konsol.find((t) => t.includes("Gemini siap"));
+    expect(baris).toContain("model gemini-pratinjau (versi gemini-pratinjau-001)");
+    expect(baris).toContain("anggaran token hari ini 12 dari 5.000.000");
+    expect(baris).toContain("pengaturan: berpikir bawaan model, 4 halaman per panggilan, 3 paralel, PDF lebih dari 120 halaman ditolak");
     expect((await ringkasanGemini()).anggaran.terpakai).toBe(12);
   });
 

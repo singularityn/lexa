@@ -609,6 +609,50 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
         expect(rentang.sort()).toEqual(["1-4", "5-8", "9-11"]);
       });
 
+      it("batas halaman total (GEMINI_HALAMAN_MAKS): PDF yang lebih panjang dicatat 'gagal' tanpa menyentuh Gemini, anggaran, atau pasal tersimpan", async () => {
+        l.env.GEMINI_HALAMAN_MAKS = "11";
+        const rentang = pasangPotongan();
+        expect(await jalan()).toEqual({ diakui: 1, diulang: [] });
+        expect(rentang).toEqual([]);
+        const baris = await pembacaan();
+        expect(baris).toMatchObject({ hasil: "gagal", catatan: expect.stringContaining("terlalu_panjang") });
+        expect(baris?.catatan).toContain("12 halaman");
+        expect(baris?.catatan).toContain("GEMINI_HALAMAN_MAKS");
+        expect(await pasalTersimpan()).toEqual([]);
+        expect(tokenHariIni().reduce((a, b) => a + b, 0)).toBe(0);
+        expect(kunciBagian()).toEqual([]);
+        // Dicatat sehingga putaran berikutnya tak mengulangnya: pesan kedua tak menghasilkan panggilan.
+        expect(await jalan()).toEqual({ diakui: 1, diulang: [] });
+        expect(rentang).toEqual([]);
+      });
+
+      it("tepat sebanyak batas (12 halaman, batas 12): dibaca seperti biasa", async () => {
+        l.env.GEMINI_HALAMAN_MAKS = "12";
+        const rentang = pasangPotongan();
+        expect(await jalan()).toEqual({ diakui: 1, diulang: [] });
+        expect(rentang.sort()).toEqual(["1-4", "5-8", "9-12"]);
+        expect(await pembacaan()).toMatchObject({ hasil: "dipakai", halaman: 12 });
+      });
+
+      it("percobaan kering dari antrean (Cron) pada PDF terlalu panjang: dicatat 'gagal' (bukan 'uji'), jadi tak dipilih lagi dan tak memakan jatah percobaan", async () => {
+        l.env.GEMINI_HALAMAN_MAKS = "5";
+        const rentang = pasangPotongan();
+        expect(await jalan({ uji: true })).toEqual({ diakui: 1, diulang: [] });
+        expect(rentang).toEqual([]);
+        expect(await pembacaan()).toMatchObject({ hasil: "gagal", catatan: expect.stringContaining("uji: terlalu_panjang") });
+        expect((await satu<{ n: number }>(l, `SELECT COUNT(*) AS n FROM pembacaan_ai WHERE hasil = 'uji'`))?.n).toBe(0);
+      });
+
+      it("POST /gemini-uji pada PDF terlalu panjang: 502 'terlalu_panjang' yang tetap, tanpa panggilan Gemini dan tanpa catatan", async () => {
+        l.env.GEMINI_HALAMAN_MAKS = "5";
+        const rentang = pasangPotongan();
+        const res = await uji({ uri: URI });
+        expect(res.status).toBe(502);
+        expect(await json(res)).toMatchObject({ error: "gemini_galat", jenis: "terlalu_panjang", sementara: false });
+        expect(rentang).toEqual([]);
+        expect(await pembacaan()).toBeNull();
+      });
+
       it("catatan percobaan kering memuat ringkasan dan cuplikan transkripsi (awal dan tengah), dibatasi 2.000 karakter, untuk dinilai dari D1", async () => {
         pasangPotongan();
         await uji({ uri: URI });
@@ -683,15 +727,16 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
       expect(tokenHariIni()).toEqual([12]);
     });
 
-    it("melaporkan pengaturan yang berlaku (berpikir, halaman per panggilan, paralel) dan mengirim pengaturan berpikir yang sama dengan pembacaan", async () => {
+    it("melaporkan pengaturan yang berlaku (berpikir, halaman per panggilan, paralel, batas halaman) dan mengirim pengaturan berpikir yang sama dengan pembacaan", async () => {
       const panggilan = pasangGemini([ok("siap"), ok("siap")]);
-      expect(await json(await cek())).toMatchObject({ berpikir: null, halaman_per_panggilan: 4, paralel: 3 });
+      expect(await json(await cek())).toMatchObject({ berpikir: null, halaman_per_panggilan: 4, paralel: 3, halaman_maks: 120 });
       expect(panggilan[0].badan).not.toHaveProperty("generationConfig");
 
       l.env.GEMINI_BERPIKIR = "LOW";
       l.env.GEMINI_HALAMAN = "6";
       l.env.GEMINI_PARALEL = "2";
-      expect(await json(await cek())).toMatchObject({ berpikir: { tingkat: "LOW" }, halaman_per_panggilan: 6, paralel: 2 });
+      l.env.GEMINI_HALAMAN_MAKS = "300";
+      expect(await json(await cek())).toMatchObject({ berpikir: { tingkat: "LOW" }, halaman_per_panggilan: 6, paralel: 2, halaman_maks: 300 });
       expect(panggilan[1].badan.generationConfig).toEqual({ thinkingConfig: { thinkingLevel: "LOW" } });
     });
 

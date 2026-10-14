@@ -208,6 +208,23 @@ describe.skipIf(!sqliteAda)("Gemini otomatis (Cron)", () => {
       expect(antreanKeluar().map((p) => p.frbr_uri)).toEqual(["/akn/id/act/pp/2024/20", "/akn/id/act/pp/2024/9"]);
     });
 
+    it("PDF yang melebihi GEMINI_HALAMAN_MAKS dicatat gagal tanpa memanggil Gemini, dan putaran berikutnya melanjutkan ke calon lain (tak macet)", async () => {
+      l.env.GEMINI_HALAMAN_MAKS = "5";
+      l.r2.objek.set("pdf/akn/id/act/uu/2000/7.pdf", { bytes: pdf(6) }); // calon pertama: enam halaman, batasnya lima
+      const panggilan = pasangGemini(() => naskahUntuk("PP", "10", 2025));
+      await jalankanCron(l, CRON_GEMINI);
+      expect(await jalankanAntrean(l, antreanKeluar() as never)).toEqual({ diakui: 2, diulang: [] });
+      expect(panggilan).toHaveLength(1); // hanya PP 10/2025; UU 7/2000 ditolak sebelum memanggil
+      const tercatat = await pembacaan();
+      expect(tercatat.map((r) => [r.frbr_uri, r.hasil])).toEqual([["/akn/id/act/pp/2025/10", "uji"], ["/akn/id/act/uu/2000/7", "gagal"]]);
+      expect(tercatat[1].catatan).toContain("terlalu_panjang");
+      expect(tercatat[1].catatan).toContain("6 halaman");
+
+      // Keduanya tercatat, jadi putaran dianggap selesai: yang berikutnya langsung maju, dan UU 7/2000 tak dipilih lagi.
+      await jalankanCron(l, CRON_GEMINI);
+      expect(antreanKeluar().map((p) => p.frbr_uri)).toEqual(["/akn/id/act/pp/2024/20", "/akn/id/act/pp/2024/9"]);
+    });
+
     it("catatan percobaan memuat keputusan, rangkaian pasal, dan token, cukup untuk menilai dari D1 saja", async () => {
       pasangGemini(() => naskahUntuk("PP", "10", 2025));
       l.env.GEMINI_OTOMATIS_BATAS = "1";

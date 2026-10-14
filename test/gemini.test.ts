@@ -4,7 +4,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import {
-  ANGGARAN_HARIAN_BAWAAN, BASE_URL_BAWAAN, GalatGemini, HALAMAN_PER_PANGGILAN_BAWAAN, MAKS_BYTE_PDF, MAKS_PUTARAN, MODEL_BAWAAN, PARALEL_BAWAAN,
+  ANGGARAN_HARIAN_BAWAAN, BASE_URL_BAWAAN, GalatGemini, HALAMAN_PER_PANGGILAN_BAWAAN, MAKS_BYTE_PDF, MAKS_HALAMAN_BAWAAN, MAKS_PUTARAN, MODEL_BAWAAN, PARALEL_BAWAAN,
   PETUNJUK_TRANSKRIPSI, bacaKonfigGemini,
   bacaPdfDenganGemini, catatPemakaian, keBase64, keMarkdownHalaman, nomorPenanda, nomoriBagian, panggilGemini, pemakaianHariIni, pengaturanGenerasi,
   perintahBagian, perintahLanjut, perkirakanHalamanPdf, periksaTranskripsi, pingGemini, type KonfigGemini,
@@ -13,6 +13,7 @@ import {
 const KUNCI = "AIzaRAHASIA-uji-1234567890";
 const K: KonfigGemini = {
   kunci: KUNCI, model: "gemini-uji", baseUrl: "https://gemini.test/v1beta", anggaranHarian: 1_000_000, berpikir: null, halamanPerPanggilan: 5, paralel: 3,
+  halamanMaks: 120,
 };
 
 interface Panggilan {
@@ -68,14 +69,14 @@ describe("bacaKonfigGemini", () => {
   it("nilai bawaan: model, alamat, dan anggaran harian", () => {
     expect(bacaKonfigGemini({ GEMINI_API: ` ${KUNCI} ` })).toEqual({
       kunci: KUNCI, model: MODEL_BAWAAN, baseUrl: BASE_URL_BAWAAN, anggaranHarian: ANGGARAN_HARIAN_BAWAAN,
-      berpikir: null, halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN,
+      berpikir: null, halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN, halamanMaks: MAKS_HALAMAN_BAWAAN,
     });
   });
 
   it("model, alamat, dan anggaran dari variabel; 'models/' di depan nama model dibuang; garis miring akhir dibuang", () => {
     expect(bacaKonfigGemini({ GEMINI_API: KUNCI, GEMINI_MODEL: "models/gemini-2.5-flash", GEMINI_BASE_URL: "https://gateway.ai.cloudflare.com/v1/a/b/google-ai-studio/v1beta//", GEMINI_BATAS_HARIAN: "250000" })).toEqual({
       kunci: KUNCI, model: "gemini-2.5-flash", baseUrl: "https://gateway.ai.cloudflare.com/v1/a/b/google-ai-studio/v1beta", anggaranHarian: 250000,
-      berpikir: null, halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN,
+      berpikir: null, halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN, halamanMaks: MAKS_HALAMAN_BAWAAN,
     });
   });
 
@@ -108,6 +109,19 @@ describe("bacaKonfigGemini: berpikir, halaman per panggilan, dan paralel", () =>
     expect(baca({ GEMINI_HALAMAN: "999", GEMINI_PARALEL: "99" })).toMatchObject({ halamanPerPanggilan: 20, paralel: 8 });
     expect(baca({ GEMINI_HALAMAN: "0", GEMINI_PARALEL: "-3" })).toMatchObject({ halamanPerPanggilan: 1, paralel: 1 });
     expect(baca({ GEMINI_HALAMAN: "banyak", GEMINI_PARALEL: "" })).toMatchObject({ halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN });
+  });
+
+  it("GEMINI_HALAMAN_MAKS: bawaan 120, dibatasi 1-5000, nilai rusak atau kosong jatuh ke bawaan", () => {
+    expect(MAKS_HALAMAN_BAWAAN).toBe(120);
+    expect(baca({}).halamanMaks).toBe(120);
+    expect(baca({ GEMINI_HALAMAN_MAKS: " 300 " }).halamanMaks).toBe(300);
+    expect(baca({ GEMINI_HALAMAN_MAKS: "1" }).halamanMaks).toBe(1);
+    expect(baca({ GEMINI_HALAMAN_MAKS: "5000" }).halamanMaks).toBe(5000);
+    expect(baca({ GEMINI_HALAMAN_MAKS: "5001" }).halamanMaks).toBe(5000);
+    expect(baca({ GEMINI_HALAMAN_MAKS: "999999" }).halamanMaks).toBe(5000);
+    expect(baca({ GEMINI_HALAMAN_MAKS: "0" }).halamanMaks).toBe(1);
+    expect(baca({ GEMINI_HALAMAN_MAKS: "-7" }).halamanMaks).toBe(1);
+    for (const rusak of ["", "banyak", "  "]) expect(baca({ GEMINI_HALAMAN_MAKS: rusak }).halamanMaks, rusak).toBe(120);
   });
 });
 
@@ -713,6 +727,71 @@ describe("bacaPdfDenganGemini: per potongan halaman", () => {
     const e = await bacaPdfDenganGemini(K, pdf(40), { fetchFn: fn, bukaPdf: async () => null }).catch((x) => x);
     expect(e).toMatchObject({ jenis: "terlalu_panjang" });
     expect(rekam).toHaveLength(2);
+  });
+
+  describe("batas halaman total (halamanMaks)", () => {
+    const Kecil: KonfigGemini = { ...K, halamanMaks: 10 };
+
+    it("PDF yang bisa dipecah dan lebih panjang dari batas ditolak 'terlalu_panjang' sebelum satu pun panggilan atau potongan dibuat", async () => {
+      const pemecah = pemecahPalsu(11);
+      const { fn, rekam } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a)));
+      const pakai = vi.fn();
+      const e = await bacaPdfDenganGemini(Kecil, PDF_UTUH(11), { fetchFn: fn, bukaPdf: async () => pemecah, pakai }).catch((x) => x);
+      expect(e).toBeInstanceOf(GalatGemini);
+      expect(e).toMatchObject({ jenis: "terlalu_panjang", sementara: false });
+      expect(e.message).toContain("11 halaman");
+      expect(e.message).toContain("batas 10 halaman");
+      expect(e.message).toContain("GEMINI_HALAMAN_MAKS");
+      expect(rekam).toHaveLength(0);
+      expect(pemecah.ambil).not.toHaveBeenCalled();
+      expect(pakai).not.toHaveBeenCalled();
+    });
+
+    it("tepat sebanyak batas masih dibaca (10 halaman, batas 10); 11 halaman ditolak", async () => {
+      const { fn, rekam } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a)));
+      const hasil = await bacaPdfDenganGemini(Kecil, PDF_UTUH(10), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(10) });
+      expect(hasil).toMatchObject({ halaman: 10, halamanPdf: 10 });
+      expect(rentangDari(rekam).sort()).toEqual(["1-5", "6-10"]);
+    });
+
+    it("PDF yang tak lebih panjang dari satu potongan tetap tunduk pada batas (batas 1, PDF 2 halaman, potongan 5)", async () => {
+      const { fn, rekam } = fetchPotongan(() => ok(halaman(1)));
+      const e = await bacaPdfDenganGemini({ ...K, halamanMaks: 1 }, PDF_UTUH(2), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(2) }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "terlalu_panjang" });
+      expect(rekam).toHaveLength(0);
+      // Satu halaman tepat di batas: dibaca.
+      const hasil = await bacaPdfDenganGemini({ ...K, halamanMaks: 1 }, PDF_UTUH(1), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(1) });
+      expect(hasil).toMatchObject({ halaman: 1, halamanPdf: 1 });
+      expect(rekam).toHaveLength(1);
+    });
+
+    it("PDF yang tak bisa dipecah: batasnya yang lebih kecil antara batas total dan 30 halaman (batas 10 menolak 11; bawaan 120 masih 30)", async () => {
+      const { fn, panggilan } = fetchPalsu([ok(Array.from({ length: 10 }, (_, i) => halaman(i + 1)).join("\n"))]);
+      const e = await bacaPdfDenganGemini(Kecil, pdf(11), { fetchFn: fn, bukaPdf: async () => null }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "terlalu_panjang", sementara: false });
+      expect(e.message).toContain("11 halaman");
+      expect(e.message).toContain("batasnya 10 halaman");
+      expect(panggilan).toHaveLength(0);
+      const hasil = await bacaPdfDenganGemini(Kecil, pdf(10), { fetchFn: fn, bukaPdf: async () => null });
+      expect(hasil.halaman).toBe(10);
+      expect(panggilan).toHaveLength(1);
+
+      // Batas total yang lebih longgar tak melonggarkan batas 30 halaman untuk PDF yang tak bisa dipecah.
+      const longgar = await bacaPdfDenganGemini({ ...K, halamanMaks: 500 }, pdf(31), { fetchFn: fn, bukaPdf: async () => null }).catch((x) => x);
+      expect(longgar).toMatchObject({ jenis: "terlalu_panjang" });
+      expect(longgar.message).toContain("batasnya 30 halaman");
+      expect(panggilan).toHaveLength(1);
+    });
+
+    it("batas dinaikkan: PDF 200 halaman dibaca per potongan (50 panggilan) alih-alih ditolak", async () => {
+      const { fn, rekam } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a)));
+      const hasil = await bacaPdfDenganGemini({ ...K, halamanMaks: 200, halamanPerPanggilan: 4 }, PDF_UTUH(200), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(200) });
+      expect(rekam).toHaveLength(50);
+      expect(hasil.halaman).toBe(200);
+      const e = await bacaPdfDenganGemini(K, PDF_UTUH(200), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(200) }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "terlalu_panjang" }); // batas bawaan 120
+      expect(rekam).toHaveLength(50);
+    });
   });
 
   describe("potongan yang bermasalah dipecah dua, sampai satu halaman", () => {

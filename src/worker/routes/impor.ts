@@ -555,7 +555,7 @@ impor.get("/gemini-cek", async (c) => {
     return c.json(
       {
         tersedia: true, model: k.model, versi_model: ping.versiModel, alamat: new URL(k.baseUrl).host, balasan: ping.balasan,
-        berpikir: k.berpikir, halaman_per_panggilan: k.halamanPerPanggilan, paralel: k.paralel,
+        berpikir: k.berpikir, halaman_per_panggilan: k.halamanPerPanggilan, paralel: k.paralel, halaman_maks: k.halamanMaks,
         selesai: ping.selesai, token: ping.token, durasi_ms: ping.durasiMs, anggaran: { terpakai, batas: k.anggaranHarian },
       },
       200,

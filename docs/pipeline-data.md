@@ -386,8 +386,10 @@ lapisan teksnya rusak, dan 402 ketikan lama (1946-1979) yang bentuknya tak diken
    alamat. Tanpa secret `GEMINI_API` menjawab 503; bila anggaran token hari ini habis, tak ada yang diantrekan.
 2. Konsumer membaca PDF (sebaris, base64, hingga 14 MB) dengan petunjuk transkripsi setia. PDF yang lebih panjang dari
    `GEMINI_HALAMAN` (bawaan 4) dipecah per halaman dengan pdf-lib (`lib/pdfBagi.ts`) dan dibaca per potongan, `GEMINI_PARALEL`
-   (bawaan 3) sekaligus; PDF pendek, atau yang tak bisa dipecah (terenkripsi, rusak; paling banyak 30 halaman, selain itu ditolak
-   `terlalu_panjang`), dibaca dalam satu panggilan, dan jawaban yang terpotong batas panjang dilanjutkan dari halaman terakhir yang
+   (bawaan 3) sekaligus; PDF yang lebih panjang dari `GEMINI_HALAMAN_MAKS` (bawaan 120 halaman) ditolak `terlalu_panjang` sebelum
+   Gemini dipanggil (Cipta Kerja, 1.000+ halaman, akan menghabiskan ±1,7 juta token dan menahan antrean otomatis berjam-jam; naikkan
+   batasnya bila memang ingin membacanya); PDF pendek, atau yang tak bisa dipecah (terenkripsi, rusak; paling banyak 30 halaman,
+   selain itu ditolak `terlalu_panjang`), dibaca dalam satu panggilan, dan jawaban yang terpotong batas panjang dilanjutkan dari halaman terakhir yang
    utuh (maks 6 putaran). Satu potongan yang lewat batas waktu (3 menit), terpotong, atau penandanya tak sebanyak halamannya dipecah
    dua, sampai satu halaman. Potongan yang selesai disimpan di R2 `teks-ai-bagian/<alamat>/<ukuran PDF>/<m>-<n>.md` dan dimuat
    kembali bila pesan diulang (kuota, atau tenggat 7 menit per pesan yang melepas galat sementara `tertunda`); dibersihkan setelah

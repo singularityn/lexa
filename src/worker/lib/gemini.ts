@@ -40,6 +40,14 @@ export const HALAMAN_PER_PANGGILAN_BAWAAN = 4;
 export const PARALEL_BAWAAN = 3;
 /** PDF yang tak bisa dipecah dan lebih panjang dari ini ditolak: satu panggilan untuk semuanya tak akan selesai dalam batas waktu. */
 export const MAKS_HALAMAN_UTUH = 30;
+/**
+ * PDF yang lebih panjang dari ini ditolak (`terlalu_panjang`) sebelum Gemini dipanggil sama sekali (GEMINI_HALAMAN_MAKS). Pembacaan
+ * nyata pertama memakan ±38 detik dan ±1.450 token per halaman; satu pesan antrean menghabiskan paling lama 7 menit dan diulang
+ * paling banyak tiga kali, jadi tiga potongan paralel selesai ±32 halaman per giliran (±130 halaman seluruhnya). Undang-undang
+ * yang jauh lebih panjang (Cipta Kerja: 1.000+ halaman, ±1,7 juta token) akan menghabiskan anggaran harian dan menahan antrean
+ * Cron berjam-jam; membacanya adalah keputusan yang disengaja: naikkan batas ini dulu.
+ */
+export const MAKS_HALAMAN_BAWAAN = 120;
 
 const BATAS_WAKTU_BAWAAN_MS = 240_000;
 /** Batas waktu satu panggilan untuk satu potongan; yang melewatinya dipecah lagi menjadi dua. */
@@ -66,6 +74,8 @@ export interface KonfigGemini {
   halamanPerPanggilan: number;
   /** Panggilan bersamaan per PDF (GEMINI_PARALEL). */
   paralel: number;
+  /** PDF yang lebih panjang ditolak tanpa memanggil Gemini (GEMINI_HALAMAN_MAKS). */
+  halamanMaks: number;
 }
 
 /** Variabel dan secret yang dibaca modul ini (env.d.ts). */
@@ -77,6 +87,7 @@ export interface EnvGemini {
   GEMINI_BERPIKIR?: string;
   GEMINI_HALAMAN?: string;
   GEMINI_PARALEL?: string;
+  GEMINI_HALAMAN_MAKS?: string;
 }
 
 function bacaBerpikir(nilai: string | undefined): PengaturanBerpikir {
@@ -109,6 +120,7 @@ export function bacaKonfigGemini(env: EnvGemini): KonfigGemini | null {
     berpikir: bacaBerpikir(env.GEMINI_BERPIKIR),
     halamanPerPanggilan: bulatDalam(env.GEMINI_HALAMAN, HALAMAN_PER_PANGGILAN_BAWAAN, 1, 20),
     paralel: bulatDalam(env.GEMINI_PARALEL, PARALEL_BAWAAN, 1, 8),
+    halamanMaks: bulatDalam(env.GEMINI_HALAMAN_MAKS, MAKS_HALAMAN_BAWAAN, 1, 5000),
   };
 }
 
@@ -122,7 +134,7 @@ export type JenisGalatGemini =
   | "permintaan" //    permintaan ditolak (parameter tak dikenal model, isi terlalu besar)
   | "diblokir" //      jawaban dihentikan (SAFETY, RECITATION, ...) atau permintaan diblokir
   | "terlalu_besar" // PDF melebihi MAKS_BYTE_PDF
-  | "terlalu_panjang" // PDF tak bisa dipecah dan melebihi MAKS_HALAMAN_UTUH halaman
+  | "terlalu_panjang" // PDF melebihi GEMINI_HALAMAN_MAKS halaman, atau tak bisa dipecah dan melebihi MAKS_HALAMAN_UTUH halaman
   | "keluaran" //      jawaban tak bisa dilanjutkan atau tak lengkap setelah MAKS_PUTARAN, atau satu halaman terlalu padat
   | "anggaran" //      anggaran token harian habis
   | "kuota" //         429: laju atau kuota Google habis (sementara)
@@ -492,7 +504,8 @@ export interface HasilBacaPdf {
 /**
  * Baca seluruh PDF dengan Gemini. PDF yang lebih panjang dari `halamanPerPanggilan` dipecah (pdf-lib) dan dibaca per potongan,
  * `paralel` sekaligus (`bacaBerbagian`); yang pendek, atau yang tak bisa dipecah (terenkripsi, rusak), dibaca dalam satu panggilan
- * (`bacaUtuh`). Hasilnya markdown ber-penanda halaman yang sama untuk kedua jalan.
+ * (`bacaUtuh`). Hasilnya markdown ber-penanda halaman yang sama untuk kedua jalan. PDF yang melebihi `halamanMaks` ditolak
+ * (`terlalu_panjang`) sebelum satu pun panggilan dibuat.
  */
 export async function bacaPdfDenganGemini(k: KonfigGemini, bytes: Uint8Array, opsi: OpsiBaca = {}): Promise<HasilBacaPdf> {
   if (bytes.byteLength > MAKS_BYTE_PDF) {
@@ -502,12 +515,19 @@ export async function bacaPdfDenganGemini(k: KonfigGemini, bytes: Uint8Array, op
     );
   }
   const pemecah = await (opsi.bukaPdf ?? bukaPdf)(bytes).catch(() => null);
+  if (pemecah && pemecah.halaman > k.halamanMaks) {
+    throw new GalatGemini(
+      "terlalu_panjang",
+      `PDF ${pemecah.halaman} halaman melebihi batas ${k.halamanMaks} halaman per pembacaan (GEMINI_HALAMAN_MAKS): naikkan batasnya di dashboard bila memang ingin membacanya`,
+    );
+  }
   const ukuran = Math.max(1, opsi.halamanPerPanggilan ?? k.halamanPerPanggilan);
   if (pemecah && pemecah.halaman > ukuran) return bacaBerbagian(k, bytes, pemecah, opsi);
 
   const halamanPdf = pemecah?.halaman ?? perkirakanHalamanPdf(bytes);
-  if (!pemecah && halamanPdf !== null && halamanPdf > MAKS_HALAMAN_UTUH) {
-    throw new GalatGemini("terlalu_panjang", `PDF ${halamanPdf} halaman dan tak bisa dipecah (terenkripsi atau rusak): satu panggilan untuk semuanya tak akan selesai tepat waktu`);
+  const batasUtuh = Math.min(MAKS_HALAMAN_UTUH, k.halamanMaks);
+  if (!pemecah && halamanPdf !== null && halamanPdf > batasUtuh) {
+    throw new GalatGemini("terlalu_panjang", `PDF ${halamanPdf} halaman dan tak bisa dipecah (terenkripsi atau rusak), padahal batasnya ${batasUtuh} halaman: satu panggilan untuk semuanya tak akan selesai tepat waktu`);
   }
   return bacaUtuh(k, bytes, opsi, halamanPdf);
 }

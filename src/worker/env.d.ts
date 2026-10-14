@@ -58,6 +58,11 @@ interface Env {
   /** Panggilan Gemini yang berjalan bersamaan untuk satu PDF (bawaan 3, 1-8). */
   GEMINI_PARALEL?: string;
   /**
+   * PDF yang lebih panjang dari ini (bawaan 120, 1-5000) ditolak tanpa memanggil Gemini (`terlalu_panjang`), supaya undang-undang
+   * raksasa (Cipta Kerja: 1.000+ halaman) tak menghabiskan anggaran harian atau menahan antrean Cron. Naikkan untuk membacanya sengaja.
+   */
+  GEMINI_HALAMAN_MAKS?: string;
+  /**
    * Gemini otomatis lewat Cron 15 menit (lib/geminiOtomatis.ts): `uji` (percobaan kering, berhenti sendiri setelah
    * GEMINI_OTOMATIS_UJI_MAKS) atau `ya` (membaca sungguhan). Tak ada atau nilai lain: mati.
    */

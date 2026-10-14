@@ -244,7 +244,9 @@ berjalan seperti biasa.
    Gateway Cloudflare; bawaan API Google langsung).
    Juga opsional: `GEMINI_BERPIKIR` (angka atau kata, mis. `0` atau `LOW`; mengecilkan token berpikir, yang pada pembacaan nyata pertama
    lebih banyak daripada token keluaran; bentuk nilainya berbeda per seri model, jadi uji dengan `geminiCek` sebelum membaca),
-   `GEMINI_HALAMAN` (halaman per panggilan untuk PDF panjang, bawaan 4) dan `GEMINI_PARALEL` (panggilan bersamaan per PDF, bawaan 3).
+   `GEMINI_HALAMAN` (halaman per panggilan untuk PDF panjang, bawaan 4), `GEMINI_PARALEL` (panggilan bersamaan per PDF, bawaan 3), dan
+   `GEMINI_HALAMAN_MAKS` (PDF yang lebih panjang ditolak tanpa memanggil Gemini, bawaan 120 halaman; naikkan hanya bila memang ingin
+   membaca undang-undang yang sangat panjang).
 3. Terapkan migrasi 0008 (tabel `pembacaan_ai`) sebelum memakainya: `npm run d1:migrate:remote`.
 4. Uji dari konsol dengan skrip panen: `window.LEXA_PANEN = { geminiCek: true }`, lalu `{ geminiUji: ["/akn/id/act/uu/2019/24"] }`
    (percobaan kering), baru `{ gemini: true, batas: 3 }`.

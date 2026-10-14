@@ -771,7 +771,9 @@
 
   async function cekGemini(ctx) {
     var j = await ctx.lexaMinta("/api/impor/gemini-cek");
-    console.log("[Lexa panen] Gemini siap: model " + j.model + " (versi " + j.versi_model + "), " + j.alamat + ", balasan \"" + j.balasan + "\", " + j.durasi_ms + " ms; anggaran token hari ini " + angka(j.anggaran.terpakai) + " dari " + angka(j.anggaran.batas) + ".");
+    // Pengaturan yang berlaku (Lexa yang lebih lama tak menyebutnya): berpikir, halaman per panggilan, paralel, dan batas panjang PDF.
+    var atur = j.halaman_maks === undefined ? "" : "; pengaturan: berpikir " + (j.berpikir ? JSON.stringify(j.berpikir) : "bawaan model") + ", " + j.halaman_per_panggilan + " halaman per panggilan, " + j.paralel + " paralel, PDF lebih dari " + j.halaman_maks + " halaman ditolak";
+    console.log("[Lexa panen] Gemini siap: model " + j.model + " (versi " + j.versi_model + "), " + j.alamat + ", balasan \"" + j.balasan + "\", " + j.durasi_ms + " ms; anggaran token hari ini " + angka(j.anggaran.terpakai) + " dari " + angka(j.anggaran.batas) + atur + ".");
     return j;
   }
 
