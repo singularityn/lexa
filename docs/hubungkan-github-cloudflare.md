@@ -26,7 +26,7 @@ Deploy dari Git **menimpa pengaturan Worker dengan isi `wrangler.jsonc`**. Rinci
 | Antarmuka di URL dasar | **diganti** dengan `public/`. Bila sebelumnya ada UI lama, ia tidak ikut dipertahankan (lihat Rollback) |
 | Binding `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` | ditetapkan sesuai berkas. **Binding lain yang hanya ada di dashboard akan terlepas** (kode tidak memakai yang lain) |
 | Variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `SEARCH_CACHE_TTL`) | dipertahankan (`keep_vars: true`). Sisa `PASAL_API_BASE` dan `TIK_CADANGAN` di dashboard tidak dibaca kode lagi; hapus saja |
-| Secret (`ADMIN_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) | tidak tersentuh. `PASAL_API_TOKEN` tidak dibaca kode lagi; hapus dari dashboard |
+| Secret (`ADMIN_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GEMINI_API`) | tidak tersentuh. `PASAL_API_TOKEN` tidak dibaca kode lagi; hapus dari dashboard |
 | Cron | ditetapkan `0 19 * * *` saja (pemeliharaan harian). Deploy **mengganti** seluruh daftar pemicu dengan isi berkas, jadi pemicu per menit yang lama otomatis hilang |
 | Konsumer antrean (batch, retry, jeda, konkurensi, DLQ) | **tidak tersentuh**: sengaja tidak dideklarasikan |
 | Compatibility date | `2026-08-05` (diperkirakan dari tanggal pembuatan Worker) |
@@ -96,7 +96,7 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Versi aktif | Deployments | versi baru bersumber GitHub, aktif |
 | Antarmuka | buka URL dasar | beranda Lexa tampil dengan statistik; `/tentang` dibuka langsung tanpa 404 |
 | Binding | Settings > Bindings | `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` utuh |
-| Variabel | Settings > Variables and secrets | variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `SEARCH_CACHE_TTL`) dan secret (`ADMIN_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) masih ada, ditambah `CAKUPAN_JENIS` (dari `wrangler.jsonc`) |
+| Variabel | Settings > Variables and secrets | variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `SEARCH_CACHE_TTL`) dan secret (`ADMIN_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, serta `GEMINI_API` bila dipakai) masih ada, ditambah `CAKUPAN_JENIS` (dari `wrangler.jsonc`) |
 | Cron | Settings > Trigger events | hanya `0 19 * * *` (pemeliharaan harian). Bila masih ada pemicu `* * * * *`, hapus; kode mengabaikannya |
 | Konsumer antrean | Queues > lexa-ingest | masih terhubung ke `lexa`, DLQ dan retry seperti sebelumnya |
 | API | `/api/stats`, `/api/search?q=pesangon`, `/robots.txt`, `/sitemap.xml` | 200 dengan data |
@@ -228,6 +228,25 @@ mengaktifkannya:
 | **Error 401: invalid_client** | Client ID salah/terhapus, atau jenis klien bukan Web application | Periksa `GOOGLE_CLIENT_ID`; buat klien jenis Web application |
 | Kembali ke `/akun?galat=token` | Client secret salah (kode tak bisa ditukar) | Pasang ulang `GOOGLE_CLIENT_SECRET`; jangan lewat pipa (newline ikut tersimpan) |
 | Kembali ke `/akun?galat=ditolak` atau `galat=google` | Pengguna membatalkan, atau Google mengembalikan galat lain | Coba lagi |
+
+## Gemini untuk PDF pindaian (opsional)
+
+Peraturan yang PDF-nya pindaian tanpa lapisan teks tak menghasilkan pasal lewat konversi bawaan. Lexa dapat meminta Gemini
+membacanya sebagai gambar (analisis, risiko, dan alasannya: [analisis-gemini.md](analisis-gemini.md)). Tanpa kunci, semua fitur lain
+berjalan seperti biasa.
+
+1. Dashboard > Workers & Pages > `lexa` > Settings > **Variables and Secrets** > Add > tipe **Secret**, nama `GEMINI_API`, isi kunci
+   dari Google AI Studio. Secret tidak pernah dihapus oleh deploy (`keep_vars` melindungi variabel teks juga, tetapi variabel teks
+   terlihat di dashboard).
+2. Opsional, tipe teks: `GEMINI_MODEL` (bawaan `gemini-flash-latest`; nama model Google berganti dan dipensiunkan, jadi pilih yang
+   masih didukung), `GEMINI_BATAS_HARIAN` (token masuk + keluar per hari UTC, bawaan 5.000.000), `GEMINI_BASE_URL` (mis. alamat AI
+   Gateway Cloudflare; bawaan API Google langsung).
+3. Terapkan migrasi 0008 (tabel `pembacaan_ai`) sebelum memakainya: `npm run d1:migrate:remote`.
+4. Uji dari konsol dengan skrip panen: `window.LEXA_PANEN = { geminiCek: true }`, lalu `{ geminiUji: ["/akn/id/act/uu/2019/24"] }`
+   (percobaan kering), baru `{ gemini: true, batas: 3 }`.
+
+Konsumer antrean `lexa-ingest` memproses pesan secara berurutan, dan satu pemanggilan dibatasi 15 menit oleh Cloudflare; pembacaan
+Gemini memakan menit per PDF, jadi pesannya dikirim dalam kelompok kecil (skrip memakai `batas: 3` dan menunggu selesai).
 
 ## Jebakan yang perlu diingat
 

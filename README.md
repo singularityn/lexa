@@ -87,7 +87,7 @@ lewat `/api/impor/*`. Skema D1 dan alasan desainnya ada di `migrations/`.
 | Akun | `GET /api/auth/status`, `GET /api/auth/google`, `GET /api/auth/google/callback`, `PATCH /api/auth/profil`, `POST /api/auth/keluar`; koleksi: `GET/PUT/DELETE /api/koleksi`, `POST /api/koleksi/gabung` |
 | Laporan | `POST /api/laporan` |
 | Admin (header `x-admin-token`) | `GET /api/admin/ukur`, `GET /api/admin/laporan`, `GET /api/admin/kueri-nihil`, `GET /api/admin/cek-token` (diagnosis, hanya boolean); `POST /api/admin/sync` sudah dihentikan (menjawab 410 dengan petunjuk pengganti) |
-| Impor dari BPK (header `x-admin-token`) | `GET /api/impor/butuh-teks`, `GET /api/impor/ringkasan`, `POST /api/impor/tautan`, `POST /api/impor/manifest`, `PUT /api/impor/pdf`, `POST /api/impor/tanpa-berkas`, `POST /api/impor/ekstrak-ulang`, `POST /api/impor/ringkas` |
+| Impor dari BPK (header `x-admin-token`) | `GET /api/impor/butuh-teks`, `GET /api/impor/ringkasan`, `POST /api/impor/tautan`, `POST /api/impor/manifest`, `PUT /api/impor/pdf`, `POST /api/impor/tanpa-berkas`, `POST /api/impor/ekstrak-ulang`, `POST /api/impor/ringkas`, `GET /api/impor/gemini-cek`, `POST /api/impor/gemini-uji` |
 
 Rute memakai mode ketat: `/api/tanya/` dan `/api/koleksi/` (dengan garis miring penutup) dijawab 404.
 
@@ -145,12 +145,12 @@ src/worker/lib/          query (stemmer, parser kueri), search (hybrid + RRF), j
                          dan pengurai pasal), halaman (pembersih artefak halaman PDF), penjelasan (pengurai Penjelasan),
                          tautanBpk (penautan daftar BPK), prioritas (urutan panen), ingest (konsumer antrean, PDF, vektor,
                          aturan penggantian), pratinjau (pratinjau tautan), sesi, auth, cors, bidang, d1; hapus,
-                         pemeliharaan, keadaan, jadwal (pekerjaan harian)
+                         pemeliharaan, keadaan, jadwal (pekerjaan harian), gemini (pembaca PDF pindaian)
 src/worker/env.d.ts      tipe global Env (binding, variabel, secret)
 src/shared/types.ts      tipe bersama
 public/                  antarmuka (index.html, css/, js/, _headers, favicon, ikon/, og/, vendor/pdfjs: salinan PDF.js, lihat README-nya)
 migrations/              migrasi D1: 0000-0004 direkonstruksi dari skema produksi, 0005-0006 kolom isi_* (kini tak dipakai) dan daftar hapus,
-                         0007 tabel penjelasan dan ekstraksi_log.versi_parser
+                         0007 tabel penjelasan dan ekstraksi_log.versi_parser, 0008 tabel pembacaan_ai
 test/                    tes unit; test/integration: Worker asli di atas SQLite sungguhan
 e2e/                     tes antarmuka di Chromium
 scripts/                 pratinjau lokal (dev-node.ts), data contoh, pembuat ikon dan gambar pratinjau, pembaruan sw.js
@@ -196,6 +196,8 @@ cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignor
 | `CAKUPAN_JENIS` | variabel (di `wrangler.jsonc`) | kode jenis peraturan yang dicakup, dipisah koma; bawaan `UUD,TAP_MPR,UU,PERPPU,PP` (lihat [Cakupan peraturan](#cakupan-peraturan)) |
 | `ADMIN_TOKEN` | secret | token untuk `/api/admin/*` dan `/api/impor/*` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | secret | login Google; tanpa ini aplikasi berjalan sebagai tamu |
+| `GEMINI_API` | secret (opsional) | kunci Gemini untuk membaca PDF pindaian; tanpa ini jalur `gemini` menjawab 503 dan fitur lain tak terpengaruh |
+| `GEMINI_MODEL`, `GEMINI_BATAS_HARIAN`, `GEMINI_BASE_URL` | variabel (opsional) | model (bawaan `gemini-flash-latest`), anggaran token per hari UTC (bawaan 5.000.000), dan alamat dasar API (mis. AI Gateway) |
 
 Login Google memerlukan alamat pengalihan yang terdaftar **persis** di Google Cloud Console, yaitu
 `https://<host-situs>/api/auth/google/callback` (untuk produksi:
@@ -232,6 +234,11 @@ Ringkasannya (rincian, perintah, dan SQL pemeriksaan ada di [docs/pipeline-data.
   `POST /api/impor/ekstrak-ulang {"usang": true}` (atau opsi skrip `usang: true`) menguraikan ulang yang berversi lama dari
   arsip teksnya. `butuh-teks?lama=1` (opsi `lama`) menyertakan peraturan yang masih bertumpu pada teks lama supaya naskah
   BPK menggantikannya.
+- **PDF pindaian**: PDF tanpa lapisan teks tak menghasilkan pasal lewat konversi bawaan. Untuk peraturan semacam itu Gemini
+  dapat membaca halaman sebagai gambar (opsi skrip `geminiCek`, `geminiUji`, `gemini`; `POST /api/impor/ekstrak-ulang
+  {"gemini": true}`). Opt-in, berpagar (halaman lengkap, mutu sama, tak mengurangi pasal tersimpan, anggaran token harian), dan
+  peraturan yang pasalnya dibaca AI diberi catatan di antarmuka. Analisis, risiko, dan cara memakainya:
+  [docs/analisis-gemini.md](docs/analisis-gemini.md).
 - **Pemeliharaan harian** (Cron 02:00 WIB): daftar hapus dikosongkan, log lebih tua dari 90 hari dipangkas, sisa keadaan
   sumber lama dibuang.
 
@@ -273,8 +280,8 @@ Berkas di `migrations/` diberi nomor berurutan. **Jangan mengubah berkas yang su
 dengan yang tercatat di tabel `d1_migrations` produksi, sehingga dianggap sudah diterapkan di sana (0005 dan 0006
 diterapkan pada 11 Okt 2026: kolom `isi_*` dan penanda arsip pada `laws`, indeks antrean parsial, pemicu FTS yang hanya
 menyala untuk kolom yang diindeks, dan tabel `daftar_hapus`; kolom `isi_*` kini tak dipakai lagi tetapi dibiarkan; 0007
-menambah tabel `penjelasan` dan kolom `ekstraksi_log.versi_parser`, kompatibel mundur: kode menahan galatnya bila belum
-diterapkan). Perubahan
+menambah tabel `penjelasan` dan kolom `ekstraksi_log.versi_parser`, dan 0008 tabel `pembacaan_ai`, keduanya kompatibel
+mundur: kode menahan galatnya bila belum diterapkan). Perubahan
 skema baru = berkas baru, lalu terapkan secara sengaja **sebelum** men-deploy kode yang membutuhkannya:
 
 ```bash

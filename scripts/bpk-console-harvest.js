@@ -50,6 +50,17 @@
  *                 dengan versi pengurai lama (POST /api/impor/ekstrak-ulang), per `batas` (maks 100) peraturan sekali
  *                 jalan, sampai habis. Perlu SEKALI sesudah pengurai Lexa diperbarui; tab ini bisa dibuka di situs mana pun
  *                 yang diizinkan Lexa. `jedaUsang`: jeda antarputaran dalam milidetik (bawaan 8000)
+ *   geminiCek     true: tidak memanen apa pun. Menguji kunci, model, dan alamat Gemini di Lexa (GET /api/impor/gemini-cek) dengan
+ *                 satu permintaan kecil dan mencetak anggaran token hari ini
+ *   geminiUji     alamat peraturan (atau daftar alamat), mis. "/akn/id/act/uu/2019/24": Gemini membaca PDF-nya dan Lexa
+ *                 melaporkan apa yang AKAN terjadi (pasal terbaca, mutu, kesesuaian dengan teks bawaan, token, keputusan) tanpa
+ *                 menyimpan pasal apa pun (POST /api/impor/gemini-uji; satu sampai beberapa menit per peraturan). Jalankan ini
+ *                 dulu pada beberapa peraturan sebelum `gemini`
+ *   gemini        true: tidak memanen apa pun dari BPK. Lexa meminta Gemini membaca PDF peraturan yang teksnya tak layak (vonis
+ *                 tanpa_pasal, berat, atau gagal) lewat POST /api/impor/ekstrak-ulang, `batas` (bawaan 3, maks 20) sekali jalan,
+ *                 menunggu tiap kelompok selesai sebelum yang berikutnya, sampai habis atau anggaran token harian habis.
+ *                 `geminiVonis`: "tanpa_pasal,berat" untuk menyaring (juga "ringan", "bersih"); `ulangi: true`: coba juga
+ *                 yang pernah dicoba; `jedaGemini`: jeda pemeriksaan kemajuan dalam milidetik (bawaan 15000)
  *   jeda          jeda minimum antarpermintaan ke BPK dalam milidetik (bawaan 4000; minimum 2000; jangan dikecilkan)
  *   kering        true: tidak menulis apa pun ke Lexa (penjelajahan tak mengirim tautan, PDF diunduh tetapi tak diunggah)
  *   rincian       true: buka halaman rincian walau tautan PDF langsung dari daftar diketahui (metadata ikut diperbarui,
@@ -755,6 +766,87 @@
   }
 
   // ---------------------------------------------------------------------------------------------------------------
+  // Gemini membaca PDF yang tak punya lapisan teks (tak menyentuh BPK)
+  // ---------------------------------------------------------------------------------------------------------------
+
+  async function cekGemini(ctx) {
+    var j = await ctx.lexaMinta("/api/impor/gemini-cek");
+    console.log("[Lexa panen] Gemini siap: model " + j.model + " (versi " + j.versi_model + "), " + j.alamat + ", balasan \"" + j.balasan + "\", " + j.durasi_ms + " ms; anggaran token hari ini " + angka(j.anggaran.terpakai) + " dari " + angka(j.anggaran.batas) + ".");
+    return j;
+  }
+
+  async function ujiGemini(ctx) {
+    var daftar = [].concat(ctx.opsi.geminiUji).map(String).filter(Boolean);
+    var hasil = [];
+    for (var i = 0; i < daftar.length && !berhenti; i++) {
+      console.log("[Lexa panen] Gemini membaca " + daftar[i] + " (satu sampai beberapa menit)...");
+      try {
+        var l = await kirimJson(ctx.lexaMinta, "/api/impor/gemini-uji", { uri: daftar[i] });
+        hasil.push(l);
+        var k = l.kesesuaian_dengan_teks_lama;
+        console.log("[Lexa panen] " + l.uri + ": " + l.keputusan.hasil + (l.keputusan.alasan ? " (" + l.keputusan.alasan + ")" : "") + "; " + l.hasil.nomor_pasal_berbeda + " nomor pasal terbaca (" + l.hasil.vonis + "), tersimpan " + l.tersimpan.nomor_pasal_berbeda + " (" + l.tersimpan.vonis + "); halaman " + l.halaman + "/" + (l.halaman_pdf === null ? "?" : l.halaman_pdf) + "; " + angka(l.token.total) + " token, " + Math.round(l.durasi_ms / 1000) + " detik" + (k ? "; sepakat dengan teks lama " + k.gemini_ada_di_lama + "/" + k.lama_ada_di_gemini : "") + (l.masalah.length ? "; MASALAH: " + l.masalah.join(" | ") : ""));
+      } catch (e) {
+        if (e && e.fatal) throw e;
+        hasil.push({ uri: daftar[i], galat: pesan(e) });
+        console.warn("[Lexa panen] " + daftar[i] + ": GAGAL: " + pesan(e));
+      }
+    }
+    console.log("[Lexa panen] cuplikan teks hasil bacaan Gemini ada di R2 (teks-ai/<alamat>.md) dan di laporan:", hasil);
+    return hasil;
+  }
+
+  async function bacaDenganGemini(ctx) {
+    var opsi = ctx.opsi;
+    await cekGemini(ctx);
+    var batas = Math.min(Math.max(Number(opsi.batas) || 3, 1), 20);
+    var jedaCek = typeof opsi._jedaGemini === "number" ? opsi._jedaGemini : Math.max(Number(opsi.jedaGemini) || 15000, 1000);
+    var maksTunggu = typeof opsi._maksTungguGemini === "number" ? opsi._maksTungguGemini : 15 * 60 * 1000;
+    var diantrekan = 0;
+    var selesai = 0;
+    var setelah = "";
+    var tersisa = null;
+    var berhentiKarena = "";
+    // Berapa peraturan yang sudah dicoba dibaca (apa pun hasilnya), dari ringkasan Lexa: tanda bahwa antrean menyelesaikannya.
+    var sudahDicoba = async function () {
+      var r = await ctx.lexaMinta("/api/impor/ringkasan");
+      var p = (r.gemini && r.gemini.pembacaan) || {};
+      return ["dipakai", "dipertahankan", "ditolak", "gagal"].reduce(function (n, k) { return n + (p[k] || 0); }, 0);
+    };
+
+    for (var putaran = 1; !berhenti; putaran++) {
+      var sebelum = await sudahDicoba();
+      var badan = { gemini: true, batas: batas };
+      if (setelah) badan.setelah = setelah;
+      if (opsi.ulangi) badan.ulangi = true;
+      if (opsi.geminiVonis) badan.vonis = String(opsi.geminiVonis).split(",").map(function (v) { return v.trim(); }).filter(Boolean);
+      if (opsi.jenis) badan.jenis = String(opsi.jenis).split(",").map(function (j) { return j.trim(); }).filter(Boolean);
+      var jawab = await kirimJson(ctx.lexaMinta, "/api/impor/ekstrak-ulang", badan);
+      if (jawab.anggaran_habis) { berhentiKarena = "anggaran token harian habis (" + angka(jawab.anggaran.terpakai) + " dari " + angka(jawab.anggaran.batas) + ")"; break; }
+      if (!jawab.diantrekan) { berhentiKarena = "tidak ada lagi yang diantrekan"; break; }
+      diantrekan += jawab.diantrekan;
+      setelah = jawab.terakhir || "";
+      tersisa = jawab.gemini_tersisa;
+      console.log("[Lexa panen] putaran " + putaran + ": " + jawab.diantrekan + " diantrekan (" + jawab.uris.join(", ") + "); " + angka(tersisa) + " belum dicoba; model " + jawab.model);
+      if (ctx.papan) ctx.papan.tulis("Gemini membaca PDF: " + angka(diantrekan) + " diantrekan, " + angka(selesai) + " selesai\nBelum dicoba: " + angka(tersisa));
+
+      // Satu PDF memakan menit dan kuota Gemini terbatas: tunggu Lexa menyelesaikan kelompok ini sebelum mengantrekan yang berikutnya.
+      var mulaiTunggu = Date.now();
+      var maju = 0;
+      while (!berhenti && maju < jawab.diantrekan && Date.now() - mulaiTunggu < maksTunggu) {
+        await tunggu(jedaCek);
+        maju = (await sudahDicoba()) - sebelum;
+      }
+      selesai += Math.max(Math.min(maju, jawab.diantrekan), 0);
+      if (maju < jawab.diantrekan && !berhenti) {
+        berhentiKarena = "kelompok ini belum selesai dibaca dalam " + Math.round(maksTunggu / 60000) + " menit (kuota Google habis atau kunci bermasalah? jalankan { geminiCek: true } dan lihat log Lexa); jalankan lagi untuk melanjutkan";
+        break;
+      }
+    }
+    if (berhenti && !berhentiKarena) berhentiKarena = "dihentikan";
+    return { diantrekan: diantrekan, selesai: selesai, belumDicoba: tersisa, berhentiKarena: berhentiKarena };
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
   // Analisis halaman yang sedang dibuka
   // ---------------------------------------------------------------------------------------------------------------
 
@@ -826,6 +918,15 @@
         console.warn("[Lexa panen] Lexa belum menjalankan versi terbaru (tanpa /api/impor/ringkasan); panen PDF tetap dilanjutkan.");
       }
       if (document.hidden) console.warn("[Lexa panen] Tab ini tersembunyi; peramban memperlambat tab semacam itu. Biarkan tab terlihat selama berjalan.");
+
+      if (opsi.geminiCek) return { geminiCek: await cekGemini(ctx) };
+      if (opsi.geminiUji) return { geminiUji: await ujiGemini(ctx) };
+      if (opsi.gemini) {
+        var gem = await bacaDenganGemini(ctx);
+        console.log("[Lexa panen] pembacaan Gemini selesai:", gem, "\nHasil tiap peraturan ada di tabel pembacaan_ai (dipakai, dipertahankan, ditolak, gagal) dan di status Lexa.");
+        if (ctx.papan) ctx.papan.tulis("Selesai: " + angka(gem.selesai) + " dibaca dari " + angka(gem.diantrekan) + " diantrekan" + (gem.berhentiKarena ? "\n(" + gem.berhentiKarena + ")" : ""));
+        return { gemini: gem };
+      }
 
       if (opsi.usang) {
         var ulang = await uraikanUlangUsang(ctx);

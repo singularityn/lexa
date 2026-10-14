@@ -11,16 +11,20 @@
  */
 
 import { labelSitasi } from "../../shared/label";
-import { dalamCakupan, uriJelasDiLuarCakupan, type Cakupan } from "../../shared/cakupan";
+import { bacaCakupan, dalamCakupan, uriJelasDiLuarCakupan, type Cakupan } from "../../shared/cakupan";
 import {
   idPasalUnik, nilaiKualitasEkstraksi, periksaKecocokanNaskah, uraikanPasal, VERSI_PARSER, type LaporanKualitas, type PasalTerurai,
 } from "./bpk";
+import {
+  bacaKonfigGemini, bacaPdfDenganGemini, catatPemakaian, GalatGemini, pemakaianHariIni, periksaTranskripsi, tokenKosong,
+  type HasilBacaPdf, type KonfigGemini, type OpsiPanggilan, type PemakaianToken,
+} from "./gemini";
 import { bersihkanHalaman } from "./halaman";
 import { barisPenjelasan, uraikanPenjelasan } from "./penjelasan";
 
 export type PesanIngest =
   | { tipe: "indeks_vektor"; frbr_uri: string }
-  | { tipe: "ekstrak_pdf"; frbr_uri: string; r2_key: string; dari_teks?: boolean }
+  | { tipe: "ekstrak_pdf"; frbr_uri: string; r2_key: string; dari_teks?: boolean; pembaca?: "gemini"; ulangi?: boolean }
   | { tipe: "ringkas"; frbr_uri: string };
 
 /** Ukuran potongan teks untuk embedding. bge-m3 kuat di teks pendek-menengah. */
@@ -36,6 +40,28 @@ export interface KonteksIngest {
   summaryModel: string;
   /** Jenis peraturan yang boleh masuk (shared/cakupan.ts). Yang lain tidak diimpor, diekstrak, maupun diindeks. */
   cakupan: Cakupan;
+  /** Konfigurasi Gemini (lib/gemini.ts); null atau tak ada bila secret GEMINI_API belum dipasang. */
+  gemini?: KonfigGemini | null;
+  /** KV untuk hitungan anggaran token Gemini harian. */
+  kv?: KVNamespace;
+  /** Pengganti fetch dan jeda untuk uji; Worker tidak mengisinya. */
+  opsiGemini?: OpsiPanggilan;
+}
+
+/** Konteks ingest dari binding Worker: dipakai konsumer antrean (index.ts) dan route impor yang menjalankan pembacaan langsung. */
+export function buatKonteksIngest(env: Env): KonteksIngest {
+  return {
+    db: env.DB,
+    vectorize: env.VECTORIZE,
+    ai: env.AI,
+    docs: env.DOCS,
+    queue: env.INGEST_QUEUE,
+    embeddingModel: env.EMBEDDING_MODEL,
+    summaryModel: env.SUMMARY_MODEL,
+    cakupan: bacaCakupan(env.CAKUPAN_JENIS),
+    gemini: bacaKonfigGemini(env),
+    kv: env.CACHE,
+  };
 }
 
 async function catatLog(
@@ -293,6 +319,285 @@ function samaDenganTersimpan(lama: BarisLama[], baru: PasalTerurai[]): boolean {
 
 const POTONGAN_DAFTAR_HAPUS = 90;
 
+const kunciTeksAi = (frbrUri: string) => `teks-ai/${frbrUri.replace(/^\//, "")}.md`;
+
+/** Konversi bawaan: PDF menjadi markdown lewat Workers AI `toMarkdown`, lalu teksnya diarsipkan. Kegagalan dicatat dan dilempar. */
+async function konversiBawaan(
+  ctx: KonteksIngest, frbrUri: string, r2Key: string, bytes: ArrayBuffer, ukuranPdf: number, mulai: number, kunciTeks: string,
+): Promise<string> {
+  let hasil;
+  try {
+    hasil = await ctx.ai.toMarkdown([
+      {
+        name: r2Key.split("/").pop() ?? "dokumen.pdf",
+        blob: new Blob([bytes], { type: "application/pdf" }),
+      },
+    ]);
+  } catch (e) {
+    // Kegagalan konversi tetap dicatat: dokumen yang tidak bisa dibaca sama
+    // pentingnya bagi pengukuran seperti dokumen yang berhasil.
+    await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, String(e).slice(0, 300));
+    throw e;
+  }
+
+  // `toMarkdown` mengembalikan union: keberhasilan membawa `data`, kegagalan
+  // membawa `format: "error"`. Kegagalan dilaporkan apa adanya, bukan dibiarkan
+  // lolos sebagai teks kosong yang menyesatkan.
+  const konversi = Array.isArray(hasil) ? hasil[0] : undefined;
+  if (!konversi) throw new Error(`Konversi ${r2Key} tidak mengembalikan hasil`);
+  if (konversi.format === "error") {
+    await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, konversi.error.slice(0, 300));
+    throw new Error(`Konversi ${r2Key} gagal: ${konversi.error}`);
+  }
+
+  const markdown = konversi.data ?? "";
+  if (!markdown.trim()) {
+    await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, "teks hasil konversi kosong");
+    throw new Error(`Konversi ${r2Key} menghasilkan teks kosong`);
+  }
+
+  // Teks disimpan lebih dulu, apa pun hasil penguraiannya. Sebelumnya
+  // penyimpanan terjadi setelah penulisan ke D1, sehingga dokumen yang gagal
+  // disimpan juga kehilangan teksnya — justru dokumen yang paling perlu
+  // diperiksa manual.
+  await ctx.docs
+    .put(kunciTeks, markdown, {
+      httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+    })
+    .catch(() => {});
+  return markdown;
+}
+
+// ---------------------------------------------------------------------------
+// Pembacaan PDF oleh Gemini (lib/gemini.ts)
+// ---------------------------------------------------------------------------
+
+export interface RekamAi {
+  hasil: "dipakai" | "dipertahankan" | "ditolak" | "gagal" | "uji";
+  model?: string | null;
+  catatan?: string | null;
+  halaman?: number;
+  putaran?: number;
+  token?: PemakaianToken;
+  durasiMs?: number | null;
+  vonisBaru?: string | null;
+  pasalBaru?: number;
+}
+
+/**
+ * Catat hasil sebuah percobaan membaca PDF dengan Gemini (tabel `pembacaan_ai`, migrasi 0008). Galatnya ditahan: tabel baru
+ * ada setelah migrasi, dan pencatatan tak boleh menggagalkan pembacaan. Percobaan kering (`uji`) tak menimpa percobaan sungguhan.
+ */
+export async function catatPembacaanAi(db: D1Database, frbrUri: string, r: RekamAi) {
+  const t = r.token ?? tokenKosong();
+  await db
+    .prepare(
+      `INSERT INTO pembacaan_ai (frbr_uri, hasil, model, catatan, halaman, putaran, token_masuk, token_keluar, token_pikir,
+                                 durasi_ms, vonis_baru, pasal_baru)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(frbr_uri) DO UPDATE SET
+         hasil=excluded.hasil, model=excluded.model, catatan=excluded.catatan, halaman=excluded.halaman, putaran=excluded.putaran,
+         token_masuk=excluded.token_masuk, token_keluar=excluded.token_keluar, token_pikir=excluded.token_pikir,
+         durasi_ms=excluded.durasi_ms, vonis_baru=excluded.vonis_baru, pasal_baru=excluded.pasal_baru,
+         percobaan=pembacaan_ai.percobaan + 1, dicoba_at=datetime('now')
+       WHERE excluded.hasil <> 'uji' OR pembacaan_ai.hasil = 'uji'`,
+    )
+    .bind(
+      frbrUri, r.hasil, r.model ?? null, r.catatan ? r.catatan.slice(0, 400) : null, r.halaman ?? 0, r.putaran ?? 0,
+      t.masuk, t.keluar, t.pikir, r.durasiMs ?? null, r.vonisBaru ?? null, r.pasalBaru ?? 0,
+    )
+    .run()
+    .catch(() => {});
+}
+
+/** Hasil percobaan Gemini sebelumnya atas peraturan ini (selain percobaan kering), atau null. Tabel belum ada = belum pernah. */
+async function sudahDicobaGemini(db: D1Database, frbrUri: string): Promise<string | null> {
+  const r = await db
+    .prepare(`SELECT hasil FROM pembacaan_ai WHERE frbr_uri = ? AND hasil <> 'uji'`)
+    .bind(frbrUri)
+    .first<{ hasil: string }>()
+    .catch(() => null);
+  return r?.hasil ?? null;
+}
+
+/**
+ * Pasal yang tersimpan kini berasal dari konversi PDF yang baru, bukan lagi dari bacaan Gemini: catatan "dipakai" tak berlaku
+ * lagi (antarmuka berhenti menyebut teksnya bacaan AI). Galatnya ditahan karena tabelnya baru ada setelah migrasi 0008.
+ */
+async function tandaiBacaanAiDigantikan(db: D1Database, frbrUri: string) {
+  await db
+    .prepare(`UPDATE pembacaan_ai SET hasil = 'digantikan' WHERE frbr_uri = ? AND hasil = 'dipakai'`)
+    .bind(frbrUri)
+    .run()
+    .catch(() => {});
+}
+
+export interface NaskahGemini {
+  baca: HasilBacaPdf;
+  /** Masalah pada transkripsi menurut `periksaTranskripsi`; kosong bila lolos. */
+  masalah: string[];
+}
+
+/**
+ * Baca PDF dengan Gemini di bawah anggaran token harian: token yang terpakai dicatat walau pembacaan gagal di tengah jalan.
+ * Melempar GalatGemini: "kunci" bila secret belum dipasang, "anggaran" bila anggaran hari ini habis.
+ */
+export async function bacaNaskahGemini(ctx: KonteksIngest, bytes: ArrayBuffer): Promise<NaskahGemini> {
+  if (!ctx.gemini || !ctx.kv) throw new GalatGemini("kunci", "Secret GEMINI_API belum dipasang");
+  const sisa = ctx.gemini.anggaranHarian - (await pemakaianHariIni(ctx.kv));
+  if (sisa <= 0) throw new GalatGemini("anggaran", `Anggaran token harian Gemini (${ctx.gemini.anggaranHarian}) sudah habis`);
+  let dipakai = 0;
+  try {
+    const baca = await bacaPdfDenganGemini(ctx.gemini, new Uint8Array(bytes), {
+      ...ctx.opsiGemini,
+      maksToken: sisa,
+      pakai: (t) => void (dipakai += t.total),
+    });
+    return { baca, masalah: periksaTranskripsi(baca.markdown, baca.halamanPdf) };
+  } finally {
+    await catatPemakaian(ctx.kv, dipakai);
+  }
+}
+
+export type PenerimaanAi = { hasil: "dipakai" } | { hasil: "dipertahankan" | "ditolak"; alasan: string };
+
+/**
+ * Apakah teks hasil bacaan Gemini dipakai? Lebih ketat daripada teks konversi bawaan, karena pembacaan gambar bisa keliru tanpa
+ * tanda: pembacaan yang bermasalah ditolak; teks tanpa pasal atau bermutu berat tak menggantikan apa pun (bahkan bila belum ada
+ * pasal tersimpan); selebihnya mengikuti aturan penggantian biasa (`putuskanPenggantian`): tak boleh mengurangi nomor pasal.
+ */
+export function putuskanPenerimaanAi(p: { masalah: string[]; jumlahPasal: number; vonis: Vonis; nomorLama: number; nomorBaru: number }): PenerimaanAi {
+  if (p.masalah.length) return { hasil: "ditolak", alasan: `pembacaan bermasalah: ${p.masalah.join("; ")}` };
+  if (p.jumlahPasal === 0) return { hasil: "ditolak", alasan: "tidak ada pasal terdeteksi pada teks Gemini" };
+  if (p.vonis === "berat") return { hasil: "ditolak", alasan: "teks Gemini bermutu berat (banyak karakter rusak)" };
+  const k = putuskanPenggantian({ nomorLama: p.nomorLama, nomorBaru: p.nomorBaru, vonis: p.vonis, sumberSama: false });
+  return k.ganti ? { hasil: "dipakai" } : { hasil: "dipertahankan", alasan: k.alasan };
+}
+
+interface BacaanAi extends NaskahGemini {
+  durasiMs: number;
+}
+
+/**
+ * Jalur Gemini untuk satu PDF dari antrean. null bila pembacaan berakhir tanpa teks dan sebabnya sudah dicatat: anggaran
+ * habis, kunci atau model bermasalah (berlaku untuk semua dokumen, jadi tidak dicatat per dokumen), atau Gemini menolak dokumen
+ * ini (diblokir, terlalu besar, terpotong). Galat sementara (kuota, jaringan, 5xx) dilempar supaya antrean mengulang pesannya.
+ */
+async function bacaGeminiUntukEkstraksi(ctx: KonteksIngest, frbrUri: string, bytes: ArrayBuffer, mulai: number): Promise<BacaanAi | null> {
+  try {
+    const hasil = await bacaNaskahGemini(ctx, bytes);
+    // Teks Gemini diarsipkan terpisah dari teks bawaan (teks/): hanya yang dipakai yang dipromosikan ke sana.
+    await ctx.docs
+      .put(kunciTeksAi(frbrUri), hasil.baca.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } })
+      .catch(() => {});
+    return { ...hasil, durasiMs: Date.now() - mulai };
+  } catch (e) {
+    if (!(e instanceof GalatGemini) || e.sementara) throw e;
+    if (e.jenis === "anggaran" || e.jenis === "kunci" || e.jenis === "model") {
+      await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: gemini ${e.jenis}: ${e.message}`.slice(0, 300));
+      return null;
+    }
+    await catatPembacaanAi(ctx.db, frbrUri, { hasil: "gagal", catatan: `${e.jenis}: ${e.message}`, durasiMs: Date.now() - mulai });
+    await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: gemini ${e.jenis}: ${e.message}`.slice(0, 300));
+    return null;
+  }
+}
+
+/** 3-gram kata (huruf kecil, hanya huruf dan angka) dari awal teks, untuk membandingkan dua bacaan atas dokumen yang sama. */
+function guntingKata(teks: string): Set<string> {
+  const kata = teks.slice(0, 250_000).toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const hasil = new Set<string>();
+  for (let i = 0; i + 2 < kata.length; i++) hasil.add(`${kata[i]} ${kata[i + 1]} ${kata[i + 2]}`);
+  return hasil;
+}
+
+/**
+ * Kesesuaian dua bacaan atas dokumen yang sama, 0-1: bagian rangkaian tiga kata `a` yang juga ada di `b`, dan sebaliknya.
+ * Dua pembacaan bebas yang saling sepakat jarang keliru di tempat yang sama; satu yang menyimpang jauh patut dicurigai.
+ */
+export function kesesuaianTeks(a: string, b: string): { aDiB: number; bDiA: number } {
+  const ga = guntingKata(a);
+  const gb = guntingKata(b);
+  const bagian = (x: Set<string>, y: Set<string>) => {
+    if (!x.size) return 0;
+    let ada = 0;
+    for (const k of x) if (y.has(k)) ada++;
+    return Math.round((ada / x.size) * 100) / 100;
+  };
+  return { aDiB: bagian(ga, gb), bDiA: bagian(gb, ga) };
+}
+
+export interface LaporanUjiGemini {
+  uri: string;
+  model: string;
+  halaman: number;
+  halaman_pdf: number | null;
+  putaran: number;
+  token: PemakaianToken;
+  durasi_ms: number;
+  masalah: string[];
+  hasil: { jumlah_baris_pasal: number; nomor_pasal_berbeda: number; vonis: Vonis; celah_pasal: number; kerusakan_per_1000: number; panjang_teks: number };
+  tersimpan: { nomor_pasal_berbeda: number; vonis: string | null; panjang_teks: number | null };
+  keputusan: PenerimaanAi;
+  kesesuaian_dengan_teks_lama: { gemini_ada_di_lama: number; lama_ada_di_gemini: number } | null;
+  arsip: string;
+  cuplikan: string;
+}
+
+/**
+ * Percobaan kering: baca PDF dengan Gemini dan laporkan apa yang AKAN terjadi, tanpa menulis pasal atau menyentuh log
+ * ekstraksi. Teksnya diarsipkan di `teks-ai/` untuk diperiksa, dan percobaannya dicatat sebagai `uji` di `pembacaan_ai`.
+ */
+export async function ujiGemini(ctx: KonteksIngest, frbrUri: string, r2Key: string): Promise<LaporanUjiGemini> {
+  const mulai = Date.now();
+  const objek = await ctx.docs.get(r2Key);
+  if (!objek) throw new Error(`Berkas ${r2Key} tidak ada di R2`);
+  const { baca, masalah } = await bacaNaskahGemini(ctx, await objek.arrayBuffer());
+  const arsip = kunciTeksAi(frbrUri);
+  await ctx.docs.put(arsip, baca.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } }).catch(() => {});
+
+  const bersih = bersihkanHalaman(baca.markdown);
+  const pasal = uraikanPasal(baca.markdown);
+  const laporan = nilaiKualitasEkstraksi(bersih, pasal);
+  const nomorBaru = new Set(pasal.map((p) => p.nomor_pasal)).size;
+
+  const lama = await ctx.db
+    .prepare(`SELECT COUNT(DISTINCT nomor_pasal) AS n FROM articles WHERE frbr_uri = ?`)
+    .bind(frbrUri)
+    .first<{ n: number }>();
+  const log = await ctx.db
+    .prepare(`SELECT vonis, panjang_teks FROM ekstraksi_log WHERE frbr_uri = ?`)
+    .bind(frbrUri)
+    .first<{ vonis: string; panjang_teks: number }>();
+  const nomorLama = lama?.n ?? 0;
+
+  let kesesuaian: LaporanUjiGemini["kesesuaian_dengan_teks_lama"] = null;
+  const kunciLama = `teks/${frbrUri.replace(/^\//, "")}.md`;
+  const teksLama = await ctx.docs.get(kunciLama).catch(() => null);
+  if (teksLama) {
+    const k = kesesuaianTeks(bersih, bersihkanHalaman(await teksLama.text()));
+    kesesuaian = { gemini_ada_di_lama: k.aDiB, lama_ada_di_gemini: k.bDiA };
+  }
+
+  const keputusan = putuskanPenerimaanAi({ masalah, jumlahPasal: pasal.length, vonis: laporan.vonis, nomorLama, nomorBaru });
+  const durasi = Date.now() - mulai;
+  await catatPembacaanAi(ctx.db, frbrUri, {
+    hasil: "uji", model: baca.versiModel, halaman: baca.halaman, putaran: baca.putaran, token: baca.token, durasiMs: durasi,
+    vonisBaru: laporan.vonis, pasalBaru: nomorBaru, catatan: keputusan.hasil === "dipakai" ? "akan dipakai" : keputusan.alasan,
+  });
+
+  return {
+    uri: frbrUri, model: baca.versiModel, halaman: baca.halaman, halaman_pdf: baca.halamanPdf, putaran: baca.putaran, token: baca.token,
+    durasi_ms: durasi, masalah,
+    hasil: {
+      jumlah_baris_pasal: pasal.length, nomor_pasal_berbeda: nomorBaru, vonis: laporan.vonis, celah_pasal: laporan.celah_pasal,
+      kerusakan_per_1000: laporan.kerusakan_per_1000, panjang_teks: laporan.panjang_teks,
+    },
+    tersimpan: { nomor_pasal_berbeda: nomorLama, vonis: log?.vonis ?? null, panjang_teks: log?.panjang_teks ?? null },
+    keputusan, kesesuaian_dengan_teks_lama: kesesuaian, arsip, cuplikan: bersih.slice(0, 700),
+  };
+}
+
 /**
  * Ubah PDF di R2 menjadi pasal terstruktur.
  *
@@ -300,14 +605,20 @@ const POTONGAN_DAFTAR_HAPUS = 90;
  * `uraikanPasal` memecahnya menjadi pasal dan ayat, dan `uraikanPenjelasan` mengurai Penjelasan-nya (tabel `penjelasan`).
  * Keputusan menimpa pasal yang sudah tersimpan ada di `putuskanPenggantian`; yang digantikan membuang vektor dan teks
  * arsipnya lewat `daftar_hapus`. Mode `dariTeks` menguraikan ulang arsip teks BPK di R2 tanpa membaca PDF-nya.
+ *
+ * Mode `pembaca: "gemini"` mengganti langkah "PDF menjadi teks" dengan pembacaan Gemini atas gambar halaman (lib/gemini.ts), untuk PDF
+ * yang lapisan teksnya hilang atau rusak. Sisanya sama, dengan tiga perbedaan: teks Gemini diarsipkan di `teks-ai/` dan baru
+ * dipromosikan ke `teks/` bila dipakai; hasil yang ditolak atau dipertahankan tak menyentuh log ekstraksi (yang menggambarkan
+ * teks yang tersimpan) melainkan `pembacaan_ai`; dan penerimaannya lebih ketat (`putuskanPenerimaanAi`).
  */
 export async function ekstrakPdf(
   ctx: KonteksIngest,
   frbrUri: string,
   r2Key: string,
-  opsi: { dariTeks?: boolean } = {},
+  opsi: { dariTeks?: boolean; pembaca?: "gemini"; ulangi?: boolean } = {},
 ): Promise<number> {
   const mulai = Date.now();
+  const denganAi = opsi.pembaca === "gemini";
   // Peraturan di luar cakupan tidak diekstrak (konversi PDF memakai Workers AI).
   const baris = await ctx.db
     .prepare(`SELECT jenis, nomor, tahun, jumlah_pasal, r2_text_key FROM laws WHERE frbr_uri = ?`)
@@ -315,16 +626,28 @@ export async function ekstrakPdf(
     .first<{ jenis: string; nomor: string; tahun: number; jumlah_pasal: number; r2_text_key: string | null }>();
   if (baris && !dalamCakupan(ctx.cakupan, baris.jenis)) return 0;
 
+  // Pembacaan Gemini berbayar: pesan ganda (diantrekan dua kali, atau diulang antrean sesudah pembacaan yang sudah selesai) dan
+  // peraturan yang sudah pernah dicoba tidak dibaca lagi kecuali diminta (`ulangi`).
+  if (denganAi && !opsi.ulangi) {
+    const pernah = await sudahDicobaGemini(ctx.db, frbrUri);
+    if (pernah) {
+      await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: gemini dilewati, sudah pernah dicoba (${pernah}); gunakan ulangi untuk membaca lagi`);
+      return 0;
+    }
+  }
+
   const kunciTeks = `teks/${frbrUri.replace(/^\//, "")}.md`;
   let markdown = "";
   let ukuranPdf = 0;
   /** Kunci arsip teks yang diuraikan ulang (mode dari_teks); null bila teksnya datang dari konversi PDF. */
   let kunciArsip: string | null = null;
+  /** Bukti pembacaan Gemini (mode `pembaca: "gemini"`); null pada jalur biasa. */
+  let ai: BacaanAi | null = null;
 
   // Mode dari_teks (ekstrak-ulang setelah pengurai diperbaiki): uraikan arsip teks yang sudah ada, tanpa membaca PDF dan tanpa
   // konversi Workers AI. Arsip BPK (teks/<uri>.md) didahulukan; arsip lain yang tercatat (sisa sumber lama, .txt) hanya
   // dipakai bila arsip BPK tak ada. Arsip yang tak ada atau kosong jatuh ke jalur biasa di bawah.
-  if (opsi.dariTeks) {
+  if (opsi.dariTeks && !denganAi) {
     for (const kunci of new Set([kunciTeks, baris?.r2_text_key ?? ""])) {
       if (!kunci) continue;
       const arsip = await ctx.docs.get(kunci).catch(() => null);
@@ -352,46 +675,14 @@ export async function ekstrakPdf(
     const bytes = await objek.arrayBuffer();
     ukuranPdf = bytes.byteLength;
 
-    let hasil;
-    try {
-      hasil = await ctx.ai.toMarkdown([
-        {
-          name: r2Key.split("/").pop() ?? "dokumen.pdf",
-          blob: new Blob([bytes], { type: "application/pdf" }),
-        },
-      ]);
-    } catch (e) {
-      // Kegagalan konversi tetap dicatat: dokumen yang tidak bisa dibaca sama
-      // pentingnya bagi pengukuran seperti dokumen yang berhasil.
-      await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, String(e).slice(0, 300));
-      throw e;
+    if (denganAi) {
+      const bacaan = await bacaGeminiUntukEkstraksi(ctx, frbrUri, bytes, mulai);
+      if (!bacaan) return 0;
+      ai = bacaan;
+      markdown = bacaan.baca.markdown;
+    } else {
+      markdown = await konversiBawaan(ctx, frbrUri, r2Key, bytes, ukuranPdf, mulai, kunciTeks);
     }
-
-    // `toMarkdown` mengembalikan union: keberhasilan membawa `data`, kegagalan
-    // membawa `format: "error"`. Kegagalan dilaporkan apa adanya, bukan dibiarkan
-    // lolos sebagai teks kosong yang menyesatkan.
-    const konversi = Array.isArray(hasil) ? hasil[0] : undefined;
-    if (!konversi) throw new Error(`Konversi ${r2Key} tidak mengembalikan hasil`);
-    if (konversi.format === "error") {
-      await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, konversi.error.slice(0, 300));
-      throw new Error(`Konversi ${r2Key} gagal: ${konversi.error}`);
-    }
-
-    markdown = konversi.data ?? "";
-    if (!markdown.trim()) {
-      await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, "teks hasil konversi kosong");
-      throw new Error(`Konversi ${r2Key} menghasilkan teks kosong`);
-    }
-
-    // Teks disimpan lebih dulu, apa pun hasil penguraiannya. Sebelumnya
-    // penyimpanan terjadi setelah penulisan ke D1, sehingga dokumen yang gagal
-    // disimpan juga kehilangan teksnya — justru dokumen yang paling perlu
-    // diperiksa manual.
-    await ctx.docs
-      .put(kunciTeks, markdown, {
-        httpMetadata: { contentType: "text/markdown; charset=utf-8" },
-      })
-      .catch(() => {});
   }
 
   // Kunci arsip yang dicatat di D1. Mode dari_teks memakai arsip yang sudah ada, yang kuncinya bisa berbeda dari kunci
@@ -408,8 +699,12 @@ export async function ekstrakPdf(
     if (cocok.hasil === "tidak_cocok") {
       const d = cocok.ditemukan;
       const catatan = `PDF memuat judul ${d.jenis} ${d.nomor}/${d.tahun}, bukan ${baris.jenis} ${baris.nomor}/${baris.tahun}: pasal tidak disimpan`;
-      await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, catatan);
-      await catatVersiParser(ctx.db, frbrUri);
+      if (ai) {
+        await catatPembacaanAi(ctx.db, frbrUri, { hasil: "ditolak", catatan, model: ai.baca.versiModel, halaman: ai.baca.halaman, putaran: ai.baca.putaran, token: ai.baca.token, durasiMs: ai.durasiMs });
+      } else {
+        await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, catatan);
+        await catatVersiParser(ctx.db, frbrUri);
+      }
       await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: ${catatan}`);
       await ctx.db.prepare(`UPDATE laws SET isi_catatan = ? WHERE frbr_uri = ?`).bind(catatan, frbrUri).run().catch(() => {});
       return 0;
@@ -418,6 +713,17 @@ export async function ekstrakPdf(
 
   const pasal = uraikanPasal(markdown);
   const laporan = nilaiKualitasEkstraksi(bersihkanHalaman(markdown), pasal);
+
+  /** Bukti pembacaan Gemini untuk dicatat di `pembacaan_ai` (hanya jalur Gemini). */
+  const rekam = (r: Pick<RekamAi, "hasil" | "catatan">): RekamAi | null =>
+    ai && { ...r, model: ai.baca.versiModel, halaman: ai.baca.halaman, putaran: ai.baca.putaran, token: ai.baca.token, durasiMs: ai.durasiMs, vonisBaru: laporan.vonis, pasalBaru: new Set(pasal.map((p) => p.nomor_pasal)).size };
+
+  if (ai && !pasal.length) {
+    // Teks Gemini tanpa pasal tak mengubah apa pun: log ekstraksi tetap menggambarkan teks yang tersimpan.
+    await catatPembacaanAi(ctx.db, frbrUri, rekam({ hasil: "ditolak", catatan: "tidak ada pasal terdeteksi pada teks Gemini" })!);
+    await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: tidak ada pasal terdeteksi pada teks Gemini`);
+    return 0;
+  }
 
   if (!pasal.length) {
     // Bukan kegagalan sistem: sebagian PDF adalah pindaian tanpa struktur yang
@@ -441,17 +747,33 @@ export async function ekstrakPdf(
     .prepare(`SELECT id, nomor_pasal, ayat, bab, bagian, isi FROM articles WHERE frbr_uri = ? ORDER BY urutan`)
     .bind(frbrUri)
     .all<BarisLama>();
-  const keputusan = putuskanPenggantian({
-    nomorLama: new Set(lamaBaris.map((r) => r.nomor_pasal)).size,
-    nomorBaru: new Set(pasal.map((p) => p.nomor_pasal)).size,
-    vonis: laporan.vonis,
-    sumberSama,
-  });
+  const nomorLama = new Set(lamaBaris.map((r) => r.nomor_pasal)).size;
+  const nomorBaru = new Set(pasal.map((p) => p.nomor_pasal)).size;
+  if (ai) {
+    const terima = putuskanPenerimaanAi({ masalah: ai.masalah, jumlahPasal: pasal.length, vonis: laporan.vonis, nomorLama, nomorBaru });
+    if (terima.hasil !== "dipakai") {
+      await catatPembacaanAi(ctx.db, frbrUri, rekam({ hasil: terima.hasil, catatan: terima.alasan })!);
+      await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: gemini ${terima.hasil}: ${terima.alasan}`.slice(0, 300));
+      return 0;
+    }
+  }
+  const keputusan = putuskanPenggantian({ nomorLama, nomorBaru, vonis: laporan.vonis, sumberSama });
   if (!keputusan.ganti) {
     await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai, keputusan.alasan);
     await catatVersiParser(ctx.db, frbrUri);
     await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: ${keputusan.alasan}`);
     return 0;
+  }
+
+  // Teks Gemini yang dipakai menjadi arsip teks peraturan ini (teks/<uri>.md): uraian ulang berikutnya (`usang`) membacanya.
+  if (ai) {
+    // Teks bawaan yang akan tertimpa disimpan dulu, sekali saja: bila bacaan AI kelak terbukti keliru, naskah aslinya tidak hilang.
+    const bawaan = `teks-bawaan/${frbrUri.replace(/^\//, "")}.md`;
+    if (!(await ctx.docs.get(bawaan).catch(() => null))) {
+      const lama = await ctx.docs.get(kunciTeks).catch(() => null);
+      if (lama) await ctx.docs.put(bawaan, await lama.arrayBuffer(), { httpMetadata: { contentType: "text/markdown; charset=utf-8" } }).catch(() => {});
+    }
+    await ctx.docs.put(kunciTeks, markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } }).catch(() => {});
   }
 
   const identik = samaDenganTersimpan(lamaBaris, pasal);
@@ -534,8 +856,13 @@ export async function ekstrakPdf(
   }
 
   await simpanPenjelasan(ctx.db, frbrUri, barisPenjelasan(uraikanPenjelasan(markdown)));
-  await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai, null);
+  await catatEkstraksi(
+    ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai,
+    ai ? `dibaca Gemini (${ai.baca.versiModel}): ${ai.baca.halaman} halaman, ${ai.baca.token.total} token` : null,
+  );
   await catatVersiParser(ctx.db, frbrUri);
+  if (ai) await catatPembacaanAi(ctx.db, frbrUri, rekam({ hasil: "dipakai", catatan: null })!);
+  else if (!kunciArsip && !identik) await tandaiBacaanAiDigantikan(ctx.db, frbrUri);
   if (!identik) {
     // Uraian ulang naskah BPK yang sama tak mengubah isi peraturan, jadi ringkasan AI-nya (Workers AI berbayar, dan satu
     // putaran `usang` menyentuh ribuan peraturan) tidak disusun lagi. Naskah baru, atau yang tadinya belum berpasal, diringkas.
@@ -637,5 +964,5 @@ export async function prosesPesanIngest(ctx: KonteksIngest, pesan: PesanIngest):
     return;
   }
 
-  await ekstrakPdf(ctx, pesan.frbr_uri, pesan.r2_key, { dariTeks: pesan.dari_teks === true });
+  await ekstrakPdf(ctx, pesan.frbr_uri, pesan.r2_key, { dariTeks: pesan.dari_teks === true, ...(pesan.pembaca === "gemini" ? { pembaca: "gemini" as const, ulangi: pesan.ulangi === true } : {}) });
 }

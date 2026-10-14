@@ -14,6 +14,9 @@
  *   POST /ekstrak-ulang  antrekan ulang ekstraksi PDF yang sudah tersimpan: yang belum menghasilkan pasal, atau (`usang`) yang
  *                        diurai dengan versi pengurai lama
  *   POST /ringkas        antrekan ringkasan AI untuk peraturan yang sudah berteks tetapi belum beringkasan
+ *   GET  /gemini-cek     uji kunci, model, dan alamat Gemini (secret GEMINI_API) dengan satu permintaan kecil
+ *   POST /gemini-uji     percobaan kering: Gemini membaca PDF satu peraturan dan Lexa melaporkan apa yang akan terjadi
+ *                        (tak menulis pasal); lalu ekstrak-ulang `gemini` untuk membaca sungguhan di latar belakang
  */
 
 import { Hono } from "hono";
@@ -22,7 +25,8 @@ import { petakanDokumen, VERSI_PARSER, type DokumenBpk, type Manifest } from "..
 import { tokenSah } from "../lib/auth";
 import { batchBerkelompok, pilihDalam } from "../lib/d1";
 import { headerCors as corsUntuk } from "../lib/cors";
-import type { PesanIngest } from "../lib/ingest";
+import { bacaKonfigGemini, catatPemakaian, GalatGemini, pemakaianHariIni, pingGemini } from "../lib/gemini";
+import { buatKonteksIngest, ujiGemini, type PesanIngest } from "../lib/ingest";
 import { kunciSitasi, samaSitasi } from "../lib/nomor";
 import { cariSitasi, pilihUtama, tautkanBpk, type TautanMasuk } from "../lib/tautanBpk";
 import { sqlPrioritas } from "../lib/prioritas";
@@ -86,7 +90,8 @@ impor.get("/butuh-teks", async (c) => {
   const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
   const diminta = (c.req.query("jenis") ?? "").split(",").map((j) => j.trim().toUpperCase()).filter(Boolean);
   const jenis = diminta.length ? cakupan.filter((j) => diminta.includes(j)) : cakupan;
-  const batas = Math.min(Math.max(Number(c.req.query("batas")) || 50, 1), 200);
+  // Bilangan pecahan dibulatkan ke bawah: LIMIT menolak "7.9" ("datatype mismatch").
+  const batas = Math.min(Math.max(Math.floor(Number(c.req.query("batas"))) || 50, 1), 200);
   const denganCelah = c.req.query("celah") === "1";
   const denganLama = c.req.query("lama") === "1";
   const semua = c.req.query("semua") === "1";
@@ -156,8 +161,23 @@ impor.get("/ringkasan", async (c) => {
             SUM(CASE WHEN jumlah_pasal = 0 AND r2_pdf_key IS NULL THEN 1 ELSE 0 END) AS perlu_pdf
        FROM laws WHERE ${klausaCakupan(cakupan, "jenis")} GROUP BY jenis`,
   ).all();
-  return c.json({ cakupan, per_jenis: results, tanpa_berkas: await hitungTanpaBerkas(c.env.DB) }, 200, headerCors(c));
+  return c.json({ cakupan, per_jenis: results, tanpa_berkas: await hitungTanpaBerkas(c.env.DB), gemini: await ringkasanGemini(c.env) }, 200, headerCors(c));
 });
+
+/** Keadaan jalur Gemini: terpasang atau tidak, anggaran hari ini, dan hasil percobaan sejauh ini. Tabel belum ada (migrasi 0008) = tanpa hitungan. */
+async function ringkasanGemini(env: Env) {
+  const k = bacaKonfigGemini(env);
+  const pembacaan = await env.DB.prepare(`SELECT hasil, COUNT(*) AS n FROM pembacaan_ai GROUP BY hasil`)
+    .all<{ hasil: string; n: number }>()
+    .then((r) => Object.fromEntries(r.results.map((x) => [x.hasil, x.n])))
+    .catch(() => null);
+  return {
+    terpasang: k !== null,
+    model: k?.model ?? null,
+    anggaran: k ? { terpakai: await pemakaianHariIni(env.CACHE), batas: k.anggaranHarian } : null,
+    pembacaan,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/impor/tautan — entri daftar BPK -> peraturan Lexa
@@ -469,7 +489,7 @@ impor.post("/tanpa-berkas", async (c) => {
 impor.post("/ringkas", async (c) => {
   const body = await c.req.json<{ batas?: unknown }>().catch(() => null);
   const diminta = typeof body?.batas === "number" && Number.isFinite(body.batas) ? body.batas : 100;
-  const batas = Math.min(Math.max(diminta, 1), 500);
+  const batas = Math.min(Math.max(Math.floor(diminta), 1), 500);
   const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
   const { results } = await c.env.DB.prepare(
     `SELECT frbr_uri FROM laws
@@ -487,7 +507,79 @@ impor.post("/ringkas", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/impor/ekstrak-ulang — { uri?: string, batas?: number, jenis?: string[], dariTeks?: boolean, usang?: boolean, setelah?: string }
+// GET /api/impor/gemini-cek, POST /api/impor/gemini-uji — Gemini membaca PDF yang tak punya lapisan teks (lib/gemini.ts)
+//
+// Kunci ada di secret GEMINI_API (opsional: tanpa itu keduanya menjawab 503 dan fitur lain tak terpengaruh). `gemini-cek`
+// mengirim satu permintaan teks kecil untuk memastikan kunci, model, dan alamat benar. `gemini-uji` membaca PDF SATU peraturan
+// (`{ uri }`; makan satu sampai beberapa menit) dan melaporkan: pembacaan lolos atau tidak, pasal yang terbaca dibanding yang
+// tersimpan, mutu teks, kesesuaian dengan teks bawaan, token yang terpakai, dan keputusan yang akan diambil. Tak ada pasal yang
+// ditulis; teks Gemini diarsipkan di teks-ai/ untuk diperiksa. Jalankan ini lebih dulu pada beberapa peraturan sebelum membaca
+// sungguhan lewat ekstrak-ulang `gemini`.
+// ---------------------------------------------------------------------------
+function jawabGalatGemini(c: Context<{ Bindings: Bindings }>, e: GalatGemini) {
+  return c.json(
+    { error: "gemini_galat", jenis: e.jenis, status: e.status ?? null, sementara: e.sementara, message: e.message },
+    e.jenis === "anggaran" ? 429 : 502,
+    headerCors(c),
+  );
+}
+
+const GEMINI_BELUM_DIPASANG = {
+  error: "gemini_belum_dipasang",
+  message: "Secret GEMINI_API belum dipasang di Worker ini. Cloudflare > Workers > lexa > Settings > Variables and Secrets > Add > tipe Secret.",
+};
+
+impor.get("/gemini-cek", async (c) => {
+  const k = bacaKonfigGemini(c.env);
+  if (!k) return c.json(GEMINI_BELUM_DIPASANG, 503, headerCors(c));
+  try {
+    const ping = await pingGemini(k);
+    const terpakai = await catatPemakaian(c.env.CACHE, ping.token.total);
+    return c.json(
+      {
+        tersedia: true, model: k.model, versi_model: ping.versiModel, alamat: new URL(k.baseUrl).host, balasan: ping.balasan,
+        selesai: ping.selesai, token: ping.token, durasi_ms: ping.durasiMs, anggaran: { terpakai, batas: k.anggaranHarian },
+      },
+      200,
+      headerCors(c),
+    );
+  } catch (e) {
+    if (e instanceof GalatGemini) return jawabGalatGemini(c, e);
+    throw e;
+  }
+});
+
+impor.post("/gemini-uji", async (c) => {
+  const body = await c.req.json<{ uri?: unknown }>().catch(() => null);
+  const uri = typeof body?.uri === "string" ? body.uri : "";
+  if (!uri.startsWith("/")) {
+    return c.json({ error: "uri_kosong", message: 'Body harus memuat { uri: "/akn/id/act/..." }.' }, 400, headerCors(c));
+  }
+  if (!bacaKonfigGemini(c.env)) return c.json(GEMINI_BELUM_DIPASANG, 503, headerCors(c));
+  const law = await c.env.DB.prepare(`SELECT jenis, r2_pdf_key FROM laws WHERE frbr_uri = ?`).bind(uri).first<{ jenis: string; r2_pdf_key: string | null }>();
+  if (!law) return c.json({ error: "tidak_ditemukan", message: `${uri} tidak ada di Lexa.` }, 404, headerCors(c));
+  if (!dalamCakupan(bacaCakupan(c.env.CAKUPAN_JENIS), law.jenis)) {
+    return c.json({ error: "di_luar_cakupan", message: `${uri} (${law.jenis}) di luar cakupan Lexa.` }, 422, headerCors(c));
+  }
+  if (!law.r2_pdf_key) return c.json({ error: "tanpa_pdf", message: `${uri} belum punya PDF di Lexa; panen dulu.` }, 409, headerCors(c));
+  try {
+    return c.json(await ujiGemini(buatKonteksIngest(c.env), uri, law.r2_pdf_key), 200, headerCors(c));
+  } catch (e) {
+    if (e instanceof GalatGemini) return jawabGalatGemini(c, e);
+    throw e;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/impor/ekstrak-ulang — { uri?: string, batas?: number, jenis?: string[], dariTeks?: boolean, usang?: boolean, setelah?: string,
+//                                    gemini?: boolean, vonis?: string[], ulangi?: boolean }
+//
+// `gemini: true` mengantrekan pembacaan PDF oleh Gemini (lib/gemini.ts) untuk peraturan yang teksnya tak layak: vonis
+// ekstraksinya `tanpa_pasal`, `berat`, atau `gagal` (atau yang diminta lewat `vonis`), diurutkan menurut alamat, `batas` (1-20, bawaan
+// 5) sekali jalan dengan kursor `setelah`/`terakhir` seperti `usang`. Peraturan yang pernah dicoba (tabel pembacaan_ai, migrasi
+// 0008) dilewati kecuali `ulangi: true`, supaya yang gagal tak membakar token berulang kali. Dengan `uri`: peraturan itu saja,
+// apa pun vonisnya. Jawabannya memuat anggaran token hari ini; bila habis, tak ada yang diantrekan. Hasil pembacaan hanya
+// dipakai bila lolos pemeriksaan dan tak mengurangi pasal yang tersimpan (lihat putuskanPenerimaanAi).
 //
 // Mengantrekan ulang ekstraksi PDF yang sudah tersimpan di R2 tetapi belum menghasilkan pasal (mis. setelah pengurai
 // pasal diperbaiki). Tanpa `uri`: peraturan ber-PDF yang jumlah_pasal-nya 0, yang belum pernah dicoba didahulukan, paling
@@ -504,13 +596,83 @@ impor.post("/ringkas", async (c) => {
 // `diantrekan` bernilai 0. `usang_tersisa` menyusut seiring antrean dikerjakan. Hasil ekstraksi yang gagal atau PDF yang
 // ditolak tak ditawarkan: tak ada yang bisa diperbaiki dari arsip teksnya.
 // ---------------------------------------------------------------------------
+interface GeminiBadan {
+  uri?: unknown;
+  batas?: unknown;
+  vonis?: unknown;
+  ulangi?: unknown;
+  setelah?: unknown;
+}
+
+const VONIS_GEMINI = ["tanpa_pasal", "berat", "gagal", "ringan", "bersih"];
+const VONIS_GEMINI_BAWAAN = ["tanpa_pasal", "berat", "gagal"];
+
+async function antrekanPembacaanGemini(c: Context<{ Bindings: Bindings }>, body: GeminiBadan, dalam: string) {
+  const k = bacaKonfigGemini(c.env);
+  if (!k) return c.json(GEMINI_BELUM_DIPASANG, 503, headerCors(c));
+
+  const terpakai = await pemakaianHariIni(c.env.CACHE);
+  const anggaran = { terpakai, batas: k.anggaranHarian };
+  if (terpakai >= k.anggaranHarian) {
+    return c.json(
+      { diantrekan: 0, anggaran_habis: true, anggaran, model: k.model, message: "Anggaran token harian Gemini habis; lanjutkan besok (UTC) atau naikkan GEMINI_BATAS_HARIAN." },
+      200,
+      headerCors(c),
+    );
+  }
+
+  const batas = Math.min(Math.max(Math.floor(Number(body.batas)) || 5, 1), 20);
+  const diminta = Array.isArray(body.vonis) ? body.vonis.filter((v): v is string => typeof v === "string") : [];
+  const vonis = (diminta.length ? diminta : VONIS_GEMINI_BAWAAN).filter((v) => VONIS_GEMINI.includes(v));
+  if (!vonis.length) {
+    return c.json({ error: "vonis_tak_sah", message: `vonis harus salah satu dari ${VONIS_GEMINI.join(", ")}.` }, 400, headerCors(c));
+  }
+  const uri = typeof body.uri === "string" ? body.uri : null;
+  const setelah = typeof body.setelah === "string" ? body.setelah : "";
+  const belumDicoba = body.ulangi === true ? "" : "AND NOT EXISTS (SELECT 1 FROM pembacaan_ai p WHERE p.frbr_uri = l.frbr_uri AND p.hasil <> 'uji')";
+  const dasar = `FROM laws l JOIN ekstraksi_log e ON e.frbr_uri = l.frbr_uri
+                  WHERE ${dalam} AND l.r2_pdf_key IS NOT NULL AND e.vonis IN (${vonis.map(() => "?").join(",")}) ${belumDicoba}`;
+
+  try {
+    const { results } = uri
+      ? await c.env.DB.prepare(`SELECT l.frbr_uri, l.r2_pdf_key FROM laws l WHERE l.frbr_uri = ? AND ${dalam} AND l.r2_pdf_key IS NOT NULL`)
+          .bind(uri).all<{ frbr_uri: string; r2_pdf_key: string }>()
+      : await c.env.DB.prepare(`SELECT l.frbr_uri, l.r2_pdf_key ${dasar} AND l.frbr_uri > ? ORDER BY l.frbr_uri LIMIT ?`)
+          .bind(...vonis, setelah, batas).all<{ frbr_uri: string; r2_pdf_key: string }>();
+    if (results.length) {
+      await c.env.INGEST_QUEUE.sendBatch(
+        // `ulangi` ikut dibawa: tanpanya konsumer melewati peraturan yang sudah pernah dicoba (pesan ganda tak membayar dua kali).
+        results.map((r) => ({
+          body: { tipe: "ekstrak_pdf", frbr_uri: r.frbr_uri, r2_key: r.r2_pdf_key, pembaca: "gemini", ...(body.ulangi === true || uri ? { ulangi: true } : {}) } satisfies PesanIngest,
+        })),
+      );
+    }
+    const sisa = await c.env.DB.prepare(`SELECT COUNT(*) AS n ${dasar}`).bind(...vonis).first<{ n: number }>();
+    return c.json(
+      {
+        diantrekan: results.length, gemini_tersisa: sisa?.n ?? 0, terakhir: results.at(-1)?.frbr_uri ?? null,
+        uris: results.slice(0, 20).map((r) => r.frbr_uri), model: k.model, vonis, anggaran,
+      },
+      200,
+      headerCors(c),
+    );
+  } catch (e) {
+    if (!/pembacaan_ai/.test(String(e))) throw e;
+    return c.json(
+      { error: "migrasi_belum_diterapkan", message: "Tabel pembacaan_ai belum ada: terapkan migrasi 0008 (npm run d1:migrate:remote) lebih dulu." },
+      503,
+      headerCors(c),
+    );
+  }
+}
+
 impor.post("/ekstrak-ulang", async (c) => {
   const body = await c.req
-    .json<{ uri?: unknown; batas?: unknown; jenis?: unknown; dariTeks?: unknown; usang?: unknown; setelah?: unknown }>()
+    .json<{ uri?: unknown; batas?: unknown; jenis?: unknown; dariTeks?: unknown; usang?: unknown; setelah?: unknown; gemini?: unknown }>()
     .catch(() => null);
   const dariTeks = body?.dariTeks === true;
   const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
-  const batas = Math.min(Math.max(Number(body?.batas) || 25, 1), 100);
+  const batas = Math.min(Math.max(Math.floor(Number(body?.batas)) || 25, 1), 100);
   const diminta = Array.isArray(body?.jenis) ? body.jenis.filter((j): j is string => typeof j === "string").map((j) => j.trim().toUpperCase()) : [];
   const jenis = diminta.length ? cakupan.filter((j) => diminta.includes(j)) : cakupan;
   if (!jenis.length) {
@@ -518,6 +680,8 @@ impor.post("/ekstrak-ulang", async (c) => {
   }
 
   const dalam = klausaCakupan(jenis, "l.jenis");
+
+  if (body?.gemini === true) return antrekanPembacaanGemini(c, body as GeminiBadan, dalam);
 
   if (body?.usang === true) {
     const setelah = typeof body.setelah === "string" ? body.setelah : "";

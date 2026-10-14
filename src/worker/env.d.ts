@@ -41,9 +41,20 @@ interface Env {
    * Tak ada atau tak sah: `CAKUPAN_BAWAAN` di shared/cakupan.ts. Lihat berkas itu.
    */
   CAKUPAN_JENIS?: string;
+  /** Model Gemini untuk membaca PDF yang tak punya lapisan teks (lib/gemini.ts); bawaan `gemini-flash-latest`. */
+  GEMINI_MODEL?: string;
+  /** Alamat dasar API Gemini; bawaan API Google langsung. Isi dengan alamat AI Gateway Cloudflare bila dipakai. */
+  GEMINI_BASE_URL?: string;
+  /** Token (masuk + keluar) per hari UTC yang boleh dipakai semua pembacaan Gemini (string; bawaan 5.000.000). */
+  GEMINI_BATAS_HARIAN?: string;
 
   // --- Secret (dipasang lewat `wrangler secret put`) ---
   ADMIN_TOKEN: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
+  /**
+   * Kunci API Gemini (Google AI Studio). Opsional: tanpa ini jalur ekstrak-ulang `gemini` menjawab 503 dan semua fitur lain
+   * berjalan seperti biasa. Pasang sebagai Secret (bukan variabel teks) di Settings > Variables and Secrets.
+   */
+  GEMINI_API?: string;
 }

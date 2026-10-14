@@ -22,7 +22,8 @@
   // dari Git akan MENGHAPUS variabel yang tidak tercantum di "vars". Nilainya
   // sengaja belum disalin ke sini karena tidak terbaca dari luar dashboard; setelah
   // Anda memindahkannya ke "vars", baris ini boleh dihapus. Secret (ADMIN_TOKEN,
-  // GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) tidak pernah tersentuh oleh deploy.
+  // GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, dan GEMINI_API, kunci opsional untuk membaca PDF pindaian, lib/gemini.ts) tidak
+  // pernah tersentuh oleh deploy. Variabel opsional GEMINI_MODEL, GEMINI_BATAS_HARIAN, dan GEMINI_BASE_URL juga hanya ada di dashboard.
   // Sisa pengaturan sumber lama di dashboard (variabel PASAL_API_BASE dan TIK_CADANGAN, secret
   // PASAL_API_TOKEN) tidak dibaca kode lagi dan boleh dihapus dari sana.
   "keep_vars": true,

@@ -167,6 +167,14 @@ function tampilkan(ctx, d, q) {
     );
   })();
 
+  // Pasal dari bacaan AI atas PDF pindaian: teks hukum tak boleh tampil seolah salinan resmi tanpa catatan.
+  const catatanAi = d.pembaca_ai
+    ? peringatan(
+        "info",
+        h("p", null, h("strong", null, "Teks dibaca otomatis dari PDF dengan AI."), ` PDF peraturan ini berupa pindaian, jadi teksnya dibaca oleh model AI (${d.pembaca_ai.model}) dan diperiksa otomatis, bukan disalin dari naskah digital. Bandingkan dengan PDF asli (tab PDF) sebelum mengutipnya.`),
+      )
+    : null;
+
   // Status dokumen (PDF/teks) dimuat di latar belakang; hasilnya dipakai tombol PDF, menu Lainnya, dan tab Naskah.
   /** @type {{ nilai: import("../api.js").StatusDokumen | null, galat: unknown, selesai: boolean, saatSelesai: Array<() => void> }} */
   const infoStatus = { nilai: null, galat: null, selesai: false, saatSelesai: [] };
@@ -445,6 +453,7 @@ function tampilkan(ctx, d, q) {
     ctx.akar,
     kepala,
     spanduk,
+    catatanAi,
     aksi,
     l.ringkasan ? kartuRingkasan(l.ringkasan) : null,
     h("details", { class: "info-peraturan" }, h("summary", null, "Informasi peraturan"), metadata),

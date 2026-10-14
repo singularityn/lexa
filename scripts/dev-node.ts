@@ -19,7 +19,7 @@ import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 import worker from "../src/worker/index";
-import { buatLingkungan, indeksSemua, masukSebagai, sisipkan, sisipkanRelasi, TOKEN_ADMIN, type Lingkungan } from "../test/integration/harness";
+import { buatLingkungan, indeksSemua, jalankanAntrean, masukSebagai, sisipkan, sisipkanRelasi, TOKEN_ADMIN, type Lingkungan } from "../test/integration/harness";
 import { isiDataContoh, jawabanContoh, PERATURAN_CONTOH } from "./dev-seed";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -31,6 +31,45 @@ const PDF_CONTOH = new TextEncoder().encode(
     "4 0 obj<</Length 48>>stream\nBT /F1 18 Tf 20 70 Td (Contoh PDF Lexa) Tj ET\nendstream endobj\n" +
     "5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
 );
+
+/**
+ * Gemini palsu untuk pratinjau dan tes e2e: permintaan ke alamat ini dijawab di sini, tanpa jaringan. Hanya meniru bentuk jawaban
+ * generateContent (teks, token, versi model); mutunya tak mewakili Gemini sungguhan. `modeGemini` diubah lewat POST /__dev/gemini.
+ */
+const ALAMAT_GEMINI_PALSU = "https://gemini.pratinjau.test/v1beta";
+let modeGemini: "ok" | "kunci" | "kuota" = "ok";
+const NASKAH_GEMINI_PALSU = [
+  "=== HALAMAN 1 ===", "BAB I", "KETENTUAN UMUM", "Pasal 1",
+  "Dalam peraturan ini yang dimaksud dengan pindaian adalah dokumen yang dibaca sebagai gambar halaman.",
+  "Pasal 2", "(1) Setiap orang wajib menjaga keaslian dokumen yang dipindai.",
+  "(2) Pembacaan otomatis harus diperiksa terhadap naskah asli sebelum dikutip.",
+  "Pasal 3", "Ketentuan lebih lanjut diatur dengan Peraturan Menteri.",
+].join("\n");
+
+function jawabGeminiPalsu(init?: RequestInit): Response {
+  const galat = (status: number, pesan: string, header: Record<string, string> = {}) =>
+    new Response(JSON.stringify({ error: { code: status, message: pesan, status: "GALAT" } }), { status, headers: header });
+  if (modeGemini === "kunci") return galat(400, "API key not valid. Please pass a valid API key.");
+  if (modeGemini === "kuota") return galat(429, "Resource has been exhausted (e.g. check quota).", { "retry-after": "30" });
+  const sebaris = String(init?.body ?? "").includes("inlineData");
+  const teks = sebaris ? NASKAH_GEMINI_PALSU : "siap";
+  const masuk = sebaris ? 2400 : 10;
+  const keluar = sebaris ? 310 : 2;
+  return new Response(
+    JSON.stringify({
+      candidates: [{ content: { parts: [{ text: teks }] }, finishReason: "STOP" }],
+      usageMetadata: { promptTokenCount: masuk, candidatesTokenCount: keluar, totalTokenCount: masuk + keluar },
+      modelVersion: "gemini-pratinjau-001",
+    }),
+    { status: 200 },
+  );
+}
+
+const fetchAsli = globalThis.fetch;
+globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const alamat = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  return alamat.startsWith(ALAMAT_GEMINI_PALSU) ? jawabGeminiPalsu(init) : fetchAsli(input, init);
+}) as typeof fetch;
 
 const DATA_NYATA = process.env.LEXA_DATA_NYATA;
 // Hanya untuk tes e2e service worker: tanpa ini jawaban API yang masih "segar" menurut cache HTTP peramban
@@ -67,6 +106,9 @@ async function siapkan(): Promise<Lingkungan> {
   l.aset.gantiCangkang = (html) => html.replace("</body>", `${PITA}</body>`);
   // Kunci tiruan agar tombol "Masuk dengan Google" tampil; alurnya dialihkan ke /__dev/masuk (lihat bawah).
   Object.assign(l.env, { GOOGLE_CLIENT_ID: "pratinjau-lokal", GOOGLE_CLIENT_SECRET: "pratinjau-lokal" });
+  // Gemini palsu (lihat atas): kunci dan alamat tiruan supaya jalur pembacaan PDF pindaian bisa dicoba tanpa jaringan.
+  Object.assign(l.env, { GEMINI_API: "kunci-pratinjau", GEMINI_MODEL: "gemini-pratinjau", GEMINI_BASE_URL: ALAMAT_GEMINI_PALSU });
+  modeGemini = "ok";
   // Cakupan peraturan sama dengan produksi (bawaan di src/shared/cakupan.ts). CAKUPAN_JENIS melebarkannya, mis. untuk
   // melihat salinan data produksi yang memuat Perpres atau POJK: CAKUPAN_JENIS=UU,PERPPU,PP,PERPRES npm run dev:node.
   if (process.env.CAKUPAN_JENIS) l.env.CAKUPAN_JENIS = process.env.CAKUPAN_JENIS;
@@ -164,6 +206,27 @@ async function main() {
         l = await siapkan();
         res.writeHead(204);
         res.end();
+        return;
+      }
+      // Pratinjau saja: kerjakan semua pesan antrean yang menunggu (di produksi dikerjakan konsumer Cloudflare Queues).
+      if (url.pathname === "/__dev/antrean" && req.method === "POST") {
+        let hasil = { diakui: 0, diulang: 0, pesan: 0 };
+        for (let putaran = 0; putaran < 10; putaran++) {
+          const pesan = l.antrean.kuras();
+          if (!pesan.length) break;
+          const r = await jalankanAntrean(l, pesan);
+          hasil = { diakui: hasil.diakui + r.diakui, diulang: hasil.diulang + r.diulang.length, pesan: hasil.pesan + pesan.length };
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(hasil));
+        return;
+      }
+      // Pratinjau saja: ubah perilaku Gemini palsu (ok, kunci = kunci ditolak, kuota = 429).
+      if (url.pathname === "/__dev/gemini" && req.method === "POST") {
+        const mode = url.searchParams.get("mode");
+        if (mode === "ok" || mode === "kunci" || mode === "kuota") modeGemini = mode;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ mode: modeGemini }));
         return;
       }
       // Pratinjau saja: buat peraturan sintetis dengan banyak pasal untuk menguji kinerja halaman detail.

@@ -183,4 +183,9 @@ export interface LawDetailResponse {
   penjelasan: PenjelasanPasal[];
   /** Tautan ke naskah di peraturan.bpk.go.id, bila `bpk_id` diketahui. */
   bpk_url: string | null;
+  /**
+   * Terisi bila pasal yang tersimpan berasal dari bacaan AI atas PDF pindaian (tabel `pembacaan_ai`, hasil `dipakai`), bukan dari
+   * lapisan teks PDF. Antarmuka memberi catatan agar pembaca membandingkannya dengan PDF asli sebelum mengutip.
+   */
+  pembaca_ai: { model: string } | null;
 }

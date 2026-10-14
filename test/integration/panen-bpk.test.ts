@@ -320,6 +320,18 @@ describe.skipIf(!sqliteAda)("panen BPK (sisi server)", () => {
     };
     const ulang = (badan: unknown = {}) => panggil(l, "/api/impor/ekstrak-ulang", kirim("POST", badan, adm));
 
+    it("`batas` pecahan dibulatkan ke bawah, bukan galat 500 (LIMIT menolak bilangan pecahan) di semua route yang memakainya", async () => {
+      await pdfBerisi(1);
+      await pdfBerisi(2);
+      await pdfBerisi(3);
+      const res = await ulang({ batas: 2.5 });
+      expect(res.status).toBe(200);
+      expect(await json(res)).toMatchObject({ diantrekan: 2 });
+      expect((await ulang({ usang: true, batas: 2.5 })).status).toBe(200);
+      expect((await panggil(l, "/api/impor/butuh-teks?batas=2.5", { headers: adm })).status).toBe(200);
+      expect((await panggil(l, "/api/impor/ringkas", kirim("POST", { batas: 2.5 }, adm))).status).toBe(200);
+    });
+
     it("mengantrekan peraturan ber-PDF yang belum berpasal; yang berpasal atau tanpa PDF tidak", async () => {
       const a = await pdfBerisi(1);
       await pdfBerisi(2, { pasal: true });

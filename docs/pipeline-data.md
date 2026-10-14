@@ -24,6 +24,10 @@ peramban pengelola di peraturan.bpk.go.id (sesi yang lolos tantangan Cloudflare)
 Worker tidak pernah menghubungi BPK: situsnya di balik Cloudflare managed challenge dan menolak alamat pusat data, jadi
 pengambilan dikerjakan **dari peramban pengelola**. Yang dikerjakan Worker hanya menerima, memetakan, dan menyimpan.
 
+PDF pindaian (tanpa lapisan teks) tak terbaca `toMarkdown`. Untuk itu ada jalur cadangan yang opt-in: Gemini membaca halaman
+sebagai gambar dan menggantikan langkah `toMarkdown`; sisa alurnya sama. Lihat [Pembacaan PDF pindaian oleh
+Gemini](#pembacaan-pdf-pindaian-oleh-gemini)
+
 ## Komponen
 
 **API impor** (`routes/impor.ts`, header `x-admin-token`). Daftar kerja, penautan, manifest, PDF, penanda "tanpa berkas",
@@ -121,6 +125,9 @@ Jadi tanpa tahap pertama, skrip tak tahu ke mana harus pergi untuk hampir semua 
 | `POST /api/impor/tanpa-berkas` | `{ uris: [...] }`: peraturan yang di BPK tak punya berkas (naskah lama hanya metadata); tak muncul lagi di daftar kerja |
 | `POST /api/impor/ekstrak-ulang` | `{ uri?, batas?, jenis?, dariTeks?, usang?, setelah? }`: antrekan ulang ekstraksi PDF yang tersimpan tetapi belum berpasal (mis. setelah pengurai diperbaiki). `dariTeks: true` menguraikan arsip teks hasil konversi yang sudah ada (tanpa membaca PDF dan tanpa Workers AI), arsip BPK (`teks/<uri>.md`) didahulukan; peraturan tanpa arsip tetap dikonversi dari PDF-nya. `usang: true` menguraikan ulang (selalu dari arsip teks) peraturan yang terakhir diurai dengan versi pengurai lebih lama; lihat [bagian di bawah](#memperbarui-pengurai-uraikan-ulang-yang-usang) |
 | `POST /api/impor/ringkas` | `{ batas? }`: antrekan ringkasan AI untuk peraturan yang sudah berteks tetapi belum beringkasan |
+| `GET /api/impor/gemini-cek` | uji kunci, model, dan alamat Gemini dengan satu permintaan kecil; menjawab versi model, token, dan anggaran hari ini |
+| `POST /api/impor/gemini-uji` | `{ uri }`: percobaan kering, Gemini membaca PDF satu peraturan dan Lexa melaporkan apa yang akan terjadi tanpa menulis pasal; lihat [bagian di bawah](#pembacaan-pdf-pindaian-oleh-gemini) |
+| `POST /api/impor/ekstrak-ulang` `{ gemini: true }` | `{ batas?, vonis?, ulangi?, setelah?, uri? }`: antrekan pembacaan Gemini untuk peraturan yang teksnya tak layak |
 
 Beberapa hal yang dijaga di sisi server karena data produksi menuntutnya:
 
@@ -350,6 +357,52 @@ Angka produksi sebelum uraian ulang pertama (14 Okt 2026): 2.635 baris `ekstraks
 ringan 251, berat 37, gagal 8); 701 peraturan menyimpan Penjelasan di batang tubuh; 442 `tanpa_pasal` ikut dicoba lagi dan
 sebagian mungkin kini terurai.
 
+## Pembacaan PDF pindaian oleh Gemini
+
+Pertimbangan, data, biaya, dan risikonya ada di [analisis-gemini.md](analisis-gemini.md); yang di bawah ini cara kerja pipeline-nya.
+
+**Mengapa.** `toMarkdown` hanya membaca lapisan teks PDF. Pada 14 Okt 2026, 487 dari 2.630 peraturan yang dipanen (442
+`tanpa_pasal`, 37 `berat`, 8 `gagal`) tak punya pasal yang layak, sebagian besar karena PDF-nya pindaian. Gemini membaca halaman
+sebagai gambar.
+
+**Alur** (`lib/gemini.ts`, `ekstrakPdf` dengan `pembaca: "gemini"`):
+
+1. `POST /api/impor/ekstrak-ulang {"gemini":true}` mengantrekan pesan `ekstrak_pdf` dengan `pembaca: "gemini"` untuk peraturan ber-PDF
+   yang vonis ekstraksinya `tanpa_pasal`, `berat`, atau `gagal`, yang belum pernah dicoba (tabel `pembacaan_ai`), menurut urutan
+   alamat. Tanpa secret `GEMINI_API` menjawab 503; bila anggaran token hari ini habis, tak ada yang diantrekan.
+2. Konsumer mengirim PDF (sebaris, base64, hingga 14 MB) dengan petunjuk transkripsi setia. Jawaban yang terpotong batas panjang
+   dilanjutkan dari halaman terakhir yang utuh (maks 6 putaran). Penanda `=== HALAMAN n ===` menjadi `### Page n`.
+3. **Pagar** (`periksaTranskripsi`, `putuskanPenerimaanAi`): jawaban selesai normal; halaman berurutan dari 1 dan sebanding dengan
+   jumlah halaman PDF; tak ada pengulangan berturut-turut; `[tidak terbaca]` tak lebih dari 1,5% kata; judul cocok dengan
+   peraturan yang dituju; pengurai menemukan pasal; mutu bukan `berat`; nomor pasal yang tersimpan tak berkurang.
+4. Lolos: teks diarsipkan di `teks-ai/<uri>.md` lalu dipromosikan ke `teks/<uri>.md` (teks bawaan yang tertimpa disimpan sekali di
+   `teks-bawaan/<uri>.md`); pasal, Penjelasan, log ekstraksi (catatan
+   "dibaca Gemini (versi model)") ditulis seperti biasa; indeks vektor dan ringkasan diantrekan; `pembacaan_ai.hasil = 'dipakai'`.
+   Tidak lolos: tidak ada pasal atau log ekstraksi yang berubah; teks tetap diarsipkan di `teks-ai/` dan sebabnya dicatat
+   (`ditolak`, `dipertahankan`, `gagal`).
+5. Antarmuka memberi catatan pada peraturan yang pasalnya `dipakai` dari bacaan AI (`pembaca_ai` di `GET /api/laws/detail`). Bila
+   konversi PDF yang baru kelak menggantikan pasalnya, catatan berubah menjadi `digantikan` dan hilang.
+
+**Uji kering dulu.** `POST /api/impor/gemini-uji {"uri":"..."}` menjalankan langkah 2-3 untuk satu peraturan dan melaporkan:
+`masalah`, `hasil` (pasal, vonis, celah), `tersimpan` (pasal dan vonis sekarang), `keputusan`, `kesesuaian_dengan_teks_lama` (bagian
+rangkaian tiga kata yang sama di kedua bacaan), `token`, `durasi_ms`, dan cuplikan. Tak ada pasal yang ditulis.
+
+**Tidak membayar dua kali.** Peraturan yang sudah pernah dicoba (selain `uji`) dilewati saat memilih daftar kerja dan saat konsumer
+menerima pesannya, kecuali `ulangi: true` atau `uri`; pesan ganda tidak membaca PDF yang sama lagi.
+
+**Anggaran dan kegagalan.** Token (masuk + keluar) dihitung per hari UTC di KV (`gemini:token:YYYY-MM-DD`) dan dibatasi
+`GEMINI_BATAS_HARIAN` (bawaan 5.000.000), termasuk pembacaan yang gagal. 429 dan 5xx membuat pesan diulang antrean dengan jeda
+`Retry-After`; PDF ditolak, jawaban diblokir (`RECITATION`, `SAFETY`) atau terlalu besar dicatat `gagal` dan tidak diulang; kunci
+atau model yang salah dilepas tanpa menandai dokumen (tetap layak dicoba setelah diperbaiki). Satu pemanggilan konsumer dibatasi 15
+menit, jadi pesan Gemini yang tersisa dalam satu batch dikembalikan ke antrean setelah 8 menit.
+
+Memeriksa hasil di D1:
+
+```sql
+SELECT hasil, COUNT(*) AS n, SUM(token_masuk + token_keluar + token_pikir) AS token FROM pembacaan_ai GROUP BY hasil;
+SELECT frbr_uri, hasil, catatan FROM pembacaan_ai WHERE hasil IN ('ditolak','gagal','dipertahankan') ORDER BY dicoba_at DESC LIMIT 50;
+```
+
 ## Mengendalikan pipeline
 
 Semua lewat `/api/impor/*` dengan header `x-admin-token` (tabel di bagian Panen BPK). Tambahan:
@@ -359,6 +412,7 @@ Semua lewat `/api/impor/*` dengan header `x-admin-token` (tabel di bagian Panen 
 | `POST /api/impor/ringkas` `{"batas":100}` | antrekan ringkasan AI untuk peraturan yang sudah berteks tetapi belum beringkasan (terbaru dulu, 1-500) |
 | `POST /api/impor/ekstrak-ulang` `{"dariTeks":true,"batas":100}` | uraikan ulang arsip teks yang belum berpasal (tanpa Workers AI) |
 | `POST /api/impor/ekstrak-ulang` `{"usang":true,"batas":100,"setelah":"<uri>"}` | uraikan ulang peraturan yang diurai dengan versi pengurai lama, per 100 dengan kursor `terakhir`; 503 bila migrasi 0007 belum diterapkan |
+| `POST /api/impor/ekstrak-ulang` `{"gemini":true,"batas":3}` | Gemini membaca PDF peraturan yang teksnya tak layak (`vonis` untuk menyaring, `ulangi` untuk mencoba lagi, `uri` untuk satu peraturan); 503 bila `GEMINI_API` belum dipasang atau migrasi 0008 belum diterapkan |
 | `POST /api/admin/sync` | **dihentikan**: menjawab 410 dan menunjuk endpoint di atas |
 
 ## Memeriksa produksi

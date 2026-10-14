@@ -20,7 +20,8 @@ import { tanya } from "./routes/tanya";
 import { koleksi } from "./routes/koleksi";
 import { layaniPeraturan } from "./lib/pratinjau";
 import { bacaCakupan, klausaCakupan } from "../shared/cakupan";
-import { prosesPesanIngest, type KonteksIngest, type PesanIngest } from "./lib/ingest";
+import { buatKonteksIngest, prosesPesanIngest, type PesanIngest } from "./lib/ingest";
+import { GalatGemini } from "./lib/gemini";
 import { catatDenyut } from "./lib/keadaan";
 import { CRON_HARIAN } from "./lib/jadwal";
 import { jalankanPemeliharaan } from "./lib/pemeliharaan";
@@ -86,18 +87,12 @@ app.get("/sitemap.xml", async (c) => {
   );
 });
 
-function konteksIngest(env: Env): KonteksIngest {
-  return {
-    db: env.DB,
-    vectorize: env.VECTORIZE,
-    ai: env.AI,
-    docs: env.DOCS,
-    queue: env.INGEST_QUEUE,
-    embeddingModel: env.EMBEDDING_MODEL,
-    summaryModel: env.SUMMARY_MODEL,
-    cakupan: bacaCakupan(env.CAKUPAN_JENIS),
-  };
-}
+/**
+ * Pesan pembacaan Gemini memakan menit per PDF, sedangkan satu pemanggilan konsumer dibatasi 15 menit waktu dinding. Sesudah
+ * sekian lama, pesan Gemini yang tersisa dalam batch dikembalikan ke antrean (dikerjakan pemanggilan berikutnya) alih-alih
+ * dibiarkan terpotong di tengah pembacaan yang sudah berbayar.
+ */
+const BATAS_GILIRAN_GEMINI_MS = 8 * 60_000;
 
 export default {
   fetch: app.fetch,
@@ -117,17 +112,26 @@ export default {
   },
 
   async queue(batch: MessageBatch<PesanIngest>, env: Env) {
-    const ctx = konteksIngest(env);
+    const ctx = buatKonteksIngest(env);
+    const mulai = Date.now();
 
     // Diproses berurutan, bukan paralel: pengindeksan memanggil Workers AI, dan paralel menembus batas lajunya.
     for (const pesan of batch.messages) {
+      const gemini = pesan.body?.tipe === "ekstrak_pdf" && pesan.body.pembaca === "gemini";
+      if (gemini && Date.now() - mulai > BATAS_GILIRAN_GEMINI_MS) {
+        pesan.retry({ delaySeconds: 30 });
+        continue;
+      }
       try {
         await prosesPesanIngest(ctx, pesan.body);
         pesan.ack();
       } catch (e) {
         console.error("Lexa: ingest gagal", pesan.body, e);
         // retry() memakai backoff bawaan Queues; setelah max_retries pesan jatuh ke lexa-ingest-dlq untuk diperiksa manual.
-        pesan.retry();
+        // Kuota atau gangguan Gemini membawa jeda yang disarankan (Retry-After): mengulang seketika hanya menghabiskan percobaan.
+        const jeda = e instanceof GalatGemini ? e.jedaDetik : undefined;
+        if (jeda) pesan.retry({ delaySeconds: Math.min(jeda, 3600) });
+        else pesan.retry();
       }
     }
   },

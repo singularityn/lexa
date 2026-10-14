@@ -261,7 +261,7 @@ api.get("/laws/detail", async (c) => {
   }
   const uri = law.frbr_uri;
 
-  const [articles, relations, penjelasan] = await Promise.all([
+  const [articles, relations, penjelasan, pembacaAi] = await Promise.all([
     c.env.DB.prepare(
       `SELECT id, frbr_uri, nomor_pasal, ayat, bab, bagian, judul, isi, urutan
          FROM articles WHERE frbr_uri = ? ORDER BY urutan`,
@@ -283,6 +283,12 @@ api.get("/laws/detail", async (c) => {
       .bind(uri)
       .all<PenjelasanPasal>()
       .catch(() => ({ results: [] as PenjelasanPasal[] })),
+
+    // Tabel `pembacaan_ai` baru ada setelah migrasi 0008; sebelum itu tak adanya tabel sama dengan tak ada bacaan AI.
+    c.env.DB.prepare(`SELECT model FROM pembacaan_ai WHERE frbr_uri = ? AND hasil = 'dipakai'`)
+      .bind(uri)
+      .first<{ model: string | null }>()
+      .catch(() => null),
   ]);
 
   const body: LawDetailResponse = {
@@ -296,6 +302,7 @@ api.get("/laws/detail", async (c) => {
       relations.results.filter((r) => (r.jenis !== null ? dalamCakupan(cakupan, r.jenis) : !uriJelasDiLuarCakupan(cakupan, r.to_uri))),
     ),
     bpk_url: urlBpk(c.env.BPK_BASE, law.bpk_id),
+    pembaca_ai: pembacaAi ? { model: pembacaAi.model ?? "Gemini" } : null,
   };
 
   return c.json(body, 200, { "Cache-Control": "public, max-age=3600" });
