@@ -209,8 +209,11 @@ Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bp
    `kesesuaian_dengan_teks_lama` yang tinggi menandakan dua bacaan saling sepakat; yang rendah pada dokumen berlapisan teks rusak
    wajar, tetapi minta pemeriksaan manual.
 4. **Baca sungguhan.** `window.LEXA_PANEN = { gemini: true, batas: 3 }`. Skrip mengantrekan kelompok kecil, menunggu Lexa
-   menyelesaikannya, lalu lanjut sampai habis atau anggaran habis. `geminiVonis: "tanpa_pasal"` menyaring; `ulangi: true` mencoba
-   lagi yang pernah dicoba.
+   menyelesaikannya, lalu lanjut sampai habis atau anggaran habis. Tanpa pembatas lain, hari pertama bisa menghabiskan seluruh
+   anggaran harian. Untuk percobaan pertama turunkan `GEMINI_BATAS_HARIAN` (mis. `300000`, sekitar sepuluh peraturan menurut
+   anggapan di bagian biaya) atau tekan Berhenti di kotak status (`lexaPanenBerhenti()`) setelah putaran pertama, lalu periksa
+   hasilnya (langkah 5) sebelum melanjutkan. `geminiVonis: "tanpa_pasal"` menyaring; `ulangi: true` mencoba lagi yang pernah
+   dicoba.
 5. **Pantau.** `GET /api/impor/ringkasan` memuat blok `gemini` (anggaran hari ini, hitungan hasil). Di D1:
    `SELECT hasil, COUNT(*) FROM pembacaan_ai GROUP BY hasil` dan, untuk yang ditolak, `SELECT frbr_uri, catatan FROM pembacaan_ai
    WHERE hasil IN ('ditolak','gagal')`.
