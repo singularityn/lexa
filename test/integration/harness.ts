@@ -538,8 +538,11 @@ export async function jalankanAntrean(l: Lingkungan, pesan: unknown[]): Promise<
   return hasil;
 }
 
-/** Pemicu harian (pemeliharaan), satu-satunya Cron di wrangler.jsonc. */
+/** Pemicu harian (pemeliharaan). */
 export const CRON_HARIAN = "0 19 * * *";
+
+/** Pemicu 15 menit: Gemini otomatis (lib/geminiOtomatis.ts). */
+export const CRON_GEMINI = "*/15 * * * *";
 
 /** Jalankan handler `scheduled` (cron) Worker dan tunggu pekerjaan latar. Bawaannya pemicu harian. */
 export async function jalankanCron(l: Lingkungan, cron: string = CRON_HARIAN): Promise<void> {

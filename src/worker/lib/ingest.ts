@@ -13,7 +13,8 @@
 import { labelSitasi } from "../../shared/label";
 import { bacaCakupan, dalamCakupan, uriJelasDiLuarCakupan, type Cakupan } from "../../shared/cakupan";
 import {
-  idPasalUnik, nilaiKualitasEkstraksi, periksaKecocokanNaskah, uraikanPasal, VERSI_PARSER, type LaporanKualitas, type PasalTerurai,
+  bilanganNomorPasal, catatanKerapian, idPasalUnik, nilaiKualitasEkstraksi, periksaKecocokanNaskah, tanpaPencilan, uraikanPasal, VERSI_PARSER,
+  type LaporanKualitas, type PasalTerurai,
 } from "./bpk";
 import {
   bacaKonfigGemini, bacaPdfDenganGemini, catatPemakaian, GalatGemini, pemakaianHariIni, periksaTranskripsi, tokenKosong,
@@ -24,7 +25,13 @@ import { barisPenjelasan, uraikanPenjelasan } from "./penjelasan";
 
 export type PesanIngest =
   | { tipe: "indeks_vektor"; frbr_uri: string }
-  | { tipe: "ekstrak_pdf"; frbr_uri: string; r2_key: string; dari_teks?: boolean; pembaca?: "gemini"; ulangi?: boolean }
+  | {
+      tipe: "ekstrak_pdf"; frbr_uri: string; r2_key: string; dari_teks?: boolean; pembaca?: "gemini"; ulangi?: boolean;
+      /** Dengan `pembaca: "gemini"`: percobaan kering (ujiGemini), tak menulis pasal. Dikirim Cron Gemini otomatis (lib/geminiOtomatis.ts). */
+      uji?: boolean;
+      /** Datang dari Cron Gemini otomatis, bukan dari admin; hanya penanda untuk pembaca log. */
+      otomatis?: boolean;
+    }
   | { tipe: "ringkas"; frbr_uri: string };
 
 /** Ukuran potongan teks untuk embedding. bge-m3 kuat di teks pendek-menengah. */
@@ -461,15 +468,48 @@ export async function bacaNaskahGemini(ctx: KonteksIngest, bytes: ArrayBuffer): 
 
 export type PenerimaanAi = { hasil: "dipakai" } | { hasil: "dipertahankan" | "ditolak"; alasan: string };
 
+/** Nomor pasal tersimpan (menurut bilangannya) yang tak ada pada hasil baru; `dasar` = jumlah nomor tersimpan yang dihitung. */
+export interface HilangDariLama {
+  hilang: number;
+  dasar: number;
+}
+
+/**
+ * Berapa nomor pasal yang tersimpan tidak ada pada hasil baru. Dibandingkan menurut bilangan ("12A" sama dengan "12"; romawi dan
+ * sisa OCR yang tak berupa angka tak dihitung), dan pencilan pada yang tersimpan (nomor tanpa tetangga dalam jarak 5, mis.
+ * "Pasal 107" salah baca di undang-undang 45 pasal) dibuang. Ini pengganti membandingkan JUMLAH nomor berbeda: baris tersimpan
+ * dari pengurai lama memuat Penjelasan sebagai pasal dan nomor sampah ("2O", "I", "7"), yang menggelembungkan jumlah dan membuat
+ * bacaan Gemini yang lengkap tampak "kurang" lalu ditolak. Nomor Penjelasan adalah nomor pasal sungguhan, jadi bacaan yang
+ * lengkap tetap memuat semuanya.
+ */
+export function nomorLamaHilang(lama: Iterable<string>, baru: Iterable<string>): HilangDariLama {
+  const dasar = tanpaPencilan(bilanganNomorPasal(lama));
+  const ada = bilanganNomorPasal(baru);
+  return { hilang: dasar.filter((v) => !ada.has(v)).length, dasar: dasar.length };
+}
+
+/** Banyak nomor tersimpan yang boleh tak muncul pada bacaan baru: bacaan yang menambah banyak pasal wajar kehilangan satu dua. */
+const toleransiHilang = (dasar: number) => Math.floor(dasar * 0.05);
+
 /**
  * Apakah teks hasil bacaan Gemini dipakai? Lebih ketat daripada teks konversi bawaan, karena pembacaan gambar bisa keliru tanpa
- * tanda: pembacaan yang bermasalah ditolak; teks tanpa pasal atau bermutu berat tak menggantikan apa pun (bahkan bila belum ada
- * pasal tersimpan); selebihnya mengikuti aturan penggantian biasa (`putuskanPenggantian`): tak boleh mengurangi nomor pasal.
+ * tanda: pembacaan yang bermasalah ditolak; teks tanpa pasal atau bermutu berat (termasuk kehilangan seperempat nomor pasalnya)
+ * tak menggantikan apa pun, bahkan bila belum ada pasal tersimpan. Selebihnya pasal tersimpan tak boleh berkurang: dengan
+ * `hilangDariLama` (nomor tersimpan yang tak ada pada bacaan baru, `nomorLamaHilang`) paling banyak 5% dari nomor tersimpan boleh
+ * hilang; tanpanya (hanya jumlah) bacaan baru tak boleh memuat nomor berbeda lebih sedikit (`putuskanPenggantian`).
  */
-export function putuskanPenerimaanAi(p: { masalah: string[]; jumlahPasal: number; vonis: Vonis; nomorLama: number; nomorBaru: number }): PenerimaanAi {
+export function putuskanPenerimaanAi(p: {
+  masalah: string[]; jumlahPasal: number; vonis: Vonis; nomorLama: number; nomorBaru: number; hilangDariLama?: HilangDariLama;
+}): PenerimaanAi {
   if (p.masalah.length) return { hasil: "ditolak", alasan: `pembacaan bermasalah: ${p.masalah.join("; ")}` };
   if (p.jumlahPasal === 0) return { hasil: "ditolak", alasan: "tidak ada pasal terdeteksi pada teks Gemini" };
-  if (p.vonis === "berat") return { hasil: "ditolak", alasan: "teks Gemini bermutu berat (banyak karakter rusak)" };
+  if (p.vonis === "berat") return { hasil: "ditolak", alasan: "teks Gemini bermutu berat (karakter rusak, pasal hilang, atau pembukaan masuk pasal)" };
+  if (p.hilangDariLama) {
+    const { hilang, dasar } = p.hilangDariLama;
+    return hilang > toleransiHilang(dasar)
+      ? { hasil: "dipertahankan", alasan: `dipertahankan: ${hilang} dari ${dasar} nomor pasal tersimpan tidak ada pada hasil Gemini` }
+      : { hasil: "dipakai" };
+  }
   const k = putuskanPenggantian({ nomorLama: p.nomorLama, nomorBaru: p.nomorBaru, vonis: p.vonis, sumberSama: false });
   return k.ganti ? { hasil: "dipakai" } : { hasil: "dipertahankan", alasan: k.alasan };
 }
@@ -536,8 +576,13 @@ export interface LaporanUjiGemini {
   token: PemakaianToken;
   durasi_ms: number;
   masalah: string[];
-  hasil: { jumlah_baris_pasal: number; nomor_pasal_berbeda: number; vonis: Vonis; celah_pasal: number; kerusakan_per_1000: number; panjang_teks: number };
+  hasil: {
+    jumlah_baris_pasal: number; nomor_pasal_berbeda: number; vonis: Vonis; pasal_tertinggi: number; celah_pasal: number;
+    struktur_tertanam: number; kerusakan_per_1000: number; panjang_teks: number;
+  };
   tersimpan: { nomor_pasal_berbeda: number; vonis: string | null; panjang_teks: number | null };
+  /** Nomor pasal tersimpan yang tak ada pada bacaan Gemini (lihat nomorLamaHilang); dasar penolakan "dipertahankan". */
+  hilang_dari_tersimpan: HilangDariLama;
   keputusan: PenerimaanAi;
   kesesuaian_dengan_teks_lama: { gemini_ada_di_lama: number; lama_ada_di_gemini: number } | null;
   arsip: string;
@@ -561,15 +606,16 @@ export async function ujiGemini(ctx: KonteksIngest, frbrUri: string, r2Key: stri
   const laporan = nilaiKualitasEkstraksi(bersih, pasal);
   const nomorBaru = new Set(pasal.map((p) => p.nomor_pasal)).size;
 
-  const lama = await ctx.db
-    .prepare(`SELECT COUNT(DISTINCT nomor_pasal) AS n FROM articles WHERE frbr_uri = ?`)
+  const { results: lama } = await ctx.db
+    .prepare(`SELECT DISTINCT nomor_pasal FROM articles WHERE frbr_uri = ?`)
     .bind(frbrUri)
-    .first<{ n: number }>();
+    .all<{ nomor_pasal: string }>();
   const log = await ctx.db
     .prepare(`SELECT vonis, panjang_teks FROM ekstraksi_log WHERE frbr_uri = ?`)
     .bind(frbrUri)
     .first<{ vonis: string; panjang_teks: number }>();
-  const nomorLama = lama?.n ?? 0;
+  const nomorLama = lama.length;
+  const hilangDariLama = nomorLamaHilang(lama.map((r) => r.nomor_pasal), pasal.map((p) => p.nomor_pasal));
 
   let kesesuaian: LaporanUjiGemini["kesesuaian_dengan_teks_lama"] = null;
   const kunciLama = `teks/${frbrUri.replace(/^\//, "")}.md`;
@@ -579,21 +625,30 @@ export async function ujiGemini(ctx: KonteksIngest, frbrUri: string, r2Key: stri
     kesesuaian = { gemini_ada_di_lama: k.aDiB, lama_ada_di_gemini: k.bDiA };
   }
 
-  const keputusan = putuskanPenerimaanAi({ masalah, jumlahPasal: pasal.length, vonis: laporan.vonis, nomorLama, nomorBaru });
+  const keputusan = putuskanPenerimaanAi({ masalah, jumlahPasal: pasal.length, vonis: laporan.vonis, nomorLama, nomorBaru, hilangDariLama });
   const durasi = Date.now() - mulai;
+  // Catatan yang cukup untuk menilai percobaan ini dari D1 saja (tanpa membuka R2): keputusan, rangkaian pasal, kesesuaian dengan teks lama.
+  const ringkas = [
+    keputusan.hasil === "dipakai" ? "akan dipakai" : keputusan.alasan,
+    `pasal ${nomorBaru} (tertinggi ${laporan.pasal_tertinggi}, hilang ${laporan.celah_pasal}), tersimpan ${nomorLama}, tersimpan hilang ${hilangDariLama.hilang}/${hilangDariLama.dasar}`,
+    kesesuaian ? `kesesuaian ${kesesuaian.gemini_ada_di_lama}/${kesesuaian.lama_ada_di_gemini}` : "",
+    masalah.length ? `masalah: ${masalah.join("; ")}` : "",
+  ].filter(Boolean).join(" | ");
   await catatPembacaanAi(ctx.db, frbrUri, {
     hasil: "uji", model: baca.versiModel, halaman: baca.halaman, putaran: baca.putaran, token: baca.token, durasiMs: durasi,
-    vonisBaru: laporan.vonis, pasalBaru: nomorBaru, catatan: keputusan.hasil === "dipakai" ? "akan dipakai" : keputusan.alasan,
+    vonisBaru: laporan.vonis, pasalBaru: nomorBaru, catatan: ringkas,
   });
 
   return {
     uri: frbrUri, model: baca.versiModel, halaman: baca.halaman, halaman_pdf: baca.halamanPdf, putaran: baca.putaran, token: baca.token,
     durasi_ms: durasi, masalah,
     hasil: {
-      jumlah_baris_pasal: pasal.length, nomor_pasal_berbeda: nomorBaru, vonis: laporan.vonis, celah_pasal: laporan.celah_pasal,
+      jumlah_baris_pasal: pasal.length, nomor_pasal_berbeda: nomorBaru, vonis: laporan.vonis, pasal_tertinggi: laporan.pasal_tertinggi,
+      celah_pasal: laporan.celah_pasal, struktur_tertanam: laporan.struktur_tertanam,
       kerusakan_per_1000: laporan.kerusakan_per_1000, panjang_teks: laporan.panjang_teks,
     },
     tersimpan: { nomor_pasal_berbeda: nomorLama, vonis: log?.vonis ?? null, panjang_teks: log?.panjang_teks ?? null },
+    hilang_dari_tersimpan: hilangDariLama,
     keputusan, kesesuaian_dengan_teks_lama: kesesuaian, arsip, cuplikan: bersih.slice(0, 700),
   };
 }
@@ -750,14 +805,17 @@ export async function ekstrakPdf(
   const nomorLama = new Set(lamaBaris.map((r) => r.nomor_pasal)).size;
   const nomorBaru = new Set(pasal.map((p) => p.nomor_pasal)).size;
   if (ai) {
-    const terima = putuskanPenerimaanAi({ masalah: ai.masalah, jumlahPasal: pasal.length, vonis: laporan.vonis, nomorLama, nomorBaru });
+    const hilangDariLama = nomorLamaHilang(lamaBaris.map((r) => r.nomor_pasal), pasal.map((p) => p.nomor_pasal));
+    const terima = putuskanPenerimaanAi({ masalah: ai.masalah, jumlahPasal: pasal.length, vonis: laporan.vonis, nomorLama, nomorBaru, hilangDariLama });
     if (terima.hasil !== "dipakai") {
       await catatPembacaanAi(ctx.db, frbrUri, rekam({ hasil: terima.hasil, catatan: terima.alasan })!);
       await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: gemini ${terima.hasil}: ${terima.alasan}`.slice(0, 300));
       return 0;
     }
   }
-  const keputusan = putuskanPenggantian({ nomorLama, nomorBaru, vonis: laporan.vonis, sumberSama });
+  // Jalur Gemini sudah memutuskan di atas (putuskanPenerimaanAi, dengan himpunan nomor): aturan jumlah nomor berbeda tak boleh
+  // membatalkannya, karena baris tersimpan dari pengurai lama menggelembungkan jumlah itu.
+  const keputusan: Keputusan = ai ? { ganti: true } : putuskanPenggantian({ nomorLama, nomorBaru, vonis: laporan.vonis, sumberSama });
   if (!keputusan.ganti) {
     await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai, keputusan.alasan);
     await catatVersiParser(ctx.db, frbrUri);
@@ -858,7 +916,7 @@ export async function ekstrakPdf(
   await simpanPenjelasan(ctx.db, frbrUri, barisPenjelasan(uraikanPenjelasan(markdown)));
   await catatEkstraksi(
     ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai,
-    ai ? `dibaca Gemini (${ai.baca.versiModel}): ${ai.baca.halaman} halaman, ${ai.baca.token.total} token` : null,
+    ai ? `dibaca Gemini (${ai.baca.versiModel}): ${ai.baca.halaman} halaman, ${ai.baca.token.total} token` : catatanKerapian(laporan) || null,
   );
   await catatVersiParser(ctx.db, frbrUri);
   if (ai) await catatPembacaanAi(ctx.db, frbrUri, rekam({ hasil: "dipakai", catatan: null })!);
@@ -964,5 +1022,28 @@ export async function prosesPesanIngest(ctx: KonteksIngest, pesan: PesanIngest):
     return;
   }
 
+  if (pesan.pembaca === "gemini" && pesan.uji === true) {
+    await ujiGeminiDariAntrean(ctx, pesan.frbr_uri, pesan.r2_key);
+    return;
+  }
+
   await ekstrakPdf(ctx, pesan.frbr_uri, pesan.r2_key, { dariTeks: pesan.dari_teks === true, ...(pesan.pembaca === "gemini" ? { pembaca: "gemini" as const, ulangi: pesan.ulangi === true } : {}) });
+}
+
+/**
+ * Percobaan kering dari antrean (Cron Gemini otomatis): hasilnya sudah dicatat `ujiGemini` di `pembacaan_ai`. Galat sementara
+ * (kuota, jaringan, 5xx) dilempar supaya antrean mengulangnya; penolakan tetap atas dokumen ini dicatat `gagal` supaya putaran
+ * berikutnya tak memilihnya lagi; galat yang berlaku untuk semua dokumen (kunci, model, anggaran) hanya masuk log.
+ */
+async function ujiGeminiDariAntrean(ctx: KonteksIngest, frbrUri: string, r2Key: string): Promise<void> {
+  const mulai = Date.now();
+  try {
+    await ujiGemini(ctx, frbrUri, r2Key);
+  } catch (e) {
+    if (!(e instanceof GalatGemini) || e.sementara) throw e;
+    if (e.jenis !== "anggaran" && e.jenis !== "kunci" && e.jenis !== "model") {
+      await catatPembacaanAi(ctx.db, frbrUri, { hasil: "gagal", catatan: `uji: ${e.jenis}: ${e.message}`, durasiMs: Date.now() - mulai });
+    }
+    await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: uji gemini ${e.jenis}: ${e.message}`.slice(0, 300));
+  }
 }

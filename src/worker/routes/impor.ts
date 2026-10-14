@@ -26,6 +26,7 @@ import { tokenSah } from "../lib/auth";
 import { batchBerkelompok, pilihDalam } from "../lib/d1";
 import { headerCors as corsUntuk } from "../lib/cors";
 import { bacaKonfigGemini, catatPemakaian, GalatGemini, pemakaianHariIni, pingGemini } from "../lib/gemini";
+import { statusOtomatis } from "../lib/geminiOtomatis";
 import { buatKonteksIngest, ujiGemini, type PesanIngest } from "../lib/ingest";
 import { kunciSitasi, samaSitasi } from "../lib/nomor";
 import { cariSitasi, pilihUtama, tautkanBpk, type TautanMasuk } from "../lib/tautanBpk";
@@ -164,18 +165,34 @@ impor.get("/ringkasan", async (c) => {
   return c.json({ cakupan, per_jenis: results, tanpa_berkas: await hitungTanpaBerkas(c.env.DB), gemini: await ringkasanGemini(c.env) }, 200, headerCors(c));
 });
 
-/** Keadaan jalur Gemini: terpasang atau tidak, anggaran hari ini, dan hasil percobaan sejauh ini. Tabel belum ada (migrasi 0008) = tanpa hitungan. */
+/**
+ * Keadaan jalur Gemini: terpasang atau tidak, anggaran hari ini, hasil percobaan sejauh ini, berapa calon yang belum dicoba
+ * (vonis bawaan: tanpa_pasal, berat, gagal), dan pengaturan Gemini otomatis. Tabel belum ada (migrasi 0008) = tanpa hitungan.
+ */
 async function ringkasanGemini(env: Env) {
   const k = bacaKonfigGemini(env);
   const pembacaan = await env.DB.prepare(`SELECT hasil, COUNT(*) AS n FROM pembacaan_ai GROUP BY hasil`)
     .all<{ hasil: string; n: number }>()
     .then((r) => Object.fromEntries(r.results.map((x) => [x.hasil, x.n])))
     .catch(() => null);
+  const calon = pembacaan
+    ? await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM laws l JOIN ekstraksi_log e ON e.frbr_uri = l.frbr_uri
+          WHERE ${klausaCakupan(bacaCakupan(env.CAKUPAN_JENIS), "l.jenis")} AND l.r2_pdf_key IS NOT NULL
+            AND e.vonis IN (${VONIS_GEMINI_BAWAAN.map((v) => `'${v}'`).join(",")})
+            AND NOT EXISTS (SELECT 1 FROM pembacaan_ai p WHERE p.frbr_uri = l.frbr_uri AND p.hasil <> 'uji')`,
+      )
+        .first<{ n: number }>()
+        .then((r) => r?.n ?? 0)
+        .catch(() => null)
+    : null;
   return {
     terpasang: k !== null,
     model: k?.model ?? null,
     anggaran: k ? { terpakai: await pemakaianHariIni(env.CACHE), batas: k.anggaranHarian } : null,
     pembacaan,
+    calon_belum_dicoba: calon,
+    otomatis: await statusOtomatis(env),
   };
 }
 

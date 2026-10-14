@@ -47,6 +47,17 @@ interface Env {
   GEMINI_BASE_URL?: string;
   /** Token (masuk + keluar) per hari UTC yang boleh dipakai semua pembacaan Gemini (string; bawaan 5.000.000). */
   GEMINI_BATAS_HARIAN?: string;
+  /**
+   * Gemini otomatis lewat Cron 15 menit (lib/geminiOtomatis.ts): `uji` (percobaan kering, berhenti sendiri setelah
+   * GEMINI_OTOMATIS_UJI_MAKS) atau `ya` (membaca sungguhan). Tak ada atau nilai lain: mati.
+   */
+  GEMINI_OTOMATIS?: string;
+  /** Peraturan yang diantrekan tiap putaran Gemini otomatis (bawaan 2, maksimum 10). */
+  GEMINI_OTOMATIS_BATAS?: string;
+  /** Banyaknya percobaan kering sebelum mode `uji` berhenti sendiri (bawaan 8). */
+  GEMINI_OTOMATIS_UJI_MAKS?: string;
+  /** Vonis ekstraksi yang menjadi calon, dipisah koma (bawaan `tanpa_pasal,berat,gagal`). */
+  GEMINI_OTOMATIS_VONIS?: string;
 
   // --- Secret (dipasang lewat `wrangler secret put`) ---
   ADMIN_TOKEN: string;

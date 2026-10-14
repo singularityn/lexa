@@ -23,7 +23,8 @@
   // sengaja belum disalin ke sini karena tidak terbaca dari luar dashboard; setelah
   // Anda memindahkannya ke "vars", baris ini boleh dihapus. Secret (ADMIN_TOKEN,
   // GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, dan GEMINI_API, kunci opsional untuk membaca PDF pindaian, lib/gemini.ts) tidak
-  // pernah tersentuh oleh deploy. Variabel opsional GEMINI_MODEL, GEMINI_BATAS_HARIAN, dan GEMINI_BASE_URL juga hanya ada di dashboard.
+  // pernah tersentuh oleh deploy. Variabel opsional GEMINI_MODEL, GEMINI_BATAS_HARIAN, GEMINI_BASE_URL, dan GEMINI_OTOMATIS (beserta
+  // GEMINI_OTOMATIS_BATAS, GEMINI_OTOMATIS_UJI_MAKS, GEMINI_OTOMATIS_VONIS) juga hanya ada di dashboard.
   // Sisa pengaturan sumber lama di dashboard (variabel PASAL_API_BASE dan TIK_CADANGAN, secret
   // PASAL_API_TOKEN) tidak dibaca kode lagi dan boleh dihapus dari sana.
   "keep_vars": true,
@@ -69,11 +70,15 @@
     "producers": [{ "binding": "INGEST_QUEUE", "queue": "lexa-ingest" }]
   },
 
-  // Satu pemicu Cron: harian pukul 19:00 UTC (02:00 WIB), pemeliharaan (src/worker/lib/pemeliharaan.ts): mengosongkan
-  // daftar hapus (berkas R2 dan vektor yatim) dan memangkas catatan lama. Data peraturan tidak dijemput Cron: ia masuk
-  // dari panen BPK yang dijalankan di peramban pengelola (scripts/bpk-console-harvest.js) lewat /api/impor/*.
-  // Nilainya dijaga sama dengan src/worker/lib/jadwal.ts oleh test/cakupan.test.ts.
-  "triggers": { "crons": ["0 19 * * *"] },
+  // Dua pemicu Cron:
+  //   - "0 19 * * *" (harian, 02:00 WIB): pemeliharaan (src/worker/lib/pemeliharaan.ts): mengosongkan daftar hapus (berkas R2
+  //     dan vektor yatim) dan memangkas catatan lama;
+  //   - "*/15 * * * *" (tiap 15 menit): Gemini otomatis (src/worker/lib/geminiOtomatis.ts). Tak mengerjakan apa pun, dan tak
+  //     menyentuh D1 maupun Gemini, kecuali variabel GEMINI_OTOMATIS dipasang di dashboard ("uji" atau "ya").
+  // Data peraturan tidak dijemput Cron: ia masuk dari panen BPK yang dijalankan di peramban pengelola
+  // (scripts/bpk-console-harvest.js) lewat /api/impor/*. Nilainya dijaga sama dengan src/worker/lib/jadwal.ts oleh
+  // test/cakupan.test.ts.
+  "triggers": { "crons": ["0 19 * * *", "*/15 * * * *"] },
 
   // Antarmuka (SPA) ada di ./public dan tidak memerlukan langkah build. Rute yang
   // diselesaikan Worker lebih dulu: seluruh API, robots.txt, sitemap.xml, dan /peraturan

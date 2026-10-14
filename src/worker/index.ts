@@ -3,7 +3,8 @@
  *
  * Satu Worker mengerjakan tiga peran:
  *   - `fetch`     : melayani /api/* (sisanya jatuh ke static assets SPA)
- *   - `scheduled` : Cron harian, pemeliharaan (lib/pemeliharaan.ts). Satu-satunya pemicu terjadwal.
+ *   - `scheduled` : Cron harian, pemeliharaan (lib/pemeliharaan.ts), dan Cron 15 menit, Gemini otomatis (lib/geminiOtomatis.ts; mati
+ *                   kecuali variabel GEMINI_OTOMATIS dipasang)
  *   - `queue`     : konsumer antrean ingest: ekstraksi PDF hasil panen BPK, indeks vektor, dan ringkasan AI
  *
  * Worker tidak pernah menghubungi sumber data peraturan mana pun: data datang dari panen BPK yang dijalankan di
@@ -23,7 +24,8 @@ import { bacaCakupan, klausaCakupan } from "../shared/cakupan";
 import { buatKonteksIngest, prosesPesanIngest, type PesanIngest } from "./lib/ingest";
 import { GalatGemini } from "./lib/gemini";
 import { catatDenyut } from "./lib/keadaan";
-import { CRON_HARIAN } from "./lib/jadwal";
+import { CRON_GEMINI, CRON_HARIAN } from "./lib/jadwal";
+import { jalankanGeminiOtomatis } from "./lib/geminiOtomatis";
 import { jalankanPemeliharaan } from "./lib/pemeliharaan";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -98,7 +100,17 @@ export default {
   fetch: app.fetch,
 
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    // Satu-satunya pemicu yang dikenal adalah pemeliharaan harian. Pemicu lain (sisa konfigurasi lama di dashboard) tidak
+    // Gemini otomatis (tiap 15 menit): mati kecuali GEMINI_OTOMATIS dipasang, dan kembali seketika bila mati.
+    if (event.cron === CRON_GEMINI) {
+      ctx.waitUntil(
+        jalankanGeminiOtomatis(env).then(
+          (h) => (h.dikerjakan ? console.log("Lexa: Gemini otomatis mengantrekan", h.mode, h.diantrekan.length) : undefined),
+          (e) => console.error("Lexa: Gemini otomatis gagal", e),
+        ),
+      );
+      return;
+    }
+    // Pemicu lain yang dikenal hanya pemeliharaan harian. Pemicu yang tak dikenal (sisa konfigurasi lama di dashboard) tidak
     // mengerjakan apa pun, supaya pemicu yang salah pasang tak menjalankan pemeliharaan berulang-ulang.
     if (event.cron !== CRON_HARIAN) {
       console.log("Lexa: pemicu Cron tak dikenal diabaikan:", event.cron);

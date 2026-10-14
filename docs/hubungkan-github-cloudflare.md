@@ -8,8 +8,9 @@ URL pratinjau per branch/PR, dan check run di GitHub). Langkah di dashboard hany
 
 - Kode Worker identik byte-per-byte dengan produksi v0.1 (terverifikasi lewat sourcemap), ditambah perbaikan
   bug yang ditemukan lewat tes (lihat README, "Riwayat perubahan penting").
-- `wrangler.jsonc` sudah lengkap: Vectorize `lexa-index`, antrean `lexa-ingest`, D1/KV/R2/AI, satu cron harian
-  (pemeliharaan), dan aset statis dari `./public`. Tidak ada lagi placeholder yang membuat deploy ditolak.
+- `wrangler.jsonc` sudah lengkap: Vectorize `lexa-index`, antrean `lexa-ingest`, D1/KV/R2/AI, dua cron (harian untuk pemeliharaan,
+  15 menit untuk Gemini otomatis yang mati kecuali dinyalakan), dan aset statis dari `./public`. Tidak ada lagi placeholder yang
+  membuat deploy ditolak.
 - Antarmuka (SPA) ada di `public/`. Frontend v0.1 tidak bisa dipulihkan (tidak ikut dalam bundel Worker),
   jadi repo ini membawa antarmuka baru.
 - `npm run check` (typecheck + tes) lolos, `npm run build` (`wrangler deploy --dry-run`) menampilkan 7
@@ -27,7 +28,7 @@ Deploy dari Git **menimpa pengaturan Worker dengan isi `wrangler.jsonc`**. Rinci
 | Binding `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` | ditetapkan sesuai berkas. **Binding lain yang hanya ada di dashboard akan terlepas** (kode tidak memakai yang lain) |
 | Variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `SEARCH_CACHE_TTL`) | dipertahankan (`keep_vars: true`). Sisa `PASAL_API_BASE` dan `TIK_CADANGAN` di dashboard tidak dibaca kode lagi; hapus saja |
 | Secret (`ADMIN_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GEMINI_API`) | tidak tersentuh. `PASAL_API_TOKEN` tidak dibaca kode lagi; hapus dari dashboard |
-| Cron | ditetapkan `0 19 * * *` saja (pemeliharaan harian). Deploy **mengganti** seluruh daftar pemicu dengan isi berkas, jadi pemicu per menit yang lama otomatis hilang |
+| Cron | ditetapkan `0 19 * * *` (pemeliharaan harian) dan `*/15 * * * *` (Gemini otomatis; tak mengerjakan apa pun kecuali `GEMINI_OTOMATIS` dipasang). Deploy **mengganti** seluruh daftar pemicu dengan isi berkas, jadi pemicu per menit yang lama otomatis hilang |
 | Konsumer antrean (batch, retry, jeda, konkurensi, DLQ) | **tidak tersentuh**: sengaja tidak dideklarasikan |
 | Compatibility date | `2026-08-05` (diperkirakan dari tanggal pembuatan Worker) |
 | Observability, placement, limits, rute/domain khusus | tidak dicantumkan; periksa di dashboard setelah deploy |
@@ -97,7 +98,7 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Antarmuka | buka URL dasar | beranda Lexa tampil dengan statistik; `/tentang` dibuka langsung tanpa 404 |
 | Binding | Settings > Bindings | `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` utuh |
 | Variabel | Settings > Variables and secrets | variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `SEARCH_CACHE_TTL`) dan secret (`ADMIN_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, serta `GEMINI_API` bila dipakai) masih ada, ditambah `CAKUPAN_JENIS` (dari `wrangler.jsonc`) |
-| Cron | Settings > Trigger events | hanya `0 19 * * *` (pemeliharaan harian). Bila masih ada pemicu `* * * * *`, hapus; kode mengabaikannya |
+| Cron | Settings > Trigger events | `0 19 * * *` (pemeliharaan harian) dan `*/15 * * * *` (Gemini otomatis). Bila masih ada pemicu `* * * * *`, hapus; kode mengabaikannya |
 | Konsumer antrean | Queues > lexa-ingest | masih terhubung ke `lexa`, DLQ dan retry seperti sebelumnya |
 | API | `/api/stats`, `/api/search?q=pesangon`, `/robots.txt`, `/sitemap.xml` | 200 dengan data |
 | Pencarian kata bertanda hubung | `/cari?q=perundang-undangan&mode=keyword` | ada hasil (bug lama: nihil) |
@@ -247,6 +248,24 @@ berjalan seperti biasa.
 
 Konsumer antrean `lexa-ingest` memproses pesan secara berurutan, dan satu pemanggilan dibatasi 15 menit oleh Cloudflare; pembacaan
 Gemini memakan menit per PDF, jadi pesannya dikirim dalam kelompok kecil (skrip memakai `batas: 3` dan menunggu selesai).
+
+### Menjalankannya otomatis di Cloudflare (tanpa konsol)
+
+Cron 15 menit (`*/15 * * * *`) dapat mengantrekan pembacaan sendiri, memakai secret `GEMINI_API` milik Worker. Ia mati sampai Anda
+menambah variabel teks `GEMINI_OTOMATIS` di dashboard:
+
+1. **Uraikan ulang dulu** supaya vonis semua peraturan jujur: skrip panen `window.LEXA_PANEN = { usang: true }` (sekali, tanpa biaya
+   Gemini). Vonis `berat` kini juga berarti pasal hilang dari rangkaian atau pembukaan tertelan ke dalam pasal.
+2. `GEMINI_OTOMATIS` = `uji`. Tiap 15 menit dua peraturan yang paling dicari (UU dan PP terbaru lebih dulu) yang vonisnya
+   `tanpa_pasal`, `berat`, atau `gagal` dibaca Gemini sebagai percobaan kering: **tak ada pasal yang ditulis**. Berhenti sendiri setelah
+   8 percobaan (`GEMINI_OTOMATIS_UJI_MAKS`). Hasilnya di D1: `SELECT frbr_uri, vonis_baru, pasal_baru, catatan FROM pembacaan_ai WHERE
+   hasil = 'uji'` (catatannya memuat keputusan, rangkaian pasal, dan kesesuaian dengan teks lama), dan teksnya di R2 `teks-ai/...`.
+3. Bila hasilnya baik, ubah menjadi `ya`: peraturan berikutnya dibaca sungguhan dan, bila lolos pagar, menggantikan pasal yang tersimpan.
+   `GEMINI_OTOMATIS_BATAS` (bawaan 2, maks 10) mengatur banyaknya per putaran; anggaran token harian (`GEMINI_BATAS_HARIAN`) tetap
+   menjadi batas biaya. Hapus variabelnya (atau kosongkan) untuk mematikan.
+
+Putaran berikutnya menunggu semua peraturan putaran sebelumnya tercatat di `pembacaan_ai` (atau 45 menit berlalu), jadi antrean
+tak menumpuk. Keadaannya terlihat di `GET /api/impor/ringkasan` (blok `gemini`: `otomatis`, `calon_belum_dicoba`, `anggaran`).
 
 ## Jebakan yang perlu diingat
 

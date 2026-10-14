@@ -129,9 +129,11 @@ describe("skrip panen BPK: geminiUji (percobaan kering)", () => {
       uri: UU13, model: "gemini-pratinjau-001", halaman: 1, halaman_pdf: 1, putaran: 1, masalah: [],
       token: { masuk: 2400, keluar: 310, total: 2710 },
       hasil: { nomor_pasal_berbeda: 3, vonis: "bersih" },
-      // UU 13/2003 contoh punya lima nomor pasal (1, 77, 79, 82, 156); bacaan palsu hanya tiga, jadi yang tersimpan dipertahankan.
+      // UU 13/2003 contoh punya lima nomor pasal (1, 77, 79, 82, 156); bacaan palsu hanya tiga (1, 2, 3). Nomor tersimpan dibandingkan
+      // menurut himpunan dengan pencilan dibuang (156 tak punya tetangga): 77, 79, dan 82 hilang dari bacaan baru, jadi dipertahankan.
       tersimpan: { nomor_pasal_berbeda: 5, vonis: "bersih" },
-      keputusan: { hasil: "dipertahankan", alasan: "dipertahankan: 5 nomor pasal tersimpan lebih banyak dari 3 hasil PDF" },
+      hilang_dari_tersimpan: { hilang: 3, dasar: 4 },
+      keputusan: { hasil: "dipertahankan", alasan: "dipertahankan: 3 dari 4 nomor pasal tersimpan tidak ada pada hasil Gemini" },
       arsip: "teks-ai/akn/id/act/uu/2003/13.md",
     });
     expect(hasil.geminiUji[1]).toEqual({ uri: "/akn/id/act/pp/2025/9999", galat: expect.stringContaining("Lexa 404") });

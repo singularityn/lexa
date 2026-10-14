@@ -58,7 +58,8 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
 ## Arsitektur
 
 Satu Worker (`src/worker/index.ts`, Hono) mengerjakan tiga peran: `fetch` (API `/api/*`, `robots.txt`,
-`sitemap.xml`, dan `/peraturan` untuk pratinjau tautan), `scheduled` (Cron harian untuk pemeliharaan) dan `queue`
+`sitemap.xml`, dan `/peraturan` untuk pratinjau tautan), `scheduled` (Cron harian untuk pemeliharaan, dan Cron 15 menit untuk
+Gemini otomatis yang mati kecuali dinyalakan) dan `queue`
 (konsumer antrean ingest: ekstraksi PDF, indeks vektor, ringkasan AI). Selain rute itu, permintaan dilayani sebagai aset
 statis dari `public/` dengan fallback ke `index.html` (rute sisi klien). Worker tidak memanggil layanan data pihak
 ketiga mana pun: satu-satunya panggilan keluar adalah Google (login) dan layanan Cloudflare sendiri.
@@ -73,9 +74,11 @@ ketiga mana pun: satu-satunya panggilan keluar adalah Google (login) dan layanan
 | `INGEST_QUEUE` | Queues | `lexa-ingest` | antrean ingest; DLQ `lexa-ingest-dlq` |
 | `ASSETS` | Static Assets | `public/` | cangkang SPA yang dipakai `/peraturan` untuk pratinjau tautan |
 
-Cron: satu pemicu, `0 19 * * *` (pemeliharaan harian, 02:00 WIB): mengosongkan daftar hapus (berkas R2 dan vektor yatim),
-memangkas log lama, dan membuang sisa keadaan sumber lama. Data peraturan tidak dijemput Cron; ia masuk dari panen BPK
-lewat `/api/impor/*`. Skema D1 dan alasan desainnya ada di `migrations/`.
+Cron: dua pemicu. `0 19 * * *` (pemeliharaan harian, 02:00 WIB) mengosongkan daftar hapus (berkas R2 dan vektor yatim),
+memangkas log lama, dan membuang sisa keadaan sumber lama. `*/15 * * * *` menjalankan Gemini otomatis
+(`src/worker/lib/geminiOtomatis.ts`): tak mengerjakan apa pun, dan tak menyentuh D1 maupun Gemini, kecuali variabel
+`GEMINI_OTOMATIS` dipasang. Data peraturan tidak dijemput Cron; ia masuk dari panen BPK lewat `/api/impor/*`. Skema D1 dan
+alasan desainnya ada di `migrations/`.
 
 ### Endpoint API
 
@@ -198,6 +201,8 @@ cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignor
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | secret | login Google; tanpa ini aplikasi berjalan sebagai tamu |
 | `GEMINI_API` | secret (opsional) | kunci Gemini untuk membaca PDF pindaian; tanpa ini jalur `gemini` menjawab 503 dan fitur lain tak terpengaruh |
 | `GEMINI_MODEL`, `GEMINI_BATAS_HARIAN`, `GEMINI_BASE_URL` | variabel (opsional) | model (bawaan `gemini-flash-latest`), anggaran token per hari UTC (bawaan 5.000.000), dan alamat dasar API (mis. AI Gateway) |
+| `GEMINI_OTOMATIS` | variabel (opsional) | `uji` (percobaan kering otomatis, berhenti sendiri setelah `GEMINI_OTOMATIS_UJI_MAKS`) atau `ya` (membaca sungguhan) lewat Cron 15 menit; tak ada atau nilai lain: mati |
+| `GEMINI_OTOMATIS_BATAS`, `GEMINI_OTOMATIS_UJI_MAKS`, `GEMINI_OTOMATIS_VONIS` | variabel (opsional) | peraturan per putaran (bawaan 2, maks 10), banyak percobaan kering (bawaan 8), dan vonis calon (bawaan `tanpa_pasal,berat,gagal`) |
 
 Login Google memerlukan alamat pengalihan yang terdaftar **persis** di Google Cloud Console, yaitu
 `https://<host-situs>/api/auth/google/callback` (untuk produksi:
@@ -237,8 +242,10 @@ Ringkasannya (rincian, perintah, dan SQL pemeriksaan ada di [docs/pipeline-data.
 - **PDF pindaian**: PDF tanpa lapisan teks tak menghasilkan pasal lewat konversi bawaan. Untuk peraturan semacam itu Gemini
   dapat membaca halaman sebagai gambar (opsi skrip `geminiCek`, `geminiUji`, `gemini`; `POST /api/impor/ekstrak-ulang
   {"gemini": true}`). Opt-in, berpagar (halaman lengkap, mutu sama, tak mengurangi pasal tersimpan, anggaran token harian), dan
-  peraturan yang pasalnya dibaca AI diberi catatan di antarmuka. Analisis, risiko, dan cara memakainya:
-  [docs/analisis-gemini.md](docs/analisis-gemini.md).
+  peraturan yang pasalnya dibaca AI diberi catatan di antarmuka. Dapat berjalan sendiri di Cloudflare tanpa peramban:
+  `GEMINI_OTOMATIS=uji` lalu `ya`. Calonnya peraturan yang vonis ekstraksinya `tanpa_pasal`, `berat`, atau `gagal`; vonis
+  `berat` kini juga berarti pasal hilang dari rangkaian atau pembukaan tertelan ke dalam pasal. Analisis, risiko, dan cara
+  memakainya: [docs/analisis-gemini.md](docs/analisis-gemini.md).
 - **Pemeliharaan harian** (Cron 02:00 WIB): daftar hapus dikosongkan, log lebih tua dari 90 hari dipangkas, sisa keadaan
   sumber lama dibuang.
 

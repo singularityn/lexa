@@ -7,11 +7,22 @@ Dokumen ini menimbang ide itu terhadap **data produksi**, menyebut apa yang diba
 apa yang belum bisa dibuktikan dari lingkungan pengembangan (tak ada panggilan Gemini yang dilakukan di sini: kuncinya hanya ada di
 Worker). Cara menjalankannya ada di bagian [Cara memakai](#cara-memakai).
 
+> **Koreksi (14 Oktober 2026, sore).** Versi pertama dokumen ini menyimpulkan bahwa "yang rusak bukan kerapiannya melainkan
+> ada-tidaknya teks", berdasarkan vonis pengukur mutu: 72% peraturan `bersih`. Pemilik membantahnya dengan tangkapan layar UU 32/2014
+> (Kelautan): pasalnya berantakan dan sebagian tak ada. Pemeriksaan D1 membenarkannya, dan **pengukur mutu itulah yang keliru**: ia
+> hanya menghitung kerusakan karakter (angka tercemar huruf, simbol liar, sisa catchword) dan buta terhadap pasal yang hilang.
+> Bagian [Kasus UU 32/2014](#kasus-uu-322014-kelautan) memuat buktinya; perbaikannya (pengukur menghitung pasal hilang dan pembukaan
+> yang tertelan, pagar Gemini yang tak tertipu baris lama, dan Gemini otomatis di Cloudflare) dijelaskan di sana dan di
+> [Cara memakai](#cara-memakai). Angka "bersih" di bawah adalah angka pengukur lama.
+
 ## Kesimpulan
 
-1. **Layak, tetapi nilainya bukan di "merapikan semua teks".** Pengukur mutu Lexa menilai 72% peraturan yang sudah dipanen
-   `bersih`; yang rusak bukan kerapiannya melainkan **ada-tidaknya teks**. Menulis ulang teks yang sudah baik dengan model bahasa
-   menambah biaya dan, pada naskah hukum, risiko perubahan yang tak terlihat, tanpa memperbaiki apa pun.
+1. **Layak, dan lebih luas daripada dugaan pertama.** Pengukur lama menilai 72% peraturan yang dipanen `bersih`, tetapi ia buta
+   terhadap pasal yang hilang: dari 802 peraturan berpasal 10 atau lebih yang ia nilai `bersih`, **227 (28%) kehilangan seperempat
+   nomor pasalnya atau lebih**, dan 178 dari 934 tak punya Pasal 1 (angka D1 produksi, sebelum Penjelasan yang tertukar dengan pasal
+   dipisahkan, yang masih menutupi celahnya). Jadi yang rusak adalah **ada-tidaknya teks dan kelengkapan pasalnya**, bukan sekadar
+   kerapiannya. Yang tak dipilih tetap sama: menyuruh model menulis ulang teks yang sudah lengkap menambah biaya dan, pada naskah
+   hukum, risiko perubahan yang tak terlihat.
 2. **Yang terbukti perlu: membaca halaman sebagai gambar.** Dari 2.630 peraturan yang sudah dipanen, **487 (18%)** tidak punya
    pasal yang layak (442 `tanpa_pasal`, 37 `berat`, 8 `gagal`). Penyebabnya tiga.
    (a) **42 pindaian modern** (2010 ke atas): PDF ratusan KB tetapi lapisan teksnya nyaris kosong (rata-rata 1,6 ribu karakter),
@@ -32,6 +43,9 @@ Worker). Cara menjalankannya ada di bagian [Cara memakai](#cara-memakai).
 
 Cakupan: 7.177 peraturan (PP 5.011, UU 1.950, Perppu 170, Tap MPR 41, UUD 5). Sudah dipanen dan diekstrak: 2.630. Sisanya (±4.550)
 belum dipanen; bila proporsinya sama, ±800 lagi akan butuh pembacaan gambar.
+
+Vonis di bawah adalah vonis **pengukur lama** (versi pengurai 0-3). Pengukur versi 4 juga menghitung pasal yang hilang dan
+pembukaan yang tertelan ke dalam pasal, jadi sebagian `bersih` dan `ringan` akan menjadi `berat` begitu diurai ulang (`usang`).
 
 | Vonis ekstraksi | Peraturan | Rata-rata karakter | Arti |
 |---|---:|---:|---|
@@ -95,8 +109,12 @@ konsol (skrip panen)               Worker Lexa                                  
   3. tidak ada baris panjang yang sama diulang berturut-turut (model yang terjebak);
   4. bagian `[tidak terbaca]` (diminta bila ragu, menggantikan tebakan) tidak lebih dari 1,5% kata;
   5. judul dalam teks cocok dengan peraturan yang dituju (PDF peraturan lain ditolak);
-  6. pengurai menemukan pasal, dan mutu hasilnya (`nilaiKualitasEkstraksi`) bukan `berat`;
-  7. tidak mengurangi nomor pasal yang sudah tersimpan (`putuskanPenggantian`).
+  6. pengurai menemukan pasal, dan mutu hasilnya (`nilaiKualitasEkstraksi`) bukan `berat`: sejak versi pengurai 4 itu juga berarti
+     tidak kehilangan seperempat nomor pasalnya dan tidak memuat pembukaan di dalam pasal;
+  7. tidak mengurangi pasal yang sudah tersimpan: nomor tersimpan yang tak ada pada bacaan baru (menurut bilangan, pencilan
+     dibuang, Pasal 1 selalu dihitung) paling banyak 5% (`nomorLamaHilang`). Bukan jumlah nomor berbeda: baris tersimpan dari
+     pengurai lama memuat Penjelasan sebagai pasal dan nomor sampah, yang menggelembungkan jumlah dan membuat bacaan yang lengkap
+     ditolak (lihat kasus UU 32/2014).
   Yang gagal salah satunya **tidak mengubah apa pun** di pasal maupun log ekstraksi; hanya `pembacaan_ai` mencatat sebabnya.
 * **Keterlacakan.** Teks Gemini selalu diarsipkan di R2 `teks-ai/<alamat>.md` untuk diperiksa; yang dipakai juga dipromosikan ke
   `teks/<alamat>.md` (uraian ulang `usang` membacanya), dan teks konversi bawaan yang tertimpa disimpan sekali di
@@ -119,6 +137,65 @@ konsol (skrip panen)               Worker Lexa                                  
   yang tersisa dalam satu batch dikembalikan ke antrean setelah 8 menit.
 * **Tanpa ketergantungan pada versi model.** Nama model adalah variabel (`GEMINI_MODEL`, bawaan alias `gemini-flash-latest`), dan
   tak ada parameter khusus versi yang dikirim (suhu, tingkat berpikir). Alasannya di bagian berikut.
+
+## Kasus UU 32/2014 (Kelautan)
+
+Tangkapan layar dari pemilik menampilkan "Pasal 20" yang isinya bermula `, Pasal 22D ayat (1), Pasal 25A, dan Pasal 33 ayat(3)
+Undang-Undang Dasar Ncgara Republik Indonesia Tahun1945; MengingatDengan ... MEMUTUSI(AN:Menetapkan : UNDANG-UNDANG TENTANG
+KELAUTAN.BAB IKETENTUAN UMUMpasal IDalam Undang-Undang ini yang dimaksud dengan:1. Laut adalah ...`. Keadaan di D1 produksi
+(`/akn/id/act/uu/2014/32`):
+
+* **Sebelum uraian ulang** (versi pengurai 0): 101 baris pasal, vonis `bersih`. Baris bernomor "2O" (3.690 karakter) memuat
+  pembukaan sampai Pasal 1; baris "Cukup jelas." bernomor 3, 4, 5, ... (Penjelasan) tersisip di antara pasal; nomor rusak ("I",
+  "7" untuk 71, "3" untuk 31, dua "30"); Pasal 73 menelan 12.177 karakter sisanya.
+* **Sesudah uraian ulang `usang`** (versi 3, dijalankan pemilik pada 14 Oktober): 49 baris, 40 nomor berbeda (2 sampai 73), tanpa
+  nomor bukan angka. Pembukaan dan Penjelasan sudah lepas dari pasal, **tetapi Pasal 1 dan 32 nomor lain tetap tak terbaca**
+  (`celah_pasal` tercatat 33 dari `pasal_tertinggi` 73), dan vonisnya tetap `bersih`.
+
+Gejala dan penyebabnya:
+
+| Gejala | Bukti | Penyebab |
+|---|---|---|
+| pasal hilang | nomor yang ada: 2, 3, 4, 6, 7, 8, 9, 11, 12, 15, 16, 17, 19, 24, 26, 27, 30, 33, 36, ... 73; tak ada 1, 5, 10, 13, 14, 18, 20 sampai 23, ... | judul pasal rusak OCR ("pasai 66", "Pasal 7 1", "pasal I" menempel pada "UMUM") atau tak ada di lapisan teks, tak dikenali pengurai |
+| kata menempel dan salah baca | `wilayahyurisdiksi`, `danberkelanjutan`, `Ncgara`, `larak` (jarak), `evaiuasi`, `kesatuangeogralis` | lapisan teks PDF kehilangan spasi di ujung baris; OCR |
+| pembukaan masuk pasal (versi 0) | baris "2O" | "Pasal 20" di daftar Mengingat dibaca sebagai judul |
+
+Yang gagal menangkapnya: **pengukur mutu**. Ia mencatat `celah_pasal` (33) tetapi tak memakainya, dan menilai hanya kerusakan karakter,
+yang tak cukup untuk melewati ambang, jadi `bersih`. Itu yang membuat angka "72% bersih" menyesatkan, dan yang membuat Gemini tak pernah
+menjadi calon bagi peraturan seperti ini. Survei D1 (hanya peraturan dengan sedikitnya 10 nomor pasal, sebelum uraian ulang `usang`):
+dari 802 yang `bersih`, 227 kehilangan seperempat nomornya atau lebih, 36 kehilangan 10-25%, dan 530 utuh; dari 165 `ringan`, 46 dan 33.
+
+Yang diperbaiki:
+
+1. **Pengukur** (`nilaiKualitasEkstraksi`, versi pengurai 4): menghitung pasal yang hilang dari rangkaian 1..N (N = nomor tertinggi
+   tanpa pencilan) dan pasal yang memuat pembukaan atau judul bab. Kehilangan ≥ 5 nomor dan ≥ 25% atau pembukaan tertelan: `berat`;
+   ≥ 3 nomor dan ≥ 10%, atau Pasal 1 tak terbaca pada peraturan berpasal ≥ 10: `ringan`. Alasannya ditulis di
+   `ekstraksi_log.catatan`. UU 32/2014 (40 dari 73 nomor, tanpa Pasal 1) kini `berat`. Uraian ulang `usang` menerapkannya ke seluruh
+   peraturan tanpa biaya Gemini; yang menjadi `berat` otomatis menjadi calon.
+2. **Pagar Gemini** membandingkan nomor, bukan jumlah nomor berbeda. Baris tersimpan dari pengurai lama (versi 0, sebelum `usang`)
+   memuat Penjelasan sebagai pasal dan nomor sampah, yang menggelembungkan jumlahnya sehingga bacaan Gemini yang lengkap tampak
+   "kurang" dan ditolak. Himpunan nomor tersimpan dan bacaan baru dibandingkan menurut bilangannya, pencilan pada yang tersimpan
+   dibuang, dan paling banyak 5% nomor tersimpan boleh tak ada pada bacaan baru. Menulis tesnya menemukan kontradiksi kedua: aturan
+   jumlah lama masih berjalan SESUDAH keputusan Gemini dan membatalkannya; kini jalur Gemini hanya tunduk pada keputusannya sendiri.
+3. **Gemini otomatis di Cloudflare** (bagian berikut), supaya semua peraturan seperti ini dibaca tanpa konsol.
+
+## Gemini otomatis di Cloudflare
+
+Permintaan pemilik: bila ada cara agar Gemini berjalan sendiri di Cloudflare, itu pilihan yang bagus. Bentuknya Cron 15 menit
+(`*/15 * * * *`, `lib/geminiOtomatis.ts`) yang memakai secret `GEMINI_API` milik Worker dan antrean yang sama dengan jalur manual.
+
+* **Mati secara bawaan.** Tanpa variabel `GEMINI_OTOMATIS`, pemicunya kembali seketika: tak menyentuh D1, KV, maupun Google.
+* **`GEMINI_OTOMATIS=uji`**: percobaan kering. Dua peraturan per putaran (`GEMINI_OTOMATIS_BATAS`) dibaca dan hasilnya hanya
+  dicatat di `pembacaan_ai` (hasil `uji`, kolom `catatan` memuat keputusan, rangkaian pasal, pasal tersimpan yang hilang, dan
+  kesesuaian dengan teks lama) dan di R2 `teks-ai/`. **Tak ada pasal yang ditulis.** Berhenti sendiri setelah 8 percobaan
+  (`GEMINI_OTOMATIS_UJI_MAKS`), supaya biaya uji terbatas dan hasilnya sempat diperiksa.
+* **`GEMINI_OTOMATIS=ya`**: membaca sungguhan; yang lolos pagar menggantikan pasal tersimpan.
+* **Calon**: peraturan ber-PDF yang vonisnya `tanpa_pasal`, `berat`, atau `gagal` (`GEMINI_OTOMATIS_VONIS`), belum pernah dicoba,
+  menurut prioritas panen (UU lalu PP, terbaru lebih dulu). Jalankan `usang` lebih dulu agar vonisnya jujur.
+* **Tak menumpuk.** Putaran berikutnya menunggu semua peraturan putaran sebelumnya tercatat di `pembacaan_ai`, atau 45 menit berlalu.
+* **Pagar biaya sama**: anggaran token harian, satu peraturan satu pembacaan, galat sementara diulang antrean.
+* **Terlihat dari D1 saja**: `SELECT frbr_uri, vonis_baru, pasal_baru, catatan FROM pembacaan_ai WHERE hasil = 'uji'`. Itu juga yang
+  memungkinkan hasilnya dinilai tanpa membuka R2 atau konsol.
 
 ## Pengujian
 
@@ -194,10 +271,11 @@ produksi. Variabel opsional: `GEMINI_MODEL`, `GEMINI_BATAS_HARIAN`, `GEMINI_BASE
 
 Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bpk-console-harvest.js`:
 
-0. **Uraikan ulang yang usang lebih dulu** (`window.LEXA_PANEN = { usang: true }`, sekali). Pengurai sudah diperbaiki sejak data
-   produksi ini diekstrak: sebagian `tanpa_pasal` (ketikan 1946-1969 bergaya "Pasal 1.") pulih hanya dengan menguraikan ulang
-   arsip teksnya, tanpa biaya. Jangan membayar Gemini untuk yang bisa diperbaiki secara deterministik; yang masih `tanpa_pasal`,
-   `berat`, atau `gagal` sesudahnya barulah calonnya.
+0. **Uraikan ulang yang usang lebih dulu** (`window.LEXA_PANEN = { usang: true }`, sekali). Seluruh 2.630 baris masih berversi
+   pengurai 0, dan versi 4 menghitung pasal yang hilang, jadi vonis semua peraturan dihitung ulang dari arsip teksnya tanpa biaya
+   Gemini: sebagian `tanpa_pasal` (ketikan 1946-1969 bergaya "Pasal 1.") pulih, dan `bersih` yang kehilangan pasal menjadi `berat`.
+   Jangan membayar Gemini untuk yang bisa diperbaiki secara deterministik; yang `tanpa_pasal`, `berat`, atau `gagal` sesudahnya
+   barulah calonnya. (Jumlahnya baru diketahui sesudah langkah ini; `calon_belum_dicoba` di `/api/impor/ringkasan` menyebutnya.)
 1. **Cek sambungan.** `window.LEXA_PANEN = { geminiCek: true }`. Hasil yang baik mencetak model, versi model, dan anggaran. Galat
    menyebut penyebabnya (kunci salah, model tak ada, kuota).
 2. **Uji kering pada beberapa peraturan** (tak menulis pasal): `window.LEXA_PANEN = { geminiUji: ["/akn/id/act/uu/2019/24",
@@ -218,15 +296,20 @@ Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bp
    `SELECT hasil, COUNT(*) FROM pembacaan_ai GROUP BY hasil` dan, untuk yang ditolak, `SELECT frbr_uri, catatan FROM pembacaan_ai
    WHERE hasil IN ('ditolak','gagal')`.
 
+**Tanpa konsol (otomatis).** Setelah langkah 0 dan 1, tambahkan variabel `GEMINI_OTOMATIS` = `uji` di dashboard (lihat
+[Gemini otomatis](#gemini-otomatis-di-cloudflare)). Sekitar satu jam kemudian delapan percobaan kering sudah tercatat; periksa
+dengan kueri D1 di atas, lalu ubah menjadi `ya`. Mematikannya: hapus variabelnya.
+
 Hentikan dan periksa bila: banyak `ditolak` dengan sebab yang sama (perintah perlu disesuaikan), banyak `gagal` bersebab
 `RECITATION` (alihkan ke model lain atau potong per halaman), atau pasal hasil bacaan yang dicek manual ternyata keliru.
 
 ## Yang sengaja belum dibangun
 
-* **Audit mutu `bersih`.** Pengukur menilai kerusakan karakter dan struktur; salah baca halus yang lolos darinya tak terlihat.
-  `geminiUji` pada sekitar 20 peraturan `bersih` yang dipilih acak, dengan melihat `kesesuaian_dengan_teks_lama`, mengukur
-  seberapa sering bacaan gambar dan lapisan teks berselisih: bukti yang diperlukan sebelum memutuskan apakah merapikan `ringan`
-  atau `bersih` layak dibiayai.
+* **Mengukur kata menempel dan salah baca halus.** Pengukur versi 4 melihat karakter rusak, pasal hilang, dan pembukaan tertelan,
+  tetapi bukan `wilayahyurisdiksi` atau `evaiuasi` di dalam kalimat yang pasalnya lengkap: tanpa kamus, kata menempel tak bisa
+  dibedakan dari kata panjang yang sah. Satu-satunya pengukur yang ada: `kesesuaian_dengan_teks_lama` pada uji kering Gemini
+  (bacaan gambar dan lapisan teks yang saling berselisih). Pemisahan kata berbasis kamus dari korpus sendiri adalah jalan
+  deterministik yang belum dicoba.
 * **Merapikan teks `ringan` dan `bersih`.** Pembersih halaman dan pengurai deterministik menangani artefak struktural dengan bukti
   data (lihat [tinjauan-analisis-eksternal.md](tinjauan-analisis-eksternal.md)); yang tersisa adalah salah baca OCR, yang hanya
   bisa diperbaiki dengan membaca gambar lagi (opsi C dengan `geminiVonis: "ringan"`), dan itu perlu bukti mutu dari tahap uji.

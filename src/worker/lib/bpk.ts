@@ -351,8 +351,10 @@ export function periksaKecocokanNaskah(
  * 1: pembersih halaman, batas Penjelasan yang menempel, dan Penjelasan per pasal (14 Okt 2026).
  * 2: catchword yang tak terpisah penanda halaman ("Agar…Agar setiap orang") dibuang, sehingga penutup tetap dikenali.
  * 3: catchword yang diulang di baris berikutnya ("Ayat (4)…⏎Ayat (4)"; 827 baris pasal pada 184 peraturan produksi) ikut dibuang.
+ * 4: pengukur mutu menghitung pasal yang hilang dan pembukaan yang tertelan ke dalam pasal (`nilaiKualitasEkstraksi`): vonis ber-
+ *    ubah untuk naskah yang sama, jadi seluruh peraturan ditawarkan ke `usang` agar vonisnya jujur dan yang `berat` menjadi calon Gemini.
  */
-export const VERSI_PARSER = 3;
+export const VERSI_PARSER = 4;
 
 export interface PasalTerurai {
   nomor_pasal: string;
@@ -736,16 +738,19 @@ export interface LaporanKualitas {
   panjang_teks: number;
   jumlah_pasal: number;
   jumlah_ayat: number;
+  /** Nomor pasal tertinggi dari rangkaian yang terbaca (pencilan tanpa tetangga tak dihitung; lihat `rangkaianPasal`). */
   pasal_tertinggi: number;
-  /** Nomor pasal tertinggi dikurangi jumlah pasal unik — pasal yang hilang. */
+  /** Pasal yang hilang dari rangkaian 1..pasal_tertinggi: nomor yang tak terbaca sama sekali. */
   celah_pasal: number;
+  /** Pasal yang isinya memuat pembukaan atau judul bab ("DEWAN PERWAKILAN RAKYAT REPUBLIK INDONESIA", "MEMUTUSKAN", "BAB I KETENTUAN UMUM"): bukan pasal. */
+  struktur_tertanam: number;
   /** Token angka yang tercemar huruf, mis. "2O24" atau "L78.865". */
   angka_tercemar: number;
   /** Simbol yang tidak semestinya muncul, mis. "€" atau "o/o" untuk persen. */
   simbol_liar: number;
   /** Sisa catchword ganti halaman, mis. "c. Sisa. ." */
   artefak_halaman: number;
-  /** Indikator kerusakan per 1.000 karakter. Makin kecil makin bersih. */
+  /** Indikator kerusakan karakter per 1.000 karakter. Makin kecil makin bersih. */
   kerusakan_per_1000: number;
   vonis: "bersih" | "ringan" | "berat" | "tanpa_pasal";
 }
@@ -768,17 +773,99 @@ function hitung(teks: string, pola: RegExp): number {
   return (teks.match(pola) ?? []).length;
 }
 
+/**
+ * Pembukaan atau judul bab yang tertelan ke dalam isi sebuah pasal. Kata-katanya sengaja huruf kapital semua, seperti di naskah
+ * aslinya, supaya rujukan biasa ("persetujuan bersama Dewan Perwakilan Rakyat", "hakim memutuskan") tak terhitung; bentuk rusak OCR
+ * ikut ("MEMUTUSI(AN", "DEWANPERWAKILANRAKYAT"). Judul bab hanya bila menempel pada nomornya ("BAB IKETENTUAN UMUM"): undang-undang
+ * perubahan mengutip judul bab apa adanya, dengan spasi, di dalam pasalnya yang sah.
+ *
+ * Contoh nyata: UU 32/2014 di produksi menyimpan "Mengingat ... Dengan Persetujuan Bersama DEWAN PERWAKILAN RAKYAT REPUBLIK
+ * INDONESIA dan PRESIDEN REPUBLIK INDONESIA MEMUTUSI(AN: Menetapkan: UNDANG-UNDANG TENTANG KELAUTAN. BAB IKETENTUAN UMUM pasal I
+ * Dalam Undang-Undang ini ..." sebagai isi "Pasal 20", dan pengukur lama menilainya bersih.
+ */
+const RE_STRUKTUR_TERTANAM =
+  /DEWAN\s*PERWAKILAN\s*RAKYAT\s*REPUBLIK\s*INDONESIA|MEMUTUS|BAB\s+[IVXL]+KETENTUAN\s*UMUM|Menetapkan\s*:\s*(?:UNDANG|PERATURAN|PERPPU)/;
+
+/** Nomor pasal angka ("12", "12A", "2O") sebagai bilangan 1-3000; romawi ("IV") dan sisanya tak punya bilangan. */
+function bilanganPasal(nomor: string): number | null {
+  const m = /^(\d{1,4})/.exec(nomor.trim());
+  if (!m) return null;
+  const v = Number(m[1]);
+  return v >= 1 && v <= 3000 ? v : null;
+}
+
+/** Himpunan bilangan dari nomor pasal angka. */
+export function bilanganNomorPasal(nomor: Iterable<string>): Set<number> {
+  const hasil = new Set<number>();
+  for (const n of nomor) {
+    const v = bilanganPasal(n);
+    if (v !== null) hasil.add(v);
+  }
+  return hasil;
+}
+
+/**
+ * Rangkaian 1..N yang ditempuh sebuah himpunan nomor pasal: N, dan berapa nomor di antaranya yang ada. Bilangan yang tak punya
+ * tetangga dalam jarak 5 dianggap pencilan dan tak ikut: satu "Pasal 107" salah baca pada undang-undang 45 pasal tak boleh membuat
+ * 62 pasal tampak hilang (UU 5/1990 di produksi). Himpunan yang terlalu kecil untuk dinilai tetap dipakai apa adanya.
+ */
+export function rangkaianPasal(bilangan: Set<number>): { n: number; ada: number } {
+  const dasar = tanpaPencilan(bilangan);
+  return { n: dasar.length ? dasar[dasar.length - 1] : 0, ada: dasar.length };
+}
+
+/**
+ * Bilangan nomor pasal, menaik, tanpa pencilan (tak punya tetangga dalam jarak 5). Pasal 1 tak pernah pencilan: ia jangkar setiap
+ * peraturan (ketentuan umum), dan kehilangannya paling merugikan. Himpunan yang tersisa kurang dari dua dipakai utuh.
+ */
+export function tanpaPencilan(bilangan: Set<number>): number[] {
+  const urut = [...bilangan].sort((a, b) => a - b);
+  const kerabat = urut.filter((v, i) => v === 1 || (i > 0 && v - urut[i - 1] <= 5) || (i + 1 < urut.length && urut[i + 1] - v <= 5));
+  return kerabat.length >= 2 ? kerabat : urut;
+}
+
+/** Alasan sebuah vonis `ringan` atau `berat` yang bukan kerusakan karakter, untuk catatan ekstraksi; "" bila tak ada. */
+export function alasanKerapian(l: Pick<LaporanKualitas, "pasal_tertinggi" | "celah_pasal" | "struktur_tertanam">): string {
+  const alasan: string[] = [];
+  if (l.celah_pasal > 0 && l.pasal_tertinggi > 0) alasan.push(`${l.celah_pasal} dari ${l.pasal_tertinggi} nomor pasal tak terbaca`);
+  if (l.struktur_tertanam > 0) alasan.push(`${l.struktur_tertanam} pasal memuat pembukaan atau judul bab`);
+  return alasan.join("; ");
+}
+
+/** Ringkasan tunggal untuk `ekstraksi_log.catatan`: alasan kerapian bila vonisnya ringan atau berat; "" bila tak ada yang perlu dicatat. */
+export function catatanKerapian(l: LaporanKualitas): string {
+  if (l.vonis !== "ringan" && l.vonis !== "berat") return "";
+  return alasanKerapian(l);
+}
+
+/**
+ * Nilai mutu hasil penguraian. Dua jenis kerusakan dihitung:
+ *
+ *  - karakter (angka tercemar, simbol liar, sisa catchword): per 1.000 karakter naskah;
+ *  - struktur: pasal yang HILANG dari rangkaian 1..N, dan pasal yang memuat pembukaan atau judul bab.
+ *
+ * Hanya ukuran pertama yang ada pada versi pengurai 1-3, dan itu buta terhadap pindaian ber-OCR yang kehilangan atau menempelkan
+ * pasalnya: UU 32/2014 (Kelautan), dengan kata menempel, nomor "2O", dan pembukaan di dalam "Pasal 20", dinilai bersih, begitu pula
+ * UU 12/1967 yang hanya terbaca 23 dari 58 pasalnya. Dari 802 peraturan berpasal ≥ 10 yang dinilai bersih di produksi, 227 kehilangan
+ * seperempat nomornya atau lebih (14 Okt 2026, sebelum Penjelasan yang tertukar dengan pasal dipisahkan, yang masih menutupi celahnya).
+ * Pasal yang hilang membuat vonis `berat` (≥ 5 nomor dan ≥ 25%) atau `ringan` (≥ 3 nomor dan ≥ 10%); nomor yang sah tak berurutan
+ * ("Pasal 49 sampai dengan 55 dihapus") jarang sebesar itu.
+ */
 export function nilaiKualitasEkstraksi(
   naskah: string,
   pasal: PasalTerurai[],
 ): LaporanKualitas {
   const panjang = naskah.length;
 
-  const nomorUnik = new Set(pasal.map((p) => p.nomor_pasal));
-  const nomorAngka = [...nomorUnik]
-    .map((n) => parseInt(n, 10))
-    .filter((n) => Number.isFinite(n));
-  const tertinggi = nomorAngka.length ? Math.max(...nomorAngka) : 0;
+  const bilangan = bilanganNomorPasal(pasal.map((p) => p.nomor_pasal));
+  const { n: tertinggi, ada } = rangkaianPasal(bilangan);
+  const hilang = Math.max(tertinggi - ada, 0);
+  const rasioHilang = tertinggi > 0 ? hilang / tertinggi : 0;
+  // Pasal 1 memuat ketentuan umum (definisi) dan nyaris selalu ada. Tak terbaca pada peraturan berpasal banyak berarti
+  // pembukaan sampai pasal-pasal awalnya terlewat, walau selebihnya berurutan: 178 dari 934 peraturan berpasal >= 10 yang
+  // dinilai bersih di produksi tak punya Pasal 1.
+  const tanpaPasal1 = tertinggi >= 10 && !bilangan.has(1);
+  const strukturTertanam = pasal.filter((p) => RE_STRUKTUR_TERTANAM.test(p.isi)).length;
 
   const angkaTercemar = hitung(naskah, RE_ANGKA_TERCEMAR);
   const simbolLiar = hitung(naskah, RE_SIMBOL_LIAR);
@@ -789,8 +876,8 @@ export function nilaiKualitasEkstraksi(
 
   const vonis: LaporanKualitas["vonis"] =
     pasal.length === 0 ? "tanpa_pasal"
-    : per1000 >= 2 ? "berat"
-    : per1000 >= 0.5 ? "ringan"
+    : per1000 >= 2 || strukturTertanam > 0 || (hilang >= 5 && rasioHilang >= 0.25) ? "berat"
+    : per1000 >= 0.5 || tanpaPasal1 || (hilang >= 3 && rasioHilang >= 0.1) ? "ringan"
     : "bersih";
 
   return {
@@ -798,7 +885,8 @@ export function nilaiKualitasEkstraksi(
     jumlah_pasal: pasal.length,
     jumlah_ayat: pasal.filter((p) => p.ayat !== null).length,
     pasal_tertinggi: tertinggi,
-    celah_pasal: Math.max(tertinggi - nomorUnik.size, 0),
+    celah_pasal: hilang,
+    struktur_tertanam: strukturTertanam,
     angka_tercemar: angkaTercemar,
     simbol_liar: simbolLiar,
     artefak_halaman: artefak,

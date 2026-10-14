@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  alasanKerapian,
+  bilanganNomorPasal,
+  catatanKerapian,
   frbrDari,
   idPasal,
   idPasalUnik,
   nilaiKualitasEkstraksi,
   periksaKecocokanNaskah,
   petakanDokumen,
+  rangkaianPasal,
   relasiDari,
   sitasiDariTeks,
   statusDari,
   tanggalIndonesia,
+  tanpaPencilan,
   uraikanPasal,
   urlBpk,
 } from "../src/worker/lib/bpk";
@@ -442,6 +447,162 @@ describe("nilaiKualitasEkstraksi", () => {
   it("memberi vonis 'tanpa_pasal' bila tidak ada pasal terdeteksi", () => {
     const naskah = "tidak ada pasal sama sekali";
     expect(nilaiKualitasEkstraksi(naskah, uraikanPasal(naskah)).vonis).toBe("tanpa_pasal");
+  });
+});
+
+describe("kerapian pasal: nomor yang hilang dan pembukaan yang tertelan", () => {
+  /** Naskah dengan pasal bernomor `nomor`, masing-masing berisi satu kalimat bersih. */
+  const naskahDari = (nomor: Array<number | string>) => nomor.map((n) => `Pasal ${n}\nIsi pasal ${n} yang cukup panjang dan bersih.`).join("\n");
+  const nilai = (nomor: Array<number | string>) => {
+    const naskah = naskahDari(nomor);
+    return nilaiKualitasEkstraksi(naskah, uraikanPasal(naskah));
+  };
+  const rentang = (dari: number, sampai: number) => Array.from({ length: sampai - dari + 1 }, (_, i) => dari + i);
+  const tanpa = (n: number, ...buang: number[]) => rentang(1, n).filter((x) => !buang.includes(x));
+
+  describe("bilanganNomorPasal, tanpaPencilan, rangkaianPasal", () => {
+    it("nomor pasal menjadi bilangan 1-3000: sisipan dan 'O' sebagai nol terbaca, romawi dan sampah tidak", () => {
+      expect([...bilanganNomorPasal(["1", "12A", "2O", "III", "pasai", "0", "3001", "x9", " 7 "])].sort((a, b) => a - b)).toEqual([1, 2, 7, 12]);
+    });
+
+    it("tanpaPencilan: bilangan tanpa tetangga dalam jarak 5 dibuang, kecuali Pasal 1", () => {
+      expect(tanpaPencilan(new Set([...rentang(1, 45), 107]))).toEqual(rentang(1, 45));
+      expect(tanpaPencilan(new Set([1, 7, 9]))).toEqual([1, 7, 9]); // Pasal 1 jangkar, bukan pencilan
+      expect(tanpaPencilan(new Set([20, 21, 22, 90]))).toEqual([20, 21, 22]);
+      expect(tanpaPencilan(new Set([20, 90]))).toEqual([20, 90]); // kurang dari dua yang tersisa: dipakai utuh
+      expect(tanpaPencilan(new Set([10, 30, 31, 32]))).toEqual([30, 31, 32]); // tetangga ke depan berjarak 20: pencilan
+      expect(tanpaPencilan(new Set([10, 15, 31, 32]))).toEqual([10, 15, 31, 32]); // jarak tepat 5 masih bertetangga
+      expect(tanpaPencilan(new Set())).toEqual([]);
+    });
+
+    it("rangkaianPasal: N dan banyaknya nomor yang ada, tanpa pencilan", () => {
+      expect(rangkaianPasal(new Set(rentang(1, 45)))).toEqual({ n: 45, ada: 45 });
+      expect(rangkaianPasal(new Set([...rentang(1, 45), 107]))).toEqual({ n: 45, ada: 45 });
+      expect(rangkaianPasal(new Set([1, 3, 4, 8, 11, 15, 16]))).toEqual({ n: 16, ada: 7 });
+      expect(rangkaianPasal(new Set([87]))).toEqual({ n: 87, ada: 1 });
+      expect(rangkaianPasal(new Set())).toEqual({ n: 0, ada: 0 });
+    });
+  });
+
+  describe("pasal yang hilang", () => {
+    it("rangkaian utuh: bersih, tanpa celah", () => {
+      expect(nilai(rentang(1, 20))).toMatchObject({ pasal_tertinggi: 20, celah_pasal: 0, struktur_tertanam: 0, vonis: "bersih" });
+    });
+
+    it("hilang satu atau dua dari duapuluh (< 3 nomor): masih bersih", () => {
+      expect(nilai(tanpa(20, 7))).toMatchObject({ celah_pasal: 1, vonis: "bersih" });
+      expect(nilai(tanpa(20, 7, 12))).toMatchObject({ celah_pasal: 2, vonis: "bersih" });
+    });
+
+    it("hilang sedikitnya tiga nomor dan 10%: ringan", () => {
+      expect(nilai(tanpa(20, 7, 12, 15))).toMatchObject({ celah_pasal: 3, vonis: "ringan" });
+      expect(nilai(tanpa(20, 7, 12, 15, 17))).toMatchObject({ celah_pasal: 4, vonis: "ringan" }); // 20%, tetapi baru empat nomor
+    });
+
+    it("hilang sedikitnya lima nomor dan 25%: berat", () => {
+      expect(nilai(tanpa(20, 3, 7, 12, 15, 17))).toMatchObject({ celah_pasal: 5, pasal_tertinggi: 20, vonis: "berat" });
+    });
+
+    it("naskah besar: ambang 10% dan 25% dihitung terhadap nomor tertinggi, bukan jumlah mutlak", () => {
+      expect(nilai(tanpa(100, 40, 41))).toMatchObject({ celah_pasal: 2, vonis: "bersih" });
+      expect(nilai(tanpa(100, 40, 41, 42, 43, 44))).toMatchObject({ celah_pasal: 5, vonis: "bersih" }); // 5%
+      expect(nilai(tanpa(100, ...rentang(40, 49)))).toMatchObject({ celah_pasal: 10, vonis: "ringan" }); // 10%
+      expect(nilai(tanpa(100, ...rentang(40, 63)))).toMatchObject({ celah_pasal: 24, vonis: "ringan" }); // 24%
+      expect(nilai(tanpa(100, ...rentang(40, 64)))).toMatchObject({ celah_pasal: 25, vonis: "berat" }); // 25%
+    });
+
+    it("rentang yang dihapus ('Pasal 49 sampai dengan Pasal 55 dihapus', tujuh nomor dari seratus) tak membuat ringan, apalagi berat", () => {
+      expect(nilai(tanpa(100, ...rentang(49, 55)))).toMatchObject({ celah_pasal: 7, vonis: "bersih" });
+    });
+
+    it("satu nomor pencilan (UU 5/1990: 45 pasal dan satu 'Pasal 107') tak membuat enam puluh nomor tampak hilang", () => {
+      expect(nilai([...rentang(1, 45), 107])).toMatchObject({ pasal_tertinggi: 45, celah_pasal: 0, vonis: "bersih" });
+    });
+
+    it("hanya satu nomor terbaca (UU 6/1958: 'Pasal 87' saja): berat", () => {
+      expect(nilai([87])).toMatchObject({ pasal_tertinggi: 87, celah_pasal: 86, vonis: "berat" });
+    });
+
+    it("pasal berangka romawi (undang-undang perubahan) tak dinilai dari rangkaian", () => {
+      expect(nilai(["I", "II", "III"])).toMatchObject({ pasal_tertinggi: 0, celah_pasal: 0, vonis: "bersih" });
+    });
+
+    it("sisipan (12A, 12B) tak menimbulkan celah", () => {
+      expect(nilai([...rentang(1, 12), "12A", "12B", ...rentang(13, 20)])).toMatchObject({ celah_pasal: 0, vonis: "bersih" });
+    });
+
+    it("Pasal 1 tak terbaca pada peraturan berpasal sepuluh atau lebih: sedikitnya ringan, walau selebihnya berurutan", () => {
+      expect(nilai(rentang(3, 30))).toMatchObject({ celah_pasal: 2, vonis: "ringan" }); // pasal 1 dan 2 hilang, di bawah ambang celah
+      expect(nilai(rentang(2, 12)).vonis).toBe("ringan");
+      expect(nilai(rentang(2, 8)).vonis).toBe("bersih"); // peraturan kecil: tak dinilai dari pasal 1
+    });
+
+    it("peraturan kecil dengan satu pasal hilang tak dihukum", () => {
+      expect(nilai([1, 3])).toMatchObject({ celah_pasal: 1, vonis: "bersih" });
+    });
+  });
+
+  describe("pembukaan yang tertelan ke dalam pasal", () => {
+    const pembukaan = "Mengingat: Pasal 20 Undang-Undang Dasar 1945; Dengan Persetujuan Bersama DEWAN PERWAKILAN RAKYAT REPUBLIK INDONESIA dan PRESIDEN REPUBLIK INDONESIA MEMUTUSKAN: Menetapkan: UNDANG-UNDANG TENTANG KELAUTAN.";
+
+    it("pembukaan di dalam isi sebuah pasal: berat, walau rangkaiannya utuh", () => {
+      const naskah = `${naskahDari(rentang(1, 10))}\nPasal 11\n${pembukaan}`;
+      const laporan = nilaiKualitasEkstraksi(naskah, uraikanPasal(naskah));
+      expect(laporan).toMatchObject({ celah_pasal: 0, struktur_tertanam: 1, vonis: "berat" });
+    });
+
+    it("bentuk rusak OCR ikut: MEMUTUSI(AN, huruf kapital dirapatkan, judul bab menempel", () => {
+      const ubah = (isi: string) => {
+        const naskah = `${naskahDari(rentang(1, 10))}\nPasal 11\n${isi}`;
+        return nilaiKualitasEkstraksi(naskah, uraikanPasal(naskah)).struktur_tertanam;
+      };
+      expect(ubah("... MEMUTUSI(AN:Menetapkan : UNDANG-UNDANG TENTANG KELAUTAN")).toBe(1);
+      // Tiap penanda cukup sendirian.
+      expect(ubah("sesuatu MEMUTUSI(AN: sesuatu lagi")).toBe(1);
+      expect(ubah("MEMUTUSKAN")).toBe(1);
+      expect(ubah("Menetapkan : PERATURAN PEMERINTAH TENTANG SAMPAH")).toBe(1);
+      expect(ubah("DEWAN PERWAKILAN RAKYAT REPUBLIK INDONESIA")).toBe(1);
+      expect(ubah("DEWANPERWAKILANRAKYATREPUBLIKINDONESIA dan Presiden")).toBe(1);
+      expect(ubah("UNDANG-UNDANG TENTANG KELAUTAN.BAB IKETENTUAN UMUMpasal I Dalam")).toBe(1);
+    });
+
+    it("rujukan biasa dan kutipan judul bab tak terhitung: huruf kecil-besar, dan 'BAB I KETENTUAN UMUM' berspasi pada undang-undang perubahan", () => {
+      const ubah = (isi: string) => {
+        const naskah = `${naskahDari(rentang(1, 10))}\nPasal 11\n${isi}`;
+        return nilaiKualitasEkstraksi(naskah, uraikanPasal(naskah)).struktur_tertanam;
+      };
+      expect(ubah("Ditetapkan dengan persetujuan bersama Dewan Perwakilan Rakyat Republik Indonesia dan Presiden.")).toBe(0);
+      expect(ubah("Hakim memutuskan perkara dalam waktu paling lama 30 hari.")).toBe(0);
+      expect(ubah("Judul BAB I KETENTUAN UMUM diubah sehingga berbunyi: BAB I KETENTUAN DASAR.")).toBe(0);
+    });
+
+    it("cuplikan nyata UU 32/2014 (Kelautan) di produksi: pembukaan masuk 'Pasal 20', dinilai berat", () => {
+      // Isi baris "2O" di D1 produksi (versi pengurai lama), dengan kata menempel dan salah baca OCR apa adanya.
+      const isi =
+        ", Pasal 22D ayat (1), Pasal 25A, dan Pasal 33 ayat(3) Undang-Undang Dasar Ncgara Republik Indonesia Tahun1945; " +
+        "MengingatDengan ... Dengan Persetujuan Bersama DEWAN PERWAKILAN RAKYAT REPUBLIK INDONESIA danPRESIDEN REPUBLIK INDONESIA " +
+        "MEMUTUSI(AN:Menetapkan : UNDANG-UNDANG TENTANG KELAUTAN.BAB IKETENTUAN UMUMpasal IDalam Undang-Undang ini yang dimaksud dengan:1. Laut adalah " +
+        "ruang perairan di muka bumi yangmenghubungkan daratan dengan daratan dan bentuk_bentuk alamiah lainnya";
+      const pasal = [{ nomor_pasal: "20", ayat: null, bab: null, bagian: null, isi, urutan: 0 }];
+      const laporan = nilaiKualitasEkstraksi(isi, pasal);
+      expect(laporan.struktur_tertanam).toBe(1);
+      expect(laporan.vonis).toBe("berat");
+    });
+  });
+
+  describe("catatan alasan", () => {
+    it("alasanKerapian dan catatanKerapian: hanya untuk vonis ringan atau berat", () => {
+      expect(alasanKerapian({ pasal_tertinggi: 77, celah_pasal: 28, struktur_tertanam: 1 })).toBe("28 dari 77 nomor pasal tak terbaca; 1 pasal memuat pembukaan atau judul bab");
+      expect(alasanKerapian({ pasal_tertinggi: 20, celah_pasal: 0, struktur_tertanam: 0 })).toBe("");
+      const berat = nilai(tanpa(20, 3, 7, 12, 15, 17));
+      expect(catatanKerapian(berat)).toBe("5 dari 20 nomor pasal tak terbaca");
+      expect(catatanKerapian(nilai(rentang(1, 20)))).toBe("");
+      // Vonis bersih tak mencatat apa pun, walau ada nomor yang hilang (di bawah ambang).
+      const kecil = nilai(tanpa(20, 7, 12));
+      expect(kecil.vonis).toBe("bersih");
+      expect(alasanKerapian(kecil)).toBe("2 dari 20 nomor pasal tak terbaca");
+      expect(catatanKerapian(kecil)).toBe("");
+    });
   });
 });
 

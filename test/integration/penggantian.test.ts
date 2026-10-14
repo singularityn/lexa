@@ -88,6 +88,21 @@ describe.skipIf(!sqliteAda)("penyimpanan hasil ekstraksi", () => {
       expect(await satu(l, `SELECT vonis, versi_parser FROM ekstraksi_log`)).toEqual({ vonis: "gagal", versi_parser: 0 });
     });
 
+    it("alasan vonis kerapian dicatat di ekstraksi_log.catatan: pasal hilang membuat berat; naskah utuh tak mencatat apa pun", async () => {
+      await ekstrak();
+      expect(await satu(l, `SELECT vonis, catatan FROM ekstraksi_log`)).toEqual({ vonis: "bersih", catatan: null });
+
+      // Pasal 1-20 tanpa 3, 7, 12, 15, 17: lima nomor dari duapuluh (25%).
+      await l.db.prepare(`DELETE FROM ekstraksi_log`).run();
+      await l.db.prepare(`DELETE FROM articles`).run();
+      const nomor = Array.from({ length: 20 }, (_, i) => i + 1).filter((n) => ![3, 7, 12, 15, 17].includes(n));
+      l.ai.markdown.set("99.pdf", nomor.map((n) => `Pasal ${n}\nIsi pasal ${n} yang cukup panjang dan bersih.`).join("\n"));
+      await ekstrak();
+      expect(await satu(l, `SELECT vonis, pasal_tertinggi, celah_pasal, catatan FROM ekstraksi_log`)).toEqual({
+        vonis: "berat", pasal_tertinggi: 20, celah_pasal: 5, catatan: "5 dari 20 nomor pasal tak terbaca",
+      });
+    });
+
     it("uraian ulang menggantikan Penjelasan lama, dan naskah tanpa Penjelasan mengosongkannya", async () => {
       await ekstrak();
       l.ai.markdown.set("99.pdf", BADAN);
@@ -244,22 +259,23 @@ describe.skipIf(!sqliteAda)("penyimpanan hasil ekstraksi", () => {
     it("pasal yang memendek melepas potongan lanjutannya, dan pasal yang lenyap melepas semua vektornya", async () => {
       const lama = [
         { id: `${URI}#pasal-1`, nomor: "1", isi: panjang(2900) }, // ceil(2900/500) = 6 potongan lanjutan paling banyak
-        { id: `${URI}#pasal-7`, nomor: "7", isi: panjang(1500) }, // lenyap
+        { id: `${URI}#pasal-3`, nomor: "3", isi: panjang(1500) }, // lenyap
       ];
       await tanamEkstraksi({ arsip: NASKAH, pasal: lama });
-      // Pasal 7 berganti nomor menjadi Pasal 8 (jumlah nomor tetap, jadi hasilnya menggantikan); pasal 1 memendek.
-      l.ai.markdown.set("99.pdf", `Pasal 1\n${panjang(1500)}\nPasal 8\nBaru.`);
+      // Pasal 3 berganti nomor menjadi Pasal 2 (jumlah nomor tetap, jadi hasilnya menggantikan); pasal 1 memendek. Nomornya berurutan:
+      // lompatan 1 ke 8 dinilai kehilangan enam pasal (vonis berat), dan hasil berat tak menggantikan apa pun.
+      l.ai.markdown.set("99.pdf", `Pasal 1\n${panjang(1500)}\nPasal 2\nBaru.`);
       await l.db.prepare(`UPDATE laws SET r2_text_key = NULL`).run(); // naskah baru, bukan uraian ulang
       await ekstrak();
       const hapus = await daftarHapus("vektor");
       // pasal-1 lama (2900 karakter, tiga potongan) kini dua potongan (1500 karakter): "~2" yang pasti ada, dan sisa batas atas
-      // sampai "~6", yatim; seluruh pasal-7 (beserta potongannya) yatim; "pasal-1" dan "pasal-1~1" masih dipakai.
+      // sampai "~6", yatim; seluruh pasal-3 (beserta potongannya) yatim; "pasal-1" dan "pasal-1~1" masih dipakai.
       expect(hapus).toEqual(
-        expect.arrayContaining([`${URI}#pasal-1~2`, `${URI}#pasal-1~6`, `${URI}#pasal-7`, `${URI}#pasal-7~1`, `${URI}#pasal-7~3`]),
+        expect.arrayContaining([`${URI}#pasal-1~2`, `${URI}#pasal-1~6`, `${URI}#pasal-3`, `${URI}#pasal-3~1`, `${URI}#pasal-3~3`]),
       );
       expect(hapus).not.toContain(`${URI}#pasal-1`);
       expect(hapus).not.toContain(`${URI}#pasal-1~1`);
-      expect(hapus).not.toContain(`${URI}#pasal-8`);
+      expect(hapus).not.toContain(`${URI}#pasal-2`);
     });
 
     it("idPotongan: tidak ada potongan lanjutan untuk pasal pendek; batas atas longgar untuk yang panjang", () => {

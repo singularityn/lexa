@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bacaKonfigGemini } from "../../src/worker/lib/gemini";
-import { bacaNaskahGemini, catatPembacaanAi, kesesuaianTeks, putuskanPenerimaanAi } from "../../src/worker/lib/ingest";
+import { bacaNaskahGemini, catatPembacaanAi, kesesuaianTeks, nomorLamaHilang, putuskanPenerimaanAi } from "../../src/worker/lib/ingest";
 import {
   baris, buatLingkungan, jalankanAntrean, json, kirim, konteksIngestUji, panggil, satu, sisipkan, sqliteAda, TOKEN_ADMIN, type Lingkungan,
 } from "./harness";
@@ -82,6 +82,51 @@ describe("putuskanPenerimaanAi", () => {
     });
     expect(putuskanPenerimaanAi({ ...dasar, nomorLama: 5, nomorBaru: 5 })).toEqual({ hasil: "dipakai" });
     expect(putuskanPenerimaanAi({ ...dasar, nomorLama: 5, nomorBaru: 9 })).toEqual({ hasil: "dipakai" });
+  });
+});
+
+describe("nomorLamaHilang dan putuskanPenerimaanAi dengan himpunan nomor", () => {
+  const dasar = { masalah: [] as string[], jumlahPasal: 5, vonis: "bersih" as const, nomorLama: 40, nomorBaru: 5 };
+
+  it("nomor tersimpan dibandingkan menurut bilangannya; sisipan, romawi, dan sampah tak berangka tak dihitung", () => {
+    expect(nomorLamaHilang(["1", "2", "3"], ["1", "2", "3"])).toEqual({ hilang: 0, dasar: 3 });
+    expect(nomorLamaHilang(["1", "2", "3"], ["1", "2"])).toEqual({ hilang: 1, dasar: 3 });
+    // "12A" sama dengan "12": bacaan yang memuat 12 tak kehilangan 12A.
+    expect(nomorLamaHilang(["11", "12", "12A", "13"], ["11", "12", "13"])).toEqual({ hilang: 0, dasar: 3 });
+    // Pasal berangka romawi (undang-undang perubahan) dan sisa OCR tak berangka tak punya bilangan.
+    expect(nomorLamaHilang(["I", "II", "III"], ["1"])).toEqual({ hilang: 0, dasar: 0 });
+    expect(nomorLamaHilang(["1", "2", "I", "pasai"], ["1", "2"])).toEqual({ hilang: 0, dasar: 2 });
+  });
+
+  it("pencilan pada yang tersimpan dibuang: satu 'Pasal 107' salah baca tak menjadi nomor yang 'hilang'", () => {
+    const tersimpan = [...Array.from({ length: 45 }, (_, i) => String(i + 1)), "107"];
+    const bacaan = Array.from({ length: 45 }, (_, i) => String(i + 1));
+    expect(nomorLamaHilang(tersimpan, bacaan)).toEqual({ hilang: 0, dasar: 45 });
+  });
+
+  it("nomor sampah dan Penjelasan sebagai pasal pada baris lama tak menggelembungkan: '2O' dibaca 2, nomor yang berulang satu kali", () => {
+    const tersimpan = ["2O", "3", "4", "6", "8", "9", "3", "4", "5", "6", "8", "I", "2", "7", "9", "10"];
+    const bacaan = Array.from({ length: 10 }, (_, i) => String(i + 1));
+    expect(nomorLamaHilang(tersimpan, bacaan)).toEqual({ hilang: 0, dasar: 9 });
+  });
+
+  it("dengan himpunan: boleh kehilangan paling banyak 5% nomor tersimpan; lebih dari itu dipertahankan, berapa pun jumlah barunya", () => {
+    expect(putuskanPenerimaanAi({ ...dasar, hilangDariLama: { hilang: 0, dasar: 40 } })).toEqual({ hasil: "dipakai" });
+    expect(putuskanPenerimaanAi({ ...dasar, hilangDariLama: { hilang: 2, dasar: 40 } })).toEqual({ hasil: "dipakai" }); // tepat 5%
+    expect(putuskanPenerimaanAi({ ...dasar, hilangDariLama: { hilang: 3, dasar: 40 } })).toEqual({
+      hasil: "dipertahankan", alasan: "dipertahankan: 3 dari 40 nomor pasal tersimpan tidak ada pada hasil Gemini",
+    });
+    // Himpunan kecil: tak ada toleransi. Kehilangan satu dari tiga nomor adalah kehilangan.
+    expect(putuskanPenerimaanAi({ ...dasar, hilangDariLama: { hilang: 1, dasar: 3 } })).toMatchObject({ hasil: "dipertahankan" });
+    // Jumlah yang menyusut tak lagi menentukan bila nomor tersimpan seluruhnya terbaca.
+    expect(putuskanPenerimaanAi({ ...dasar, nomorLama: 90, nomorBaru: 77, hilangDariLama: { hilang: 0, dasar: 77 } })).toEqual({ hasil: "dipakai" });
+  });
+
+  it("pemeriksaan lain tetap lebih dulu: bermasalah, tanpa pasal, mutu berat", () => {
+    const h = { hilang: 0, dasar: 10 };
+    expect(putuskanPenerimaanAi({ ...dasar, masalah: ["x"], hilangDariLama: h })).toMatchObject({ hasil: "ditolak" });
+    expect(putuskanPenerimaanAi({ ...dasar, jumlahPasal: 0, hilangDariLama: h })).toMatchObject({ hasil: "ditolak" });
+    expect(putuskanPenerimaanAi({ ...dasar, vonis: "berat", hilangDariLama: h })).toMatchObject({ hasil: "ditolak" });
   });
 });
 
@@ -264,9 +309,39 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
       expect(await teksR2(KUNCI_MD)).toBe("TEKS LAMA");
       expect(await teksR2(KUNCI_AI)).toContain("Pasal 2");
       expect(await pembacaan()).toMatchObject({
-        hasil: "dipertahankan", catatan: "dipertahankan: 10 nomor pasal tersimpan lebih banyak dari 3 hasil PDF", pasal_baru: 3,
+        hasil: "dipertahankan", catatan: "dipertahankan: 7 dari 10 nomor pasal tersimpan tidak ada pada hasil Gemini", pasal_baru: 3,
       });
       expect(l.antrean.kuras()).toEqual([]);
+    });
+
+    it("baris lama dari pengurai terdahulu (Penjelasan sebagai pasal, nomor sampah, pencilan) tak membuat bacaan yang lengkap dipertahankan", async () => {
+      // Kasus UU 32/2014 (Kelautan): baris tersimpan memuat Penjelasan sebagai pasal berulang, nomor rusak OCR ("2O", "I"), dan
+      // satu nomor pencilan, sehingga jumlah nomor berbeda (6) melebihi bacaan Gemini yang lengkap (3) padahal tak ada pasal yang hilang.
+      const lama = [
+        ...["1", "2", "3"].map((n) => ({ nomor: n, isi: `Isi lama pasal ${n}.` })),
+        { nomor: "2O", isi: "Isi lama pasal 2 dengan nomor rusak." },
+        { nomor: "I", isi: "Cukup jelas." },
+        { nomor: "107", isi: "Cukup jelas." },
+      ];
+      await tanamLama({ vonis: "ringan", pasal: lama, arsip: "TEKS LAMA" });
+      pasangGemini([ok(NASKAH_AI)]);
+
+      expect(await jalan()).toEqual({ diakui: 1, diulang: [] });
+
+      expect((await pasalTersimpan()).map((p) => p.nomor_pasal)).toEqual(["1", "2", "2", "3"]);
+      expect(await pembacaan()).toMatchObject({ hasil: "dipakai", pasal_baru: 3 });
+      expect(await teksR2(KUNCI_BAWAAN)).toBe("TEKS LAMA");
+    });
+
+    it("bacaan yang kehilangan pasal tersimpan (di luar toleransi 5%) tetap dipertahankan walau jumlahnya sama", async () => {
+      // Tiga nomor tersimpan (1, 7, 9) dan tiga nomor hasil Gemini (1, 2, 3): jumlahnya sama, tetapi 7 dan 9 hilang.
+      await tanamLama({ vonis: "ringan", pasal: ["1", "7", "9"].map((n) => ({ nomor: n, isi: `Isi lama pasal ${n}.` })), arsip: "TEKS LAMA" });
+      pasangGemini([ok(NASKAH_AI)]);
+
+      await jalan();
+
+      expect((await pasalTersimpan()).map((p) => p.nomor_pasal)).toEqual(["1", "7", "9"]);
+      expect(await pembacaan()).toMatchObject({ hasil: "dipertahankan", catatan: "dipertahankan: 2 dari 3 nomor pasal tersimpan tidak ada pada hasil Gemini" });
     });
 
     it("pembacaan bermasalah (halaman terlewat dibanding PDF) ditolak: tak ada pasal, log ekstraksi tetap, teks diarsipkan untuk diperiksa", async () => {
@@ -509,8 +584,9 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
       await tanamLama({ vonis: "ringan", pasal: lama });
       pasangGemini([ok(NASKAH_AI)]);
       const laporan = await json<Record<string, any>>(await uji({ uri: URI })); // eslint-disable-line @typescript-eslint/no-explicit-any
-      expect(laporan.keputusan).toEqual({ hasil: "dipertahankan", alasan: "dipertahankan: 6 nomor pasal tersimpan lebih banyak dari 3 hasil PDF" });
+      expect(laporan.keputusan).toEqual({ hasil: "dipertahankan", alasan: "dipertahankan: 3 dari 6 nomor pasal tersimpan tidak ada pada hasil Gemini" });
       expect(laporan.tersimpan).toMatchObject({ nomor_pasal_berbeda: 6, vonis: "ringan" });
+      expect(laporan.hilang_dari_tersimpan).toEqual({ hilang: 3, dasar: 6 });
     });
 
     it("percobaan kering tidak menimpa catatan percobaan sungguhan, tetapi memperbarui catatan 'uji' sebelumnya", async () => {
@@ -732,13 +808,16 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
 
     it("memuat keadaan jalur Gemini: terpasang atau tidak, anggaran hari ini, dan hitungan percobaan", async () => {
       delete l.env.GEMINI_API;
-      expect((await json<{ gemini: unknown }>(await panggil(l, "/api/impor/ringkasan", { headers: adm }))).gemini).toEqual({ terpasang: false, model: null, anggaran: null, pembacaan: {} });
+      expect((await json<{ gemini: unknown }>(await panggil(l, "/api/impor/ringkasan", { headers: adm }))).gemini).toMatchObject({ terpasang: false, model: null, anggaran: null, pembacaan: {} });
 
       l.env.GEMINI_API = KUNCI;
       await l.kv.put(`gemini:token:${new Date().toISOString().slice(0, 10)}`, "4200");
       await l.db.prepare(`INSERT INTO pembacaan_ai (frbr_uri, hasil) VALUES (?, 'dipakai')`).bind(URI).run();
       const g = (await json<{ gemini: Record<string, unknown> }>(await panggil(l, "/api/impor/ringkasan", { headers: adm }))).gemini;
-      expect(g).toEqual({ terpasang: true, model: "gemini-uji", anggaran: { terpakai: 4200, batas: 5_000_000 }, pembacaan: { dipakai: 1 } });
+      expect(g).toMatchObject({ terpasang: true, model: "gemini-uji", anggaran: { terpakai: 4200, batas: 5_000_000 }, pembacaan: { dipakai: 1 } });
+      // Ringkasan juga menyebut calon yang belum dicoba dan pengaturan Gemini otomatis (lihat gemini-otomatis.test.ts).
+      expect(g).toHaveProperty("calon_belum_dicoba");
+      expect(g).toHaveProperty("otomatis.mode", "mati");
     });
   });
 });

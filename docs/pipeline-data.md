@@ -56,7 +56,15 @@ di SQL dari `jenis` dan `tahun`; kolom `laws.isi_giliran` (urutan antrean sumber
 - **`uraikanPenjelasan`** (`lib/penjelasan.ts`) mengurai Penjelasan Umum dan penjelasan tiap pasal ke tabel `penjelasan`
   (migrasi 0007; `nomor_pasal` seperti `articles`, `Umum` untuk Penjelasan Umum). Penjelasan tidak masuk indeks pencarian,
   vektor, maupun hitungan pasal; `GET /api/laws/detail` menyajikannya dan antarmuka menampilkannya di bawah pasalnya.
-- **`nilaiKualitasEkstraksi`** menilai mutu teks bersih (`ekstraksi_log`: bersih, ringan, berat, tanpa_pasal, gagal).
+- **`nilaiKualitasEkstraksi`** menilai mutu teks bersih (`ekstraksi_log`: bersih, ringan, berat, tanpa_pasal, gagal). Sejak
+  versi pengurai 4 ia menghitung dua jenis kerusakan. Karakter: angka tercemar huruf, simbol liar, dan sisa catchword, per 1.000
+  karakter (≥ 2 `berat`, ≥ 0,5 `ringan`). Struktur: **pasal yang hilang** dari rangkaian 1..N (nomor tertinggi tanpa pencilan;
+  `celah_pasal`, `pasal_tertinggi`), dengan ≥ 5 nomor dan ≥ 25% `berat`, ≥ 3 nomor dan ≥ 10% `ringan`, dan **pembukaan yang
+  tertelan ke dalam pasal** ("DEWAN PERWAKILAN RAKYAT REPUBLIK INDONESIA", "MEMUTUSKAN", "BAB IKETENTUAN UMUM" menempel; `berat`);
+  Pasal 1 yang tak terbaca pada peraturan berpasal ≥ 10 sedikitnya `ringan`. Versi 1-3 hanya mengukur karakter dan buta
+  terhadap pindaian ber-OCR yang kehilangan pasalnya (UU 32/2014 Kelautan dinilai `bersih`, begitu pula UU 12/1967 yang hanya
+  terbaca 23 dari 58 pasal): dari 802 peraturan berpasal ≥ 10 yang dinilai `bersih` di produksi, 227 kehilangan seperempat
+  nomornya atau lebih (14 Okt 2026). Alasan vonis ditulis di `ekstraksi_log.catatan`.
 
 Hasilnya disimpan atomik. **Keputusan menimpa pasal yang tersimpan** (`putuskanPenggantian`) dihitung dengan *nomor pasal
 berbeda*, bukan baris: naskah lama yang menyimpan Penjelasan sebagai pasal kembar punya jauh lebih banyak baris daripada nomor.
@@ -64,7 +72,8 @@ Belum ada pasal: simpan. Hasil PDF baru: tidak menggantikan bila teks PDF rusak 
 sedikit (pindaian yang terbaca buruk tak boleh menimpa naskah yang lebih utuh), selain itu menggantikan, termasuk teks lama
 sumber yang sudah dihentikan. Uraian ulang arsip BPK yang sama menggantikan, kecuali nomornya menyusut lebih dari separuh pada
 naskah dengan sepuluh nomor atau lebih (lebih mungkin kerusakan pengurai daripada perbaikan). Pasal yang hasilnya persis sama
-tidak ditulis ulang dan tidak diindeks ulang. Vektor pasal yang lenyap atau memendek, dan arsip teks lama (`.txt`) yang
+tidak ditulis ulang dan tidak diindeks ulang. (Jalur Gemini memutuskan dengan aturannya sendiri, lihat bagian Gemini: nomor
+tersimpan yang tak ada pada bacaan baru, bukan jumlah nomor.) Vektor pasal yang lenyap atau memendek, dan arsip teks lama (`.txt`) yang
 digantikan, dicatat di `daftar_hapus`. Setiap hasil penguraian mencatat `ekstraksi_log.versi_parser` (`VERSI_PARSER` di
 `lib/bpk.ts`). Sesudahnya pengindeksan vektor dan, untuk naskah baru, ringkasan AI diantrekan.
 
@@ -72,11 +81,12 @@ digantikan, dicatat di `daftar_hapus`. Setiap hasil penguraian mencatat `ekstrak
 dan dikosongkan oleh pemeliharaan harian: 500 kunci R2 dan 1.000 id vektor per putaran, putaran demi putaran sampai kosong
 atau 8 menit habis. Barisnya baru dilepas sesudah objeknya terhapus.
 
-**Pemeliharaan harian** (`lib/pemeliharaan.ts`, Cron `0 19 * * *` = 02:00 WIB, satu-satunya pekerjaan terjadwal): mengosongkan
+**Pemeliharaan harian** (`lib/pemeliharaan.ts`, Cron `0 19 * * *` = 02:00 WIB): mengosongkan
 daftar hapus, memangkas `sync_log` yang lebih tua dari 90 hari, dan membuang sisa keadaan sumber lama dari `sync_state`
 (`katalog_*`, `diag:*`, `diagisi:*`, `statistik:*`, `log:*`, `pinjaman:*`, `offset:*`, `tik_*`, `denyut:*` selain denyut
 harian, `akses_isi`, `akses_diperiksa`, `pasal_tunda_sampai`, `jenis_awal`). Satu baris `sync_log` (`pemeliharaan`) ditulis
-hanya bila ada yang dikerjakan. Pemicu Cron lain (sisa konfigurasi lama) diabaikan.
+hanya bila ada yang dikerjakan. Pemicu Cron lain yang dikenal hanya Gemini otomatis (`*/15 * * * *`, lihat bagian Gemini);
+yang tak dikenal (sisa konfigurasi lama) diabaikan.
 
 **Status** (`GET /api/stats`, halaman `/status`). Kelengkapan per jenis diukur dari sisi panen: bertaut BPK, ber-PDF,
 berpasal, menunggu PDF, PDF belum terurai, serta jumlah "teks BPK" (arsip teks berekstensi `.md`) dan "teks lama" (tersimpan
@@ -361,7 +371,9 @@ sebagian mungkin kini terurai.
 
 Pertimbangan, data, biaya, dan risikonya ada di [analisis-gemini.md](analisis-gemini.md); yang di bawah ini cara kerja pipeline-nya.
 
-**Mengapa.** `toMarkdown` hanya membaca lapisan teks PDF. Pada 14 Okt 2026, 487 dari 2.630 peraturan yang dipanen (442
+**Mengapa.** `toMarkdown` hanya membaca lapisan teks PDF, dan pindaian ber-OCR kerap kehilangan atau menempelkan pasalnya.
+(Angka di bawah dihitung dengan pengukur lama; yang baru menambah peraturan `berat` yang kehilangan pasal, lihat
+`nilaiKualitasEkstraksi`.) Pada 14 Okt 2026, 487 dari 2.630 peraturan yang dipanen (442
 `tanpa_pasal`, 37 `berat`, 8 `gagal`) tak punya pasal yang layak: 42 pindaian modern yang nyaris tanpa lapisan teks, 37 yang
 lapisan teksnya rusak, dan 402 ketikan lama (1946-1979) yang bentuknya tak dikenali pengurai (sebagian pulih lewat mode
 `usang`, 161 hampir tanpa teks). Gemini membaca halaman sebagai gambar.
@@ -375,7 +387,11 @@ lapisan teksnya rusak, dan 402 ketikan lama (1946-1979) yang bentuknya tak diken
    dilanjutkan dari halaman terakhir yang utuh (maks 6 putaran). Penanda `=== HALAMAN n ===` menjadi `### Page n`.
 3. **Pagar** (`periksaTranskripsi`, `putuskanPenerimaanAi`): jawaban selesai normal; halaman berurutan dari 1 dan sebanding dengan
    jumlah halaman PDF; tak ada pengulangan berturut-turut; `[tidak terbaca]` tak lebih dari 1,5% kata; judul cocok dengan
-   peraturan yang dituju; pengurai menemukan pasal; mutu bukan `berat`; nomor pasal yang tersimpan tak berkurang.
+   peraturan yang dituju; pengurai menemukan pasal; mutu bukan `berat` (termasuk kehilangan seperempat nomor pasalnya); dan pasal
+   yang tersimpan tak berkurang: **nomor tersimpan yang tak ada pada bacaan baru** (`nomorLamaHilang`: menurut bilangan, pencilan
+   dan nomor non-angka dibuang, Pasal 1 selalu dihitung) paling banyak 5%. Memakai himpunan, bukan jumlah nomor berbeda, karena
+   baris tersimpan dari pengurai lama memuat Penjelasan sebagai pasal dan nomor sampah ("2O", "I") yang menggelembungkan
+   jumlah, dan bacaan Gemini yang lengkap akan tampak "kurang" lalu ditolak.
 4. Lolos: teks diarsipkan di `teks-ai/<uri>.md` lalu dipromosikan ke `teks/<uri>.md` (teks bawaan yang tertimpa disimpan sekali di
    `teks-bawaan/<uri>.md`); pasal, Penjelasan, log ekstraksi (catatan
    "dibaca Gemini (versi model)") ditulis seperti biasa; indeks vektor dan ringkasan diantrekan; `pembacaan_ai.hasil = 'dipakai'`.
@@ -397,10 +413,21 @@ menerima pesannya, kecuali `ulangi: true` atau `uri`; pesan ganda tidak membaca 
 atau model yang salah dilepas tanpa menandai dokumen (tetap layak dicoba setelah diperbaiki). Satu pemanggilan konsumer dibatasi 15
 menit, jadi pesan Gemini yang tersisa dalam satu batch dikembalikan ke antrean setelah 8 menit.
 
+**Otomatis di Cloudflare** (`lib/geminiOtomatis.ts`, Cron `*/15 * * * *`). Mati kecuali variabel `GEMINI_OTOMATIS` dipasang:
+`uji` (percobaan kering; hasilnya hanya di `pembacaan_ai` dan `teks-ai/`; berhenti sendiri setelah `GEMINI_OTOMATIS_UJI_MAKS`
+percobaan, bawaan 8) atau `ya` (membaca sungguhan). Tiap putaran mengantrekan paling banyak `GEMINI_OTOMATIS_BATAS` (bawaan 2,
+maks 10) peraturan ber-PDF yang vonisnya `tanpa_pasal`, `berat`, atau `gagal` (`GEMINI_OTOMATIS_VONIS`) dan belum pernah dicoba,
+menurut prioritas panen (UU dan PP terbaru lebih dulu). Putaran berikutnya menunggu semua pesan putaran sebelumnya tercatat di
+`pembacaan_ai`, atau 45 menit (keadaannya di KV `gemini:otomatis:putaran`), supaya antrean tak menumpuk. Pagar biayanya sama:
+anggaran token harian, satu peraturan satu pembacaan. Pesan dari Cron membawa `otomatis: true` (dan `uji: true` pada mode uji,
+yang dikerjakan `ujiGemini`; kolom `catatan` percobaan memuat keputusan, rangkaian pasal, dan kesesuaian dengan teks lama, cukup
+untuk menilai dari D1). `GET /api/impor/ringkasan` memuat blok `gemini.otomatis` dan `gemini.calon_belum_dicoba`.
+
 Memeriksa hasil di D1:
 
 ```sql
 SELECT hasil, COUNT(*) AS n, SUM(token_masuk + token_keluar + token_pikir) AS token FROM pembacaan_ai GROUP BY hasil;
+SELECT frbr_uri, vonis_baru, pasal_baru, catatan FROM pembacaan_ai WHERE hasil = 'uji' ORDER BY dicoba_at DESC;
 SELECT frbr_uri, hasil, catatan FROM pembacaan_ai WHERE hasil IN ('ditolak','gagal','dipertahankan') ORDER BY dicoba_at DESC LIMIT 50;
 ```
 
