@@ -188,10 +188,11 @@ describe("skrip panen BPK: panen PDF", () => {
     expect(await butuh()).toEqual(["/akn/id/act/pp/2025/99"]); // masih menunggu
   });
 
-  it("halaman tantangan Cloudflare dan berkas yang bukan PDF dikenali; sesudah lima kegagalan beruntun putaran berhenti", async () => {
+  it("halaman tantangan Cloudflare dan berkas yang bukan PDF (dan bukan tantangan) dikenali; sesudah lima kegagalan beruntun putaran berhenti", async () => {
     await kirimManifest([1, 2, 3, 4, 5, 6].map((n) => dokumen(600 + n, 10 + n)));
-    const halaman = { "/Download/6010/PP-601.pdf": { tipe: "text/html", isi: "<html>Just a moment...</html>" } };
-    halaman["/Details/601/pp-no-11-tahun-2025"] = { isi: rincian(601) }; // tautan ada, tetapi yang terunduh halaman tantangan
+    // Bukan PDF, dan isinya juga bukan halaman tantangan (judul/teksnya tak menyinggung "just a moment" dkk.) — berbeda dari lima lainnya di bawah.
+    const halaman = { "/Download/6010/PP-601.pdf": { tipe: "text/html", isi: "<html><head><title>Berkas tidak ditemukan</title></head><body>Tautan ini sudah usang.</body></html>" } };
+    halaman["/Details/601/pp-no-11-tahun-2025"] = { isi: rincian(601) }; // tautan ada, tetapi yang terunduh bukan PDF
     for (const n of [2, 3, 4, 5, 6]) halaman[`/Details/60${n}/pp-no-${10 + n}-tahun-2025`] = { isi: rincian(600 + n, { tantangan: true }) };
     await pasangBpk(halaman);
     const hasil = await jalankan({ batas: 10 });
@@ -214,6 +215,57 @@ describe("skrip panen BPK: panen PDF", () => {
     expect(percobaan).toBe(3);
     expect(hasil.hasil.find((b) => b.uri.endsWith("/99")).hasil).toContain("diunggah");
     expect(hasil.hasil.find((b) => b.uri.endsWith("/98")).hasil).toContain("tantangan_cloudflare");
+  });
+
+  // Temuan produksi 14 Okt 2026: tautan PDF langsung yang disimpan sewaktu jelajah bisa usang (BPK memindahkan berkas,
+  // atau hasil pencariannya sendiri sudah tak mutakhir). Sebelum perbaikan, kegagalan "bukan PDF" pada tautan itu SELALU
+  // dianggap masalah sesi (kata "tantangan" ada di teks penjelasnya) dan halaman rincian tak pernah dicoba — mengunci
+  // peraturan itu di urutan pertama antrean untuk selamanya, karena kegagalannya tak pernah tercatat di Lexa.
+  describe("tautan PDF langsung dari daftar yang usang", () => {
+    const bpkSatuKartu = (unduhanLangsung, tambahan = {}) => ({
+      "/Jenis": { isi: HALAMAN_JENIS },
+      "/Search?jenis=10": { isi: daftarHalaman(kartu(701, 1), null, "1") },
+      "/Search?jenis=8": { isi: daftarHalaman("") },
+      "/Search?jenis=9": { isi: daftarHalaman("") },
+      "/Download/7010/PP-1-2024.pdf": unduhanLangsung, // tautan dari kartu daftar
+      ...tambahan,
+    });
+
+    it("bukan PDF dan bukan halaman tantangan: tetap dicoba lewat halaman rincian, dan berhasil", async () => {
+      await kirimManifest([tanpaTautan(1)]);
+      await pasangBpk(bpkSatuKartu(
+        { tipe: "text/html", isi: "<html><head><title>Berkas tidak ditemukan</title></head><body>Tautan ini sudah usang.</body></html>" },
+        { "/Details/701/pp-no-1-tahun-2024": { isi: rincian(701) }, "/Download/7010/PP-701.pdf": { tipe: "application/pdf", isi: PDF } },
+      ));
+      const hasil = await jalankan({ jelajah: true, batas: 10 });
+      expect(hasil.jelajah).toMatchObject({ ditautkan: 1 });
+      expect(hasil.ringkas).toMatchObject({ diproses: 1, diunggah: 1, gagal: 0 });
+      expect(diminta).toContain("/Details/701/pp-no-1-tahun-2024"); // jatuh ke rincian karena tautan langsung usang
+      expect((await status("/akn/id/act/pp/2024/1")).ada_pdf).toBe(true);
+    });
+
+    it("halaman tantangan sungguhan (bukan 403): TIDAK mencoba halaman rincian, langsung dilaporkan sebagai sesi bermasalah", async () => {
+      await kirimManifest([tanpaTautan(1)]);
+      await pasangBpk(bpkSatuKartu(
+        { tipe: "text/html", isi: "<html><head><title>Just a moment...</title></head><body>Verify you are human before continuing.</body></html>" },
+        { "/Details/701/pp-no-1-tahun-2024": { isi: rincian(701) }, "/Download/7010/PP-701.pdf": { tipe: "application/pdf", isi: PDF } },
+      ));
+      const hasil = await jalankan({ jelajah: true, batas: 10 });
+      expect(hasil.ringkas).toMatchObject({ diproses: 1, diunggah: 0, gagal: 1 });
+      expect(hasil.hasil[0].hasil).toContain("tantangan_cloudflare");
+      expect(diminta).not.toContain("/Details/701/pp-no-1-tahun-2024"); // sesi jelas bermasalah: rincian pun akan gagal sama
+    });
+
+    it("403 pada tautan langsung: juga tidak mencoba halaman rincian", async () => {
+      await kirimManifest([tanpaTautan(1)]);
+      await pasangBpk(bpkSatuKartu(
+        { status: 403, isi: "<html>Access denied</html>" },
+        { "/Details/701/pp-no-1-tahun-2024": { isi: rincian(701) }, "/Download/7010/PP-701.pdf": { tipe: "application/pdf", isi: PDF } },
+      ));
+      const hasil = await jalankan({ jelajah: true, batas: 10 });
+      expect(hasil.hasil[0].hasil).toContain("tantangan_cloudflare");
+      expect(diminta).not.toContain("/Details/701/pp-no-1-tahun-2024");
+    });
   });
 
   it("peraturan tanpa tautan BPK dilewati, bukan digagalkan", async () => {

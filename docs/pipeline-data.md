@@ -243,8 +243,8 @@ Opsi lengkap (semuanya opsional):
 ### Bila tidak berjalan seperti yang diharapkan
 
 Skrip ditulis menurut susunan BPK yang diketahui (alamat `/Details/<id>/<slug>` dan `/Download/<id>/<berkas>`, daftar
-`/Search?jenis=<n>&page=<n>`) dan **belum pernah dijalankan pada situs sungguhan** (situs itu tak terjangkau dari lingkungan
-pengembangan). Yang berguna dikirim balik:
+`/Search?jenis=<n>&page=<n>`); dijalankan pertama kali pada situs sungguhan oleh pemilik 14 Okt 2026 (lihat di bawah).
+Yang berguna dikirim balik bila ada yang tak sesuai:
 
 - Di halaman daftar BPK (mis. `https://peraturan.bpk.go.id/Search?jenis=10`): `window.LEXA_PANEN = { periksa: true }` lalu
   tempel skrip. Ia mencetak jumlah hasil yang disebut BPK, sepuluh entri pertama (id, slug, teks, tautan PDF di kartu),
@@ -261,10 +261,31 @@ Pesan galat yang lazim:
 | `Lexa 401` | token salah; skrip berhenti sebelum menyentuh BPK |
 | `Lexa tak terjangkau … CORS` | alamat Lexa salah, atau Lexa belum men-deploy versi yang mengizinkan origin BPK |
 | `Lexa belum menjalankan versi yang mendukung penjelajahan` | deploy terbaru belum selesai (404 pada `/api/impor/ringkasan`) |
-| `tantangan_cloudflare` | sesi BPK kedaluwarsa atau diblokir; muat ulang tab, selesaikan tantangan, jalankan lagi |
-| `yang terunduh bukan PDF` | idem (halaman tantangan menggantikan berkasnya) |
+| `tantangan_cloudflare` | sesi BPK kedaluwarsa atau diblokir (dikenali dari status 403, atau isi halaman yang memang begitu); muat ulang tab, selesaikan tantangan, jalankan lagi. Dokumen ini TIDAK dicoba lewat halaman rincian — percobaan itu akan gagal karena sebab yang sama |
+| `berkas yang terunduh bukan PDF dan bukan halaman tantangan yang dikenali` | tautan usang atau berkas dipindahkan BPK — BUKAN masalah sesi. Skrip sudah mencoba halaman rincian sendiri (lihat "tautan PDF langsung … usang" di bawah); pesan ini berarti itu juga gagal. Jalankan `{ periksa: true }` di halaman rincian dokumen itu (alamatnya: `GET /api/dokumen/status?uri=<frbr_uri>` lewat Lexa, field `bpk_url`) |
 | `tautan PDF tak ditemukan di halaman rincian` | halaman tak berformat yang dikenal (tanpa tabel metadata maupun tautan unduhan); jalankan `periksa` di halaman itu |
-| `5 kegagalan beruntun` | skrip berhenti sendiri; periksa sesi BPK |
+| `5 kegagalan beruntun` | skrip berhenti sendiri; periksa sesi BPK dulu (pesan kegagalan pertama menunjukkan apakah ini sungguh sesi atau bukan — lihat dua baris di atas) |
+
+**Tautan PDF langsung dari daftar yang usang (ditemukan dan diperbaiki 14 Okt 2026).** Tautan unduhan yang disimpan sewaktu
+penjelajahan (`jelajah`) kadang usang — BPK memindahkan berkas, atau hasil pencariannya sendiri sudah tak mutakhir. Sebelum
+perbaikan, kegagalan tautan itu SELALU dianggap masalah sesi (kata "tantangan" kebetulan ada di teks penjelasnya) sehingga
+halaman rincian tak pernah dicoba sebagai jalur kedua — mengunci dokumen itu di urutan pertama antrean `butuh-teks`
+**untuk selamanya**, karena kegagalan yang terjadi di peramban tak pernah tercatat di Lexa (PDF tak pernah terunggah, jadi
+dokumen yang sama selalu diminta lagi di percobaan berikutnya). Ini ditemukan lewat laporan pemilik: `GAGAL: yang terunduh
+bukan PDF` berulang pada UU 6/2023 (Cipta Kerja), yang selalu nomor satu di antrean tanpa satu dokumen pun di depannya.
+
+Sekarang skrip membedakan tegas: hanya kegagalan yang SUNGGUH dikenali sebagai tantangan (status 403, atau isi halamannya
+memang begitu) yang menyerah langsung; tautan yang gagal karena sebab lain (usang, dipindahkan) tetap dicoba lewat halaman
+rincian sebelum dilaporkan gagal. **Tempel ulang skrip dari repo** (versi sebelumnya tak membawa perbaikan ini) sebelum
+melanjutkan panen yang macet. Bila tempel ulang saja belum memulihkan satu dokumen tertentu, tandai `tanpa-berkas` secara
+manual agar yang lain tak ikut tertahan, sambil diselidiki lewat `{ periksa: true }` di halaman rinciannya:
+
+```js
+fetch('https://lexa.<akun>.workers.dev/api/impor/tanpa-berkas', {
+  method: 'POST', headers: { 'x-admin-token': T, 'content-type': 'application/json' },
+  body: JSON.stringify({ uris: ['/akn/id/act/uu/2023/6'], alasan: 'unduhan gagal berulang, diselidiki manual' }),
+}).then(r => r.json()).then(console.log)
+```
 
 ### Biaya dan batas
 

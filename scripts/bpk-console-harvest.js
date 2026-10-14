@@ -93,6 +93,20 @@
   var teks = function (el) { return (el && el.textContent ? el.textContent : "").replace(/\s+/g, " ").trim(); };
   var pesan = function (e) { return e && e.message ? e.message : String(e); };
   var angka = function (n) { return Number(n || 0).toLocaleString("id-ID"); };
+  /**
+   * Apakah galat ini menandakan sesi/akses BPK bermasalah (lewat properti `sesi` yang ditandai tegas di titik lempar,
+   * bukan dengan mencari kata dalam teks galat). Dipakai untuk memutuskan apakah mencoba jalur lain (halaman rincian,
+   * tautan berikutnya) ada gunanya, atau sesinya memang perlu diselesaikan dulu di tab ini.
+   *
+   * Sebelumnya ini mencocokkan `/tantangan|dihentikan|HTTP (?:401|403|429)/` pada TEKS galat — tetapi galat "yang
+   * terunduh bukan PDF (sesi BPK kedaluwarsa atau halaman tantangan)" sendiri memuat kata "tantangan" sebagai bagian
+   * dari tebakan yang ditulis untuk pembaca manusia, bukan diagnosis yang pasti. Akibatnya kecocokan itu membuat kode
+   * SELALU menyerah tanpa mencoba halaman rincian — persis pada kasus yang paling butuh percobaan itu: tautan
+   * langsung dari daftar yang sudah usang. Di produksi ini mengunci satu dokumen (UU 6/2023) di urutan pertama
+   * antrean selamanya, karena kegagalannya tak pernah tercatat di Lexa (PDF tak pernah terunggah) sehingga dokumen
+   * yang sama diminta lagi di percobaan berikutnya.
+   */
+  function kegagalanSesi(e) { return Boolean(e) && (e.sesi === true || pesan(e) === "dihentikan"); }
 
   /** Menunggu sambil memeriksa tombol berhenti tiap 250 ms. */
   async function tungguSopan(ms) {
@@ -344,39 +358,73 @@
     return POLA_TANTANGAN.test(awal);
   }
 
+  /** Galat tantangan Cloudflare yang sudah ditandai `.sesi = true` (lihat kegagalanSesi di atas). */
+  function galatTantangan() {
+    var e = new Error("tantangan_cloudflare: selesaikan tantangan di tab ini (muat ulang halaman), lalu jalankan lagi");
+    e.sesi = true;
+    return e;
+  }
+
+  /**
+   * Seperti halamanTantangan, tetapi untuk respons unduhan PDF yang ternyata bukan PDF: dibaca ulang sebagai dokumen
+   * HANYA bila content-type-nya HTML (respons PDF sungguhan tak pernah begini, jadi ini tak menambah biaya pada
+   * kasus normal) dan diuji dengan heuristik yang sama.
+   */
+  function tantanganDariIsi(bytes, contentType) {
+    if (!/html/i.test(contentType || "")) return false;
+    try {
+      var teks = new TextDecoder("utf-8", { fatal: false }).decode(bytes.slice(0, 4000));
+      return halamanTantangan(new DOMParser().parseFromString(teks, "text/html"));
+    } catch (e) {
+      return false;
+    }
+  }
+
   /** Halaman HTML sebagai dokumen. Melempar bila galat HTTP atau yang diterima halaman tantangan. */
   async function bacaHalaman(ctx, url) {
     var res = await ambil(ctx, url, { credentials: "include", headers: { Accept: "text/html" } });
     var html = await res.text();
-    var tantangan = "tantangan_cloudflare: selesaikan tantangan di tab ini (muat ulang halaman), lalu jalankan lagi";
     var doc = new DOMParser().parseFromString(html, "text/html");
-    if (res.status === 403 || (res.status === 503 && halamanTantangan(doc))) throw new Error(tantangan);
+    if (res.status === 403 || (res.status === 503 && halamanTantangan(doc))) throw galatTantangan();
     if (!res.ok) throw new Error("HTTP " + res.status + " pada " + jalur(url));
     // Halaman yang tampak seperti tantangan tetapi memuat isi situs (tautan rincian, unduhan, tabel metadata) adalah halaman biasa.
-    if (halamanTantangan(doc) && !doc.querySelector("a[href*='ownload']") && !doc.querySelector("a[href*='Details']") && Object.keys(bacaMetadata(doc)).length < 2) throw new Error(tantangan);
+    if (halamanTantangan(doc) && !doc.querySelector("a[href*='ownload']") && !doc.querySelector("a[href*='Details']") && Object.keys(bacaMetadata(doc)).length < 2) throw galatTantangan();
     return doc;
   }
 
   function jalur(url) { try { var u = new URL(url); return u.pathname + u.search; } catch (e) { return url; } }
 
-  /** Unduh PDF sebagai ArrayBuffer; menolak yang bukan PDF (mis. halaman tantangan). */
+  /**
+   * Unduh PDF sebagai ArrayBuffer; menolak yang bukan PDF.
+   *
+   * Respons 200 yang bukan PDF TIDAK selalu berarti sesi bermasalah — bisa juga tautan yang sudah usang (hasil
+   * pencarian lama, berkas dipindahkan BPK) sementara sesinya sendiri baik-baik saja. Hanya yang sungguh dikenali
+   * sebagai halaman tantangan (lewat 403, atau isinya memang begitu) ditandai `.sesi`; sisanya dilaporkan apa adanya
+   * dan TIDAK menghentikan percobaan jalur lain (lihat kegagalanSesi).
+   */
   async function unduhPdf(ctx, url) {
     var res = await ambil(ctx, url, { credentials: "include" });
-    if (res.status === 403) throw new Error("tantangan_cloudflare: selesaikan tantangan di tab ini (muat ulang halaman), lalu jalankan lagi");
-    if (!res.ok) throw new Error("HTTP " + res.status + " saat mengunduh PDF");
+    if (res.status === 403) throw galatTantangan();
+    if (!res.ok) {
+      var g = new Error("HTTP " + res.status + " saat mengunduh PDF");
+      if (res.status === 401 || res.status === 429) g.sesi = true;
+      throw g;
+    }
     var isi = await res.arrayBuffer();
-    var kepala = String.fromCharCode.apply(null, new Uint8Array(isi.slice(0, 5)));
-    if (kepala !== "%PDF-") throw new Error("yang terunduh bukan PDF (sesi BPK kedaluwarsa atau halaman tantangan)");
-    return isi;
+    var bytes = new Uint8Array(isi);
+    var kepala = String.fromCharCode.apply(null, bytes.slice(0, 5));
+    if (kepala === "%PDF-") return isi;
+    if (tantanganDariIsi(bytes, res.headers.get("content-type"))) throw galatTantangan();
+    throw new Error("berkas yang terunduh bukan PDF dan bukan halaman tantangan yang dikenali (tautan mungkin usang atau berkas dipindahkan)");
   }
 
-  /** Coba tiga tautan PDF teratas sampai ada yang benar-benar PDF; kegagalan sesi (tantangan, 429) langsung dilaporkan. */
+  /** Coba tiga tautan PDF teratas sampai ada yang benar-benar PDF; kegagalan sesi (tantangan, 401/403/429) langsung dilaporkan. */
   async function unduhDariDaftar(ctx, tautan) {
     var galat = null;
     for (var k = 0; k < Math.min(tautan.length, 3); k++) {
       try { return await unduhPdf(ctx, tautan[k].url); } catch (e) {
         galat = e;
-        if (/tantangan|dihentikan|HTTP (?:401|403|429)/.test(pesan(e))) break;
+        if (kegagalanSesi(e)) break;
       }
     }
     throw galat;
@@ -426,7 +474,7 @@
     var coba = [asal + "/Jenis", asal + "/"];
     for (var i = 0; i < coba.length && !jenis.length; i++) {
       try { jenis = temukanJenis(await bacaHalaman(ctx, coba[i]), coba[i]); } catch (e) {
-        if (/tantangan|dihentikan/.test(pesan(e))) throw e;
+        if (kegagalanSesi(e)) throw e;
         console.warn("[Lexa panen] " + jalur(coba[i]) + " tak terbaca: " + pesan(e));
       }
     }
@@ -465,7 +513,7 @@
         kunjungan[url] = true;
         var doc;
         try { doc = await bacaHalaman(ctx, url); } catch (e) {
-          if (/dihentikan/.test(pesan(e))) break;
+          if (pesan(e) === "dihentikan") break;
           jel.berhentiKarena = pesan(e) + " (" + seed.kode + ", halaman " + halaman + ")";
           console.error("[Lexa panen] " + jel.berhentiKarena);
           return jel;
@@ -563,7 +611,7 @@
     if (langsung && !ctx.opsi.rincian) {
       try { return { pdf: await unduhPdf(ctx, langsung) }; } catch (e) {
         // Tautan dari daftar usang atau ditolak: coba lewat halaman rincian, kecuali yang menandakan sesi bermasalah.
-        if (!item.detail_url || /tantangan|dihentikan|HTTP (?:401|403|429)/.test(pesan(e))) throw e;
+        if (!item.detail_url || kegagalanSesi(e)) throw e;
       }
     }
     if (!item.detail_url) return { lewati: "tak ada tautan BPK" };
