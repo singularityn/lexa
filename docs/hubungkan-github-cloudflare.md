@@ -276,21 +276,26 @@ kunci, model, atau dokumen, dan tak ada hubungannya dengan negara tempat Anda ti
 
 ### Menjalankannya otomatis di Cloudflare (tanpa konsol)
 
-Cron 15 menit (`*/15 * * * *`) dapat mengantrekan pembacaan sendiri, memakai secret `GEMINI_API` milik Worker. Ia mati sampai Anda
-menambah variabel teks `GEMINI_OTOMATIS` di dashboard:
+Alur Lexa: panen BPK mengunggah PDF ke R2 (konversi bawaan segera memberi teks sementara), lalu Cron 15 menit (`*/15 * * * *`)
+membaca ulang semua PDF dengan Gemini dan menggantikan teks sementara itu. Ia memakai secret `GEMINI_API` milik Worker, dan mati sampai
+Anda menambah variabel teks `GEMINI_OTOMATIS` di dashboard:
 
 1. **Uraikan ulang dulu** supaya vonis semua peraturan jujur: skrip panen `window.LEXA_PANEN = { usang: true }` (sekali, tanpa biaya
    Gemini). Vonis `berat` kini juga berarti pasal hilang dari rangkaian atau pembukaan tertelan ke dalam pasal.
-2. `GEMINI_OTOMATIS` = `uji`. Tiap 15 menit dua peraturan yang paling dicari (UU dan PP terbaru lebih dulu) yang vonisnya
-   `tanpa_pasal`, `berat`, atau `gagal` dibaca Gemini sebagai percobaan kering: **tak ada pasal yang ditulis**. Berhenti sendiri setelah
-   8 percobaan (`GEMINI_OTOMATIS_UJI_MAKS`). Hasilnya di D1: `SELECT frbr_uri, vonis_baru, pasal_baru, catatan FROM pembacaan_ai WHERE
+2. `GEMINI_OTOMATIS` = `uji`. Tiap 15 menit dua peraturan yang teksnya bermasalah (vonis `tanpa_pasal`, `berat`, `gagal`; UU dan PP
+   terbaru lebih dulu) dibaca Gemini sebagai percobaan kering: **tak ada pasal yang ditulis**. Berhenti sendiri setelah 8 percobaan
+   (`GEMINI_OTOMATIS_UJI_MAKS`). Hasilnya di D1: `SELECT frbr_uri, vonis_baru, pasal_baru, catatan FROM pembacaan_ai WHERE
    hasil = 'uji'` (catatannya memuat keputusan, rangkaian pasal, dan kesesuaian dengan teks lama), dan teksnya di R2 `teks-ai/...`.
-3. Bila hasilnya baik, ubah menjadi `ya`: peraturan berikutnya dibaca sungguhan dan, bila lolos pagar, menggantikan pasal yang tersimpan.
-   `GEMINI_OTOMATIS_BATAS` (bawaan 2, maks 10) mengatur banyaknya per putaran; anggaran token harian (`GEMINI_BATAS_HARIAN`) tetap
-   menjadi batas biaya. Hapus variabelnya (atau kosongkan) untuk mematikan.
+3. Bila hasilnya baik, ubah menjadi `ya`: SEMUA peraturan ber-PDF yang belum dibaca Gemini dibaca sungguhan, yang teksnya paling rusak
+   lebih dulu (`tanpa_pasal`, `gagal`, `berat`, `ringan`, lalu `bersih`), dan yang lolos pagar menggantikan pasal yang tersimpan.
+   `GEMINI_OTOMATIS_BATAS` (bawaan 5 pada `ya`, maks 20) mengatur banyaknya per putaran; anggaran token harian (`GEMINI_BATAS_HARIAN`)
+   menjadi batas biaya; `GEMINI_OTOMATIS_VONIS` mempersempit. Hapus variabelnya (atau kosongkan) untuk mematikan; yang sudah terbaca
+   tetap.
 
-Putaran berikutnya menunggu semua peraturan putaran sebelumnya tercatat di `pembacaan_ai` (atau 45 menit berlalu), jadi antrean
-tak menumpuk. Keadaannya terlihat di `GET /api/impor/ringkasan` (blok `gemini`: `otomatis`, `calon_belum_dicoba`, `anggaran`).
+Perkiraan biaya membaca seluruh korpus (±66.000 halaman) ada di [analisis-gemini.md](analisis-gemini.md#perkiraan-biaya). Putaran
+berikutnya menunggu semua peraturan putaran sebelumnya tercatat di `pembacaan_ai` (atau 45 menit berlalu), jadi antrean tak
+menumpuk. Keadaannya terlihat di `GET /api/impor/ringkasan` (blok `gemini`: `otomatis`, `calon_belum_dicoba`, `belum_dibaca`,
+`anggaran`) dan di awal setiap jalan skrip konsol.
 
 ## Jebakan yang perlu diingat
 

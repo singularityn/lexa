@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  BATAS_OTOMATIS_BAWAAN, bacaKonfigOtomatis, jalankanGeminiOtomatis, KUNCI_PUTARAN, MAKS_UMUR_PUTARAN_MS, UJI_OTOMATIS_BAWAAN,
+  BATAS_OTOMATIS_BAWAAN, BATAS_OTOMATIS_MAKS, BATAS_YA_BAWAAN, bacaKonfigOtomatis, jalankanGeminiOtomatis, KUNCI_PUTARAN, MAKS_UMUR_PUTARAN_MS, UJI_OTOMATIS_BAWAAN,
 } from "../../src/worker/lib/geminiOtomatis";
 import { CRON_GEMINI as CRON_KODE } from "../../src/worker/lib/jadwal";
 import {
@@ -28,9 +28,20 @@ describe("bacaKonfigOtomatis", () => {
   it("batas dan maksimum uji: bawaan, dibatasi, dan nilai rusak dibaca bawaan", () => {
     expect(bacaKonfigOtomatis({})).toMatchObject({ batas: BATAS_OTOMATIS_BAWAAN, ujiMaks: UJI_OTOMATIS_BAWAAN, vonis: ["tanpa_pasal", "berat", "gagal"] });
     expect(bacaKonfigOtomatis({ GEMINI_OTOMATIS_BATAS: "5", GEMINI_OTOMATIS_UJI_MAKS: "3" })).toMatchObject({ batas: 5, ujiMaks: 3 });
-    expect(bacaKonfigOtomatis({ GEMINI_OTOMATIS_BATAS: "500", GEMINI_OTOMATIS_UJI_MAKS: "9999" })).toMatchObject({ batas: 10, ujiMaks: 50 });
+    expect(bacaKonfigOtomatis({ GEMINI_OTOMATIS_BATAS: "500", GEMINI_OTOMATIS_UJI_MAKS: "9999" })).toMatchObject({ batas: 20, ujiMaks: 50 });
+    expect(BATAS_OTOMATIS_MAKS).toBe(20);
     expect(bacaKonfigOtomatis({ GEMINI_OTOMATIS_BATAS: "0", GEMINI_OTOMATIS_UJI_MAKS: "-4" })).toMatchObject({ batas: 1, ujiMaks: 1 });
     expect(bacaKonfigOtomatis({ GEMINI_OTOMATIS_BATAS: "banyak", GEMINI_OTOMATIS_UJI_MAKS: "" })).toMatchObject({ batas: BATAS_OTOMATIS_BAWAAN, ujiMaks: UJI_OTOMATIS_BAWAAN });
+  });
+
+  it("bawaan mengikuti mode: percobaan kering 2 peraturan yang bermasalah, pembacaan sungguhan 5 peraturan dari semua vonis (terburuk lebih dulu)", () => {
+    expect(BATAS_OTOMATIS_BAWAAN).toBe(2);
+    expect(BATAS_YA_BAWAAN).toBe(5);
+    expect(bacaKonfigOtomatis({ GEMINI_OTOMATIS: "uji" })).toMatchObject({ mode: "uji", batas: 2, vonis: ["tanpa_pasal", "berat", "gagal"] });
+    expect(bacaKonfigOtomatis({ GEMINI_OTOMATIS: "ya" })).toMatchObject({ mode: "ya", batas: 5, vonis: ["tanpa_pasal", "gagal", "berat", "ringan", "bersih"] });
+    // Yang diminta pemilik tetap menang atas bawaan mode mana pun.
+    expect(bacaKonfigOtomatis({ GEMINI_OTOMATIS: "ya", GEMINI_OTOMATIS_BATAS: "12", GEMINI_OTOMATIS_VONIS: "berat" })).toMatchObject({ batas: 12, vonis: ["berat"] });
+    expect(bacaKonfigOtomatis({ GEMINI_OTOMATIS: "uji", GEMINI_OTOMATIS_VONIS: "ringan,bersih" })).toMatchObject({ batas: 2, vonis: ["ringan", "bersih"] });
   });
 
   it("vonis calon: daftar dari variabel, yang tak sah dibuang, kosong atau semuanya tak sah memakai bawaan", () => {
@@ -298,15 +309,58 @@ describe.skipIf(!sqliteAda)("Gemini otomatis (Cron)", () => {
       expect(await satu(l, `SELECT vonis FROM ekstraksi_log WHERE frbr_uri = '/akn/id/act/pp/2025/10'`)).toEqual({ vonis: "bersih" });
     });
 
+    it("tanpa pembatas vonis, SEMUA peraturan ber-PDF menjadi calon, yang terburuk lebih dulu (tanpa_pasal, gagal, berat, ringan, bersih), lalu prioritas panen", async () => {
+      l.env.GEMINI_OTOMATIS_BATAS = "7";
+      await jalankanCron(l, CRON_GEMINI);
+      expect(antreanKeluar().map((p) => p.frbr_uri)).toEqual([
+        "/akn/id/act/pp/2024/20", // tanpa_pasal
+        "/akn/id/act/pp/2020/30", // gagal
+        "/akn/id/act/uu/2000/7", //  berat: UU lebih dulu daripada PP
+        "/akn/id/act/pp/2025/10", // berat: lalu tahun terbaru
+        "/akn/id/act/pp/2024/9", //  berat
+        "/akn/id/act/pp/2022/60", // ringan
+        "/akn/id/act/pp/2023/50", // bersih
+      ]);
+    });
+
+    it("batas bawaan 5 per putaran: yang paling rusak lebih dulu, sisanya di putaran berikutnya", async () => {
+      await jalankanCron(l, CRON_GEMINI);
+      expect(antreanKeluar().map((p) => p.frbr_uri)).toEqual([
+        "/akn/id/act/pp/2024/20", "/akn/id/act/pp/2020/30", "/akn/id/act/uu/2000/7", "/akn/id/act/pp/2025/10", "/akn/id/act/pp/2024/9",
+      ]);
+    });
+
+    it("GEMINI_OTOMATIS_VONIS mempersempit: hanya yang bersih", async () => {
+      l.env.GEMINI_OTOMATIS_VONIS = "bersih";
+      await jalankanCron(l, CRON_GEMINI);
+      expect(antreanKeluar().map((p) => p.frbr_uri)).toEqual(["/akn/id/act/pp/2023/50"]);
+    });
+
     it("melewati peraturan yang sudah pernah dicoba sungguhan, tetapi bukan yang hanya pernah diuji", async () => {
       await l.db.prepare(`INSERT INTO pembacaan_ai (frbr_uri, hasil) VALUES ('/akn/id/act/uu/2000/7', 'gagal')`).run();
       await l.db.prepare(`INSERT INTO pembacaan_ai (frbr_uri, hasil) VALUES ('/akn/id/act/pp/2025/10', 'uji')`).run();
       await jalankanCron(l, CRON_GEMINI);
-      expect(antreanKeluar().map((p) => p.frbr_uri)).toEqual(["/akn/id/act/pp/2025/10", "/akn/id/act/pp/2024/20"]);
+      expect(antreanKeluar().map((p) => p.frbr_uri)).toEqual([
+        "/akn/id/act/pp/2024/20", "/akn/id/act/pp/2020/30", "/akn/id/act/pp/2025/10", "/akn/id/act/pp/2024/9", "/akn/id/act/pp/2022/60",
+      ]);
+    });
+
+    it("peraturan yang PDF-nya sudah di R2 tetapi belum punya baris ekstraksi_log dihitung tanpa_pasal: calon yang paling didahulukan", async () => {
+      await sisipkan(l, [{ uri: "/akn/id/act/uu/2023/6", jenis: "UU", nomor: "6", tahun: 2023, judul: "Peraturan 6/2023" }]);
+      await l.db.prepare(`UPDATE laws SET r2_pdf_key = 'pdf/akn/id/act/uu/2023/6.pdf' WHERE frbr_uri = '/akn/id/act/uu/2023/6'`).run();
+      l.env.GEMINI_OTOMATIS_BATAS = "2";
+      await jalankanCron(l, CRON_GEMINI);
+      // UU 6/2023 (tanpa log) dan PP 20/2024 (tanpa_pasal) sama-sama tanpa_pasal: UU lebih dulu menurut prioritas panen.
+      expect(antreanKeluar().map((p) => p.frbr_uri)).toEqual(["/akn/id/act/uu/2023/6", "/akn/id/act/pp/2024/20"]);
+    });
+
+    it("peraturan tanpa PDF tidak pernah menjadi calon, apa pun vonisnya", async () => {
+      await l.db.prepare(`UPDATE laws SET r2_pdf_key = NULL`).run();
+      expect(await jalankanGeminiOtomatis(l.env)).toEqual({ dikerjakan: false, alasan: "tidak ada calon" });
     });
 
     it("tak ada calon: tak mengantrekan apa pun dan tak mencatat putaran", async () => {
-      await l.db.prepare(`UPDATE ekstraksi_log SET vonis = 'bersih'`).run();
+      await l.db.prepare(`INSERT INTO pembacaan_ai (frbr_uri, hasil) SELECT frbr_uri, 'dipakai' FROM laws`).run();
       expect(await jalankanGeminiOtomatis(l.env)).toEqual({ dikerjakan: false, alasan: "tidak ada calon" });
       expect(l.kv.isi.has(KUNCI_PUTARAN)).toBe(false);
     });
@@ -314,7 +368,9 @@ describe.skipIf(!sqliteAda)("Gemini otomatis (Cron)", () => {
     it("peraturan di luar cakupan tak dipilih", async () => {
       l.env.CAKUPAN_JENIS = "PP";
       await jalankanCron(l, CRON_GEMINI);
-      expect(antreanKeluar().map((p) => p.frbr_uri)).toEqual(["/akn/id/act/pp/2025/10", "/akn/id/act/pp/2024/20"]);
+      expect(antreanKeluar().map((p) => p.frbr_uri)).toEqual([
+        "/akn/id/act/pp/2024/20", "/akn/id/act/pp/2020/30", "/akn/id/act/pp/2025/10", "/akn/id/act/pp/2024/9", "/akn/id/act/pp/2022/60",
+      ]);
     });
   });
 
@@ -331,6 +387,7 @@ describe.skipIf(!sqliteAda)("Gemini otomatis (Cron)", () => {
     });
 
     it("putaran yang tak kunjung selesai dianggap macet sesudah 45 menit, dan putaran baru dimulai", async () => {
+      l.env.GEMINI_OTOMATIS_BATAS = "2";
       const t0 = Date.now();
       expect(await jalankanGeminiOtomatis(l.env, t0)).toMatchObject({ dikerjakan: true });
       antreanKeluar();
@@ -355,21 +412,42 @@ describe.skipIf(!sqliteAda)("Gemini otomatis (Cron)", () => {
   });
 
   describe("status di /api/impor/ringkasan", () => {
-    it("memuat mode, batas, vonis calon, dan putaran terakhir; calon_belum_dicoba menghitung yang layak", async () => {
+    const ringkasan = async () => (await json<{ gemini: Record<string, any> }>(await panggil(l, "/api/impor/ringkasan", { headers: adm }))).gemini; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+    it("memuat mode, batas, vonis calon, dan putaran terakhir; calon_belum_dicoba menghitung yang teksnya rusak", async () => {
       l.env.GEMINI_OTOMATIS = "uji";
-      const sebelum = await json<{ gemini: Record<string, any> }>(await panggil(l, "/api/impor/ringkasan", { headers: adm })); // eslint-disable-line @typescript-eslint/no-explicit-any
-      expect(sebelum.gemini.otomatis).toEqual({ mode: "uji", batas: 2, uji_maks: 8, vonis: ["tanpa_pasal", "berat", "gagal"], putaran_terakhir: null });
-      expect(sebelum.gemini.calon_belum_dicoba).toBe(5); // UU 7/2000, PP 10/2025, PP 20/2024, PP 9/2024, PP 30/2020
+      const sebelum = await ringkasan();
+      expect(sebelum.otomatis).toEqual({ mode: "uji", batas: 2, uji_maks: 8, vonis: ["tanpa_pasal", "berat", "gagal"], putaran_terakhir: null });
+      expect(sebelum.calon_belum_dicoba).toBe(5); // UU 7/2000, PP 10/2025, PP 20/2024, PP 9/2024, PP 30/2020
 
       await jalankanCron(l, CRON_GEMINI);
       antreanKeluar();
-      const sesudah = await json<{ gemini: Record<string, any> }>(await panggil(l, "/api/impor/ringkasan", { headers: adm })); // eslint-disable-line @typescript-eslint/no-explicit-any
-      expect(sesudah.gemini.otomatis.putaran_terakhir).toMatchObject({ mode: "uji", jumlah: 2, pada: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
+      const sesudah = await ringkasan();
+      expect(sesudah.otomatis.putaran_terakhir).toMatchObject({ mode: "uji", jumlah: 2, pada: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
+    });
+
+    it("belum_dibaca: semua peraturan ber-PDF yang belum dibaca Gemini sungguhan, menurut vonis; percobaan kering tak dihitung sebagai dibaca", async () => {
+      expect((await ringkasan()).belum_dibaca).toEqual({ semua: 7, per_vonis: { tanpa_pasal: 1, gagal: 1, berat: 3, ringan: 1, bersih: 1 } });
+      await l.db.prepare(`INSERT INTO pembacaan_ai (frbr_uri, hasil) VALUES ('/akn/id/act/pp/2023/50', 'dipakai')`).run();
+      await l.db.prepare(`INSERT INTO pembacaan_ai (frbr_uri, hasil) VALUES ('/akn/id/act/uu/2000/7', 'uji')`).run();
+      const r = await ringkasan();
+      expect(r.belum_dibaca).toEqual({ semua: 6, per_vonis: { tanpa_pasal: 1, gagal: 1, berat: 3, ringan: 1 } });
+      expect(r.calon_belum_dicoba).toBe(5);
+    });
+
+    it("peraturan tanpa baris ekstraksi_log ikut dihitung (tanpa_pasal); yang tanpa PDF tidak", async () => {
+      await sisipkan(l, [
+        { uri: "/akn/id/act/uu/2023/6", jenis: "UU", nomor: "6", tahun: 2023, judul: "Peraturan 6/2023" },
+        { uri: "/akn/id/act/uu/2023/7", jenis: "UU", nomor: "7", tahun: 2023, judul: "Peraturan 7/2023" },
+      ]);
+      await l.db.prepare(`UPDATE laws SET r2_pdf_key = 'pdf/akn/id/act/uu/2023/6.pdf' WHERE frbr_uri = '/akn/id/act/uu/2023/6'`).run();
+      const r = await ringkasan();
+      expect(r.belum_dibaca).toMatchObject({ semua: 8, per_vonis: { tanpa_pasal: 2 } });
+      expect(r.calon_belum_dicoba).toBe(6);
     });
 
     it("mati: mode mati dan putaran kosong", async () => {
-      const r = await json<{ gemini: Record<string, any> }>(await panggil(l, "/api/impor/ringkasan", { headers: adm })); // eslint-disable-line @typescript-eslint/no-explicit-any
-      expect(r.gemini.otomatis).toMatchObject({ mode: "mati", putaran_terakhir: null });
+      expect((await ringkasan()).otomatis).toMatchObject({ mode: "mati", putaran_terakhir: null });
     });
   });
 });

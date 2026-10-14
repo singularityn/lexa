@@ -91,11 +91,27 @@ app.get("/sitemap.xml", async (c) => {
 
 /**
  * Pesan pembacaan Gemini memakan menit per PDF, sedangkan satu pemanggilan konsumer dibatasi 15 menit waktu dinding. Pesan Gemini
- * baru tak dimulai sesudah sekian lama sejak batch dimulai (yang tersisa dikembalikan ke antrean untuk pemanggilan berikutnya).
+ * baru tak dimulai sesudah sekian lama sejak batch dimulai (yang tersisa ditunda: dikirim ulang untuk pemanggilan berikutnya).
  * Pesan yang sudah dimulai punya tenggatnya sendiri (TENGGAT_PESAN_MS, 7 menit, ditambah panggilan yang masih berjalan paling lama
  * 3 menit), jadi yang terburuk 4 + 7 + 3 = 14 menit: di bawah 15.
  */
 const BATAS_GILIRAN_GEMINI_MS = 4 * 60_000;
+
+/**
+ * Menunda pesan yang tak sempat dikerjakan di giliran ini: dikirim ulang sebagai pesan baru (dengan jeda), lalu yang lama diakui.
+ * Bukan `retry()`: tiap `retry()` menghabiskan satu dari `max_retries` pesan itu, jadi pesan di ujung batch besar (pembacaan sungguhan
+ * mengantrekan sampai 20 peraturan, dan tiap pembacaan memakan menit) jatuh ke DLQ hanya karena menunggu giliran. Bila pengiriman
+ * ulang gagal, jatuh ke `retry()`.
+ */
+async function tundaPesan(env: Env, pesan: Message<PesanIngest>, detik: number) {
+  try {
+    await env.INGEST_QUEUE.send(pesan.body, { delaySeconds: detik });
+    pesan.ack();
+  } catch (e) {
+    console.error("Lexa: pesan tak bisa dikirim ulang, memakai retry", e);
+    pesan.retry({ delaySeconds: detik });
+  }
+}
 
 export default {
   fetch: app.fetch,
@@ -132,7 +148,7 @@ export default {
     for (const pesan of batch.messages) {
       const gemini = pesan.body?.tipe === "ekstrak_pdf" && pesan.body.pembaca === "gemini";
       if (gemini && Date.now() - mulai > BATAS_GILIRAN_GEMINI_MS) {
-        pesan.retry({ delaySeconds: 30 });
+        await tundaPesan(env, pesan, 30);
         continue;
       }
       try {

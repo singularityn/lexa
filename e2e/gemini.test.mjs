@@ -101,6 +101,10 @@ describe("skrip panen BPK: geminiCek", () => {
       tersedia: true, model: "gemini-pratinjau", versi_model: "gemini-pratinjau-001", alamat: "gemini.pratinjau.test", balasan: "siap",
       anggaran: { terpakai: 12, batas: 5_000_000 }, berpikir: null, halaman_per_panggilan: 4, paralel: 3, halaman_maks: 120,
     });
+    // Di awal setiap jalan skrip mencetak keadaan Gemini di Lexa: terpasang, otomatis menyala atau tidak, dan berapa PDF yang belum dibaca.
+    expect(konsol.find((t) => t.includes("] Gemini: "))).toMatch(
+      /Gemini: terpasang \(gemini-pratinjau\); membaca otomatis: mati; PDF belum dibaca Gemini: \d+ \(\d+ bermasalah\); anggaran token hari ini 0 dari 5\.000\.000\./,
+    );
     const baris = konsol.find((t) => t.includes("Gemini siap"));
     expect(baris).toContain("model gemini-pratinjau (versi gemini-pratinjau-001)");
     expect(baris).toContain("anggaran token hari ini 12 dari 5.000.000");

@@ -186,21 +186,45 @@ Yang diperbaiki:
 
 ## Gemini otomatis di Cloudflare
 
-Permintaan pemilik: bila ada cara agar Gemini berjalan sendiri di Cloudflare, itu pilihan yang bagus. Bentuknya Cron 15 menit
-(`*/15 * * * *`, `lib/geminiOtomatis.ts`) yang memakai secret `GEMINI_API` milik Worker dan antrean yang sama dengan jalur manual.
+Alur yang diminta pemilik (14 Oktober 2026), dan yang dibangun:
+
+1. **Panen** peraturan dari BPK sampai tingkat PP (skrip konsol di peramban pemilik; Worker tak pernah menghubungi BPK).
+2. **PDF disimpan di R2** (`lexa-pdfs`) saat diunggah, dan langsung diekstrak konversi bawaan (Workers AI) supaya peraturannya segera
+   bisa dibaca. Teks itu hanya sementara dan cadangan: ia berantakan pada pindaian.
+3. **Gemini membaca semua PDF itu** (Cron `*/15 * * * *`, `lib/geminiOtomatis.ts`, antrean yang sama dengan jalur manual) dan, bila
+   hasilnya lolos pagar, menggantikan pasal sementara tadi. Yang tak lolos atau ditolak Google tetap memakai teks sementara.
+4. **Lexa menampilkan pasal dari D1** seperti biasa; peraturan hasil bacaan Gemini diberi catatan "dibaca AI" dan tombol "Lihat di PDF".
 
 * **Mati secara bawaan.** Tanpa variabel `GEMINI_OTOMATIS`, pemicunya kembali seketika: tak menyentuh D1, KV, maupun Google.
-* **`GEMINI_OTOMATIS=uji`**: percobaan kering. Dua peraturan per putaran (`GEMINI_OTOMATIS_BATAS`) dibaca dan hasilnya hanya
-  dicatat di `pembacaan_ai` (hasil `uji`, kolom `catatan` memuat keputusan, rangkaian pasal, pasal tersimpan yang hilang, dan
-  kesesuaian dengan teks lama) dan di R2 `teks-ai/`. **Tak ada pasal yang ditulis.** Berhenti sendiri setelah 8 percobaan
+* **`GEMINI_OTOMATIS=uji`**: percobaan kering atas peraturan yang teksnya bermasalah (vonis `tanpa_pasal`, `berat`, `gagal`), dua per
+  putaran (`GEMINI_OTOMATIS_BATAS`), menurut prioritas panen (UU lalu PP, terbaru lebih dulu). Hasilnya hanya dicatat di
+  `pembacaan_ai` (hasil `uji`, kolom `catatan` memuat keputusan, rangkaian pasal, pasal tersimpan yang hilang, kesesuaian dengan teks
+  lama, dan cuplikan) dan di R2 `teks-ai/`. **Tak ada pasal yang ditulis.** Berhenti sendiri setelah 8 percobaan
   (`GEMINI_OTOMATIS_UJI_MAKS`), supaya biaya uji terbatas dan hasilnya sempat diperiksa.
-* **`GEMINI_OTOMATIS=ya`**: membaca sungguhan; yang lolos pagar menggantikan pasal tersimpan.
-* **Calon**: peraturan ber-PDF yang vonisnya `tanpa_pasal`, `berat`, atau `gagal` (`GEMINI_OTOMATIS_VONIS`), belum pernah dicoba,
-  menurut prioritas panen (UU lalu PP, terbaru lebih dulu). Jalankan `usang` lebih dulu agar vonisnya jujur.
+* **`GEMINI_OTOMATIS=ya`**: membaca sungguhan, **semua peraturan ber-PDF yang belum pernah dibaca Gemini**, lima per putaran
+  (`GEMINI_OTOMATIS_BATAS`, maksimum 20). Urutannya menurut kerusakan teks: `tanpa_pasal`, `gagal`, `berat`, `ringan`, lalu `bersih`
+  (dan di dalam tiap vonis menurut prioritas panen). Jadi bila anggaran harian habis sebelum semuanya terbaca, yang tersisa adalah teks
+  yang sudah paling baik. Yang lolos pagar menggantikan pasal tersimpan. `GEMINI_OTOMATIS_VONIS` mempersempit (mis. `tanpa_pasal,berat`).
+* **Peraturan yang PDF-nya sudah di R2 tetapi belum diekstrak** (tanpa baris `ekstraksi_log`) dihitung `tanpa_pasal`, jadi ikut menjadi
+  calon, dan didahulukan.
+* **Konversi bawaan tak pernah menimpa teks hasil Gemini.** PDF yang diunggah ulang (panen `celah` atau `lama`) atau pesan ekstrak yang
+  lama mengantre dilewati bila peraturannya sudah punya bacaan Gemini yang dipakai. Uraian ulang dari arsip (`usang`) tidak terkena:
+  arsipnya teks Gemini.
 * **Tak menumpuk.** Putaran berikutnya menunggu semua peraturan putaran sebelumnya tercatat di `pembacaan_ai`, atau 45 menit berlalu.
+  Pesan yang tak sempat dikerjakan dalam satu giliran konsumer (4 menit) ditunda dengan dikirim ulang sebagai pesan baru, bukan
+  `retry()`, supaya pesan di ujung batch besar tidak jatuh ke DLQ hanya karena menunggu giliran.
 * **Pagar biaya sama**: anggaran token harian, satu peraturan satu pembacaan, galat sementara diulang antrean.
+* **Audit sesudah ribuan peraturan terbaca.** Pagar menjaga nomor pasal, bukan isi di dalam pasal, jadi setiap bacaan sungguhan mencatat
+  `kesesuaian a/b` di `pembacaan_ai.catatan` (dibandingkan dengan arsip teks lama yang digantikan, bila teks lama itu sedikitnya 50
+  kata): a = bagian tiga-kata bacaan Gemini yang ada di teks lama, b = sebaliknya; 1 berarti sama. Pada teks lama yang `bersih`
+  kedua angka mestinya mendekati 1; yang jauh lebih rendah (misalnya b di bawah 0,8) patut dibuka dan dibandingkan dengan PDF-nya.
+  Kueri: `SELECT frbr_uri, catatan FROM pembacaan_ai WHERE hasil = 'dipakai' AND catatan LIKE 'kesesuaian %' ORDER BY CAST(substr(catatan,
+  instr(catatan, '/') + 1, 4) AS REAL) LIMIT 30`. Teks lama yang rusak wajar berbeda (itulah alasan Gemini dipakai), jadi angka rendah
+  pada vonis `tanpa_pasal`, `berat`, atau `gagal` bukan tanda masalah.
 * **Terlihat dari D1 saja**: `SELECT frbr_uri, vonis_baru, pasal_baru, catatan FROM pembacaan_ai WHERE hasil = 'uji'`. Itu juga yang
-  memungkinkan hasilnya dinilai tanpa membuka R2 atau konsol.
+  memungkinkan hasilnya dinilai tanpa membuka R2 atau konsol. Sisa pekerjaannya ada di `GET /api/impor/ringkasan` (blok `gemini`:
+  `belum_dibaca.semua` dan `per_vonis`, `calon_belum_dicoba` untuk yang teksnya rusak), dan skrip konsol mencetak ringkasannya di awal
+  setiap jalan.
 
 ## Pengukuran nyata pertama (14 Oktober 2026)
 
@@ -317,6 +341,24 @@ pasal hilang). Sisa ±4.550 peraturan yang belum dipanen menambah ±730 bila pro
 Perkiraan awal dokumen ini (±$6 / $13 / $38 untuk 487 peraturan) terlalu rendah sekitar dua kali: ia menganggap 800-1.100 token masuk
 per halaman tetapi keluaran dari panjang teks saja, dan melupakan bahwa berpikir ditagih sebagai keluaran.
 
+**Seluruh korpus (mode `ya` membaca semua PDF, bukan hanya yang rusak).** Halamannya diperkirakan dari panjang teks di D1 (15 Oktober
+2026): 2.642 peraturan yang sudah punya PDF memuat ±62 juta karakter, ±2.500 karakter per halaman, jadi ±25.000 halaman (UU ±11 halaman
+rata-rata, PP ±8,5), ditambah ±2.000 halaman untuk 232 pindaian yang teksnya nyaris kosong. Sisa ±4.535 peraturan yang belum dipanen
+(3.983 di antaranya PP) dengan rata-rata yang sama menambah ±39.000 halaman. Total ±66.000 halaman (rentang kasar 50.000-85.000),
+±96 juta token pada 1.450 token per halaman:
+
+| Cakupan | Halaman | Token | $0,25 / $1,50 | $0,50 / $3,00 | $1,50 / $9,00 |
+|---|---:|---:|---:|---:|---:|
+| yang sudah dipanen (2.642) | ±27.000 | ±39 juta | ±$39 | ±$78 | ±$233 |
+| yang belum dipanen (±4.535) | ±39.000 | ±57 juta | ±$56 | ±$113 | ±$337 |
+| seluruhnya | ±66.000 | ±96 juta | ±$95 | ±$190 | ±$570 |
+| seluruhnya, berpikir dimatikan (`GEMINI_BERPIKIR`, ±956 token per halaman) | ±66.000 | ±63 juta | ±$46 | ±$92 | ±$277 |
+
+Itu hitungan turunan dari satu pengukuran dan harga yang tak diketahui, bukan tagihan; galatnya mudah ±30%. Waktunya ditentukan dua
+batas: anggaran harian (5 juta token bawaan = ±19 hari; 15 juta = ±6 hari) dan jumlah per putaran (5 per 15 menit = ±480 peraturan
+sehari; `GEMINI_OTOMATIS_BATAS=10` menggandakannya). Karena urutannya terburuk lebih dulu, berhenti di tengah jalan (hapus
+`GEMINI_OTOMATIS`) meninggalkan teks yang sudah baik, bukan yang rusak.
+
 **Langit-langit per hari.** Anggaran bawaan 5.000.000 token per hari UTC (`GEMINI_BATAS_HARIAN`) menghitung masuk, keluar, dan berpikir
 sekaligus: ±3.450 halaman sehari, ±170 peraturan 20 halaman, bernilai ±$5, ±$10, atau ±$30 sehari pada tiga tingkat harga di atas.
 Itu hitungan turunan, bukan angka tagihan. Sisa anggaran diperiksa sebelum tiap potongan dan sesudahnya; pengamannya lunak (KV tak
@@ -383,7 +425,9 @@ Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bp
 
 **Tanpa konsol (otomatis).** Setelah langkah 0 dan 1, tambahkan variabel `GEMINI_OTOMATIS` = `uji` di dashboard (lihat
 [Gemini otomatis](#gemini-otomatis-di-cloudflare)). Sekitar satu jam kemudian delapan percobaan kering sudah tercatat; periksa
-dengan kueri D1 di atas, lalu ubah menjadi `ya`. Mematikannya: hapus variabelnya.
+dengan kueri D1 di atas, lalu ubah menjadi `ya`: semua PDF dibaca, yang paling rusak lebih dulu. Mematikannya: hapus variabelnya.
+Untuk menghabiskan seluruh korpus dalam seminggu: `GEMINI_OTOMATIS_BATAS` = `10` dan `GEMINI_BATAS_HARIAN` = `15000000`
+(perkiraan biayanya di bagian Perkiraan biaya).
 
 Hentikan dan periksa bila: banyak `ditolak` dengan sebab yang sama (perintah perlu disesuaikan), banyak `gagal` bersebab
 `RECITATION` (alihkan ke model lain atau potong per halaman), atau pasal hasil bacaan yang dicek manual ternyata keliru.

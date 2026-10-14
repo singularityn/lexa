@@ -914,6 +914,14 @@
         var awal = await ctx.lexaMinta("/api/impor/ringkasan");
         console.log("[Lexa panen] keadaan Lexa:");
         console.table((awal.per_jenis || []).map(function (r) { return { jenis: r.jenis, total: r.total, bertaut_BPK: r.bertaut_bpk, ber_PDF: r.ber_pdf, berpasal: r.berpasal, perlu_PDF: r.perlu_pdf }; }));
+        var gm = awal.gemini;
+        if (gm) {
+          console.log("[Lexa panen] Gemini: " + (gm.terpasang
+            ? "terpasang (" + gm.model + "); membaca otomatis: " + (gm.otomatis && gm.otomatis.mode !== "mati" ? gm.otomatis.mode : "mati")
+              + (gm.belum_dibaca ? "; PDF belum dibaca Gemini: " + angka(gm.belum_dibaca.semua) + (gm.calon_belum_dicoba != null ? " (" + angka(gm.calon_belum_dicoba) + " bermasalah)" : "") : "")
+              + (gm.anggaran ? "; anggaran token hari ini " + angka(gm.anggaran.terpakai) + " dari " + angka(gm.anggaran.batas) : "")
+            : "belum dipasang (secret GEMINI_API)") + ".");
+        }
       } catch (e) {
         if (!e || e.status !== 404) throw e;
         // Lexa lama (belum punya /ringkasan dan /tautan): panen PDF biasa tetap jalan, penjelajahan tidak.

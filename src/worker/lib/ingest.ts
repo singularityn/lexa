@@ -470,6 +470,16 @@ async function sudahDicobaGemini(db: D1Database, frbrUri: string): Promise<strin
   return r?.hasil ?? null;
 }
 
+/** Pasal tersimpan berasal dari bacaan Gemini yang dipakai (catatan 'dipakai' di pembacaan_ai). Tabel belum ada = belum pernah. */
+async function bacaanAiDipakai(db: D1Database, frbrUri: string): Promise<boolean> {
+  const r = await db
+    .prepare(`SELECT 1 AS ada FROM pembacaan_ai WHERE frbr_uri = ? AND hasil = 'dipakai' LIMIT 1`)
+    .bind(frbrUri)
+    .first<{ ada: number }>()
+    .catch(() => null);
+  return r !== null;
+}
+
 /**
  * Pasal yang tersimpan kini berasal dari konversi PDF yang baru, bukan lagi dari bacaan Gemini: catatan "dipakai" tak berlaku
  * lagi (antarmuka berhenti menyebut teksnya bacaan AI). Galatnya ditahan karena tabelnya baru ada setelah migrasi 0008.
@@ -647,6 +657,9 @@ export function kesesuaianTeks(a: string, b: string): { aDiB: number; bDiA: numb
   return { aDiB: bagian(ga, gb), bDiA: bagian(gb, ga) };
 }
 
+/** Teks lama harus sepanjang ini (kata) agar kesesuaiannya dengan bacaan Gemini dicatat. */
+const JUMLAH_KATA_BANDING_MIN = 50;
+
 /** Berkas PDF yang ditunjuk `laws.r2_pdf_key` tak ada di R2: tak akan ada saat diulang, jadi pesan Gemini mencatatnya `gagal`, bukan berputar sampai DLQ. */
 export class PdfHilangDariR2 extends Error {
   constructor(readonly kunci: string) {
@@ -779,6 +792,14 @@ export async function ekstrakPdf(
     }
   }
 
+  // Teks hasil bacaan Gemini (pembacaan_ai 'dipakai') tak ditimpa konversi bawaan. PDF yang diunggah ulang (panen `celah` atau `lama`),
+  // atau pesan ekstrak yang lama mengantre di belakang ribuan lainnya, akan menurunkan teks yang sudah dirapikan AI menjadi hasil
+  // OCR, dan konversi Workers AI-nya sia-sia. Uraian ulang dari arsip teks (`dariTeks`, mis. `usang`) tidak terkena: arsipnya teks Gemini.
+  if (!denganAi && !opsi.dariTeks && (await bacaanAiDipakai(ctx.db, frbrUri))) {
+    await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: konversi bawaan dilewati, teks sudah hasil bacaan Gemini`);
+    return 0;
+  }
+
   const kunciTeks = `teks/${frbrUri.replace(/^\//, "")}.md`;
   let markdown = "";
   let ukuranPdf = 0;
@@ -866,9 +887,22 @@ export async function ekstrakPdf(
   const pasal = uraikanPasal(markdown);
   const laporan = nilaiKualitasEkstraksi(bersihkanHalaman(markdown), pasal);
 
-  /** Bukti pembacaan Gemini untuk dicatat di `pembacaan_ai` (hanya jalur Gemini). */
+  // Untuk audit: seberapa jauh bacaan Gemini menyimpang dari arsip teks lama yang akan digantikannya ("kesesuaian a/b": bagian tiga-kata
+  // bacaan Gemini yang ada di teks lama, dan sebaliknya; 1 = sama). Dibaca sebelum arsip ditimpa. Tanpa arsip lama: tanpa catatan.
+  let kesesuaianLama: string | null = null;
+  if (ai) {
+    const lama = await ctx.docs.get(kunciTeks).catch(() => null);
+    const teksLama = lama ? await lama.text().catch(() => "") : "";
+    // Teks lama yang pendek (pindaian yang nyaris kosong) tak bisa dibandingkan: tiga-kata tak terbentuk, dan 0/0 menyesatkan.
+    if (teksLama.trim().split(/\s+/).length >= JUMLAH_KATA_BANDING_MIN) {
+      const k = kesesuaianTeks(bersihkanHalaman(markdown), bersihkanHalaman(teksLama));
+      kesesuaianLama = `kesesuaian ${k.aDiB}/${k.bDiA}`;
+    }
+  }
+
+  /** Bukti pembacaan Gemini untuk dicatat di `pembacaan_ai` (hanya jalur Gemini); catatannya diberi kesesuaian dengan teks lama bila ada. */
   const rekam = (r: Pick<RekamAi, "hasil" | "catatan">): RekamAi | null =>
-    ai && { ...r, model: ai.baca.versiModel, halaman: ai.baca.halaman, putaran: ai.baca.putaran, token: ai.baca.token, durasiMs: ai.durasiMs, vonisBaru: laporan.vonis, pasalBaru: new Set(pasal.map((p) => p.nomor_pasal)).size };
+    ai && { ...r, catatan: [r.catatan, kesesuaianLama].filter(Boolean).join(" | ") || null, model: ai.baca.versiModel, halaman: ai.baca.halaman, putaran: ai.baca.putaran, token: ai.baca.token, durasiMs: ai.durasiMs, vonisBaru: laporan.vonis, pasalBaru: new Set(pasal.map((p) => p.nomor_pasal)).size };
 
   if (ai && !pasal.length) {
     // Teks Gemini tanpa pasal tak mengubah apa pun: log ekstraksi tetap menggambarkan teks yang tersimpan.

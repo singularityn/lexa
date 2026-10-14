@@ -63,15 +63,16 @@ interface Env {
    */
   GEMINI_HALAMAN_MAKS?: string;
   /**
-   * Gemini otomatis lewat Cron 15 menit (lib/geminiOtomatis.ts): `uji` (percobaan kering, berhenti sendiri setelah
-   * GEMINI_OTOMATIS_UJI_MAKS) atau `ya` (membaca sungguhan). Tak ada atau nilai lain: mati.
+   * Gemini otomatis lewat Cron 15 menit (lib/geminiOtomatis.ts): `uji` (percobaan kering atas peraturan yang teksnya bermasalah,
+   * berhenti sendiri setelah GEMINI_OTOMATIS_UJI_MAKS) atau `ya` (membaca sungguhan SEMUA PDF yang belum dibaca Gemini, yang paling
+   * rusak lebih dulu). Tak ada atau nilai lain: mati.
    */
   GEMINI_OTOMATIS?: string;
-  /** Peraturan yang diantrekan tiap putaran Gemini otomatis (bawaan 2, maksimum 10). */
+  /** Peraturan yang diantrekan tiap putaran Gemini otomatis (bawaan 2 pada `uji` dan 5 pada `ya`, maksimum 20). */
   GEMINI_OTOMATIS_BATAS?: string;
   /** Banyaknya percobaan kering sebelum mode `uji` berhenti sendiri (bawaan 8). */
   GEMINI_OTOMATIS_UJI_MAKS?: string;
-  /** Vonis ekstraksi yang menjadi calon, dipisah koma (bawaan `tanpa_pasal,berat,gagal`). */
+  /** Vonis ekstraksi yang menjadi calon, dipisah koma (bawaan `tanpa_pasal,berat,gagal` pada `uji`; semua vonis pada `ya`). */
   GEMINI_OTOMATIS_VONIS?: string;
 
   // --- Secret (dipasang lewat `wrangler secret put`) ---

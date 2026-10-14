@@ -774,18 +774,46 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
       });
     });
 
-    it("pesan Gemini yang tersisa dalam satu batch dikembalikan ke antrean bila giliran sudah terlalu lama (batas waktu konsumer)", async () => {
-      await tanamLama({ vonis: "tanpa_pasal" });
-      vi.useFakeTimers({ toFake: ["Date"] });
-      const panggilan = pasangGemini([
-        () => {
-          vi.setSystemTime(Date.now() + 9 * 60_000); // pembacaan pertama memakan sembilan menit
-          return ok(NASKAH_AI);
-        },
-      ]);
-      const hasil = await jalankanAntrean(l, [pesan(), pesan({ frbr_uri: "/akn/id/act/pp/2025/100" })]);
-      expect(hasil).toEqual({ diakui: 1, diulang: [{ penundaanDetik: 30 }] });
-      expect(panggilan).toHaveLength(1);
+    describe("pesan Gemini yang tersisa dalam satu batch ditunda bila giliran sudah terlalu lama (batas waktu konsumer)", () => {
+      const BERIKUTNYA = "/akn/id/act/pp/2025/100";
+      /** Pembacaan pertama memakan sembilan menit, jadi pesan kedua tak boleh dimulai. */
+      const pasangLambat = () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        return pasangGemini([
+          () => {
+            vi.setSystemTime(Date.now() + 9 * 60_000);
+            return ok(NASKAH_AI);
+          },
+        ]);
+      };
+
+      it("dikirim ulang sebagai pesan baru dengan jeda 30 detik, lalu yang lama diakui: tidak menghabiskan max_retries", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        const panggilan = pasangLambat();
+        const hasil = await jalankanAntrean(l, [pesan(), pesan({ frbr_uri: BERIKUTNYA })]);
+        expect(hasil).toEqual({ diakui: 2, diulang: [] }); // retry() tidak dipakai
+        expect(panggilan).toHaveLength(1);
+        const ulang = l.antrean.dikirim.filter((d) => (d.badan as { frbr_uri?: string }).frbr_uri === BERIKUTNYA);
+        expect(ulang).toEqual([{ badan: pesan({ frbr_uri: BERIKUTNYA }), opsi: { delaySeconds: 30 } }]);
+      });
+
+      it("pengiriman ulang gagal: jatuh ke retry() dengan jeda yang sama, pesan tidak hilang", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        pasangLambat();
+        l.env.INGEST_QUEUE.send = async () => {
+          throw new Error("antrean penuh");
+        };
+        const hasil = await jalankanAntrean(l, [pesan(), pesan({ frbr_uri: BERIKUTNYA })]);
+        expect(hasil).toEqual({ diakui: 1, diulang: [{ penundaanDetik: 30 }] });
+      });
+
+      it("pesan non-Gemini di batch yang sama tetap dikerjakan walau giliran sudah lama", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        pasangLambat();
+        const hasil = await jalankanAntrean(l, [pesan(), { tipe: "ringkas", frbr_uri: URI }]);
+        expect(hasil).toEqual({ diakui: 2, diulang: [] });
+        expect(l.antrean.dikirim.filter((d) => d.opsi?.delaySeconds === 30)).toEqual([]);
+      });
     });
 
     it("uraian ulang dari arsip (dari_teks) tidak pernah memanggil Gemini, walau pesannya membawa pembaca", async () => {
@@ -1114,18 +1142,106 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
       expect((await json<{ pembaca_ai: unknown }>(res)).pembaca_ai).toBeNull();
     });
 
-    it("sesudah dibaca Gemini, penanda terpasang; konversi PDF baru yang menggantikan pasalnya mencabutnya (digantikan)", async () => {
+    it("sesudah dibaca Gemini, konversi bawaan tidak menimpa teksnya: dilewati tanpa memanggil Workers AI, penanda dan pasal tetap", async () => {
       await tanamLama({ vonis: "tanpa_pasal" });
       pasangGemini([ok(NASKAH_AI)]);
       await jalan();
       expect(await detail()).toEqual({ model: "gemini-uji-001" });
+      const sebelum = await pasalTersimpan();
 
-      // PDF diganti dan dikonversi bawaan; hasilnya cukup utuh untuk menggantikan (4 nomor ≥ 3 nomor bacaan AI).
+      // PDF diunggah ulang dan pesan ekstrak biasa datang; hasil konversi yang lebih banyak nomornya pun tak boleh menggantikan.
       l.ai.markdown.set("99.pdf", NASKAH_AI.replace(/=== HALAMAN \d+ ===\n/g, "").replace("Agar setiap orang", "Pasal 4\nPasal tambahan dari konversi bawaan.\nAgar setiap orang"));
       await jalankanAntrean(l, [{ tipe: "ekstrak_pdf", frbr_uri: URI, r2_key: KUNCI_PDF }]);
+      expect(await pasalTersimpan()).toEqual(sebelum);
+      expect(l.ai.konversi).toEqual([]);
+      expect((await pembacaan())?.hasil).toBe("dipakai");
+      expect(await detail()).toEqual({ model: "gemini-uji-001" });
+      const log = await satu<{ status: string; detail: string }>(l, `SELECT status, detail FROM sync_log WHERE job = 'ekstrak_pdf' ORDER BY id DESC LIMIT 1`);
+      expect(log?.detail).toContain("konversi bawaan dilewati, teks sudah hasil bacaan Gemini");
+    });
+
+    describe("kesesuaian dengan teks lama dicatat untuk audit", () => {
+      it("bacaan yang dipakai: catatan memuat bagian tiga-kata yang sama dengan arsip teks yang digantikan (1/1 bila identik)", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        pasangGemini([ok(NASKAH_AI)]);
+        await jalan();
+        expect((await pembacaan())?.catatan).toBeNull(); // tanpa arsip teks lama: tak ada pembanding
+
+        // Arsip teks kini bacaan Gemini tadi; membaca lagi dengan hasil yang sama sepenuhnya cocok.
+        pasangGemini([ok(NASKAH_AI)]);
+        await jalan({ ulangi: true });
+        expect((await pembacaan())?.catatan).toBe("kesesuaian 1/1");
+      });
+
+      it("angkanya searah: bacaan Gemini seluruhnya ada di teks lama (1), tetapi teks lama punya banyak yang tak ada di bacaan Gemini (<1)", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        pasangGemini([ok(NASKAH_AI)]);
+        await jalan();
+        const bacaan = (await teksR2(KUNCI_MD))!;
+        await l.r2.put(KUNCI_MD, `${bacaan}\n${Array.from({ length: 120 }, (_, i) => `tambahan${i}`).join(" ")}`);
+        pasangGemini([ok(NASKAH_AI)]);
+        await jalan({ ulangi: true });
+        const catatan = String((await pembacaan())?.catatan);
+        expect(catatan).toMatch(/^kesesuaian 1\/0\.\d+$/);
+        expect(catatan).not.toBe("kesesuaian 1/1");
+      });
+
+      it("hasil yang dipertahankan juga memuatnya, di belakang alasannya; bacaan yang jauh berbeda terlihat dari angkanya", async () => {
+        const lama = Array.from({ length: 10 }, (_, i) => ({ nomor: String(i + 1), isi: `Isi lama pasal ${i + 1}.` }));
+        const arsipLama = Array.from({ length: 60 }, (_, i) => `kata${i}`).join(" ");
+        await tanamLama({ vonis: "bersih", pasal: lama, arsip: arsipLama });
+        pasangGemini([ok(NASKAH_AI)]);
+        await jalan();
+        expect(await pembacaan()).toMatchObject({
+          hasil: "dipertahankan", catatan: "dipertahankan: 7 dari 10 nomor pasal tersimpan tidak ada pada hasil Gemini | kesesuaian 0/0",
+        });
+      });
+
+      it("teks lama yang terlalu pendek untuk dibandingkan (pindaian nyaris kosong): tanpa catatan kesesuaian", async () => {
+        await tanamLama({ vonis: "tanpa_pasal", arsip: "Naskah lama yang nyaris kosong." });
+        pasangGemini([ok(NASKAH_AI)]);
+        await jalan();
+        expect(await pembacaan()).toMatchObject({ hasil: "dipakai", catatan: null });
+      });
+    });
+
+    it("pelindung hanya untuk konversi bawaan: pembacaan Gemini ulang (ulangi) atas bacaan yang dipakai tetap berjalan dan menggantikannya", async () => {
+      await tanamLama({ vonis: "tanpa_pasal" });
+      const panggilan = pasangGemini([ok(NASKAH_AI)]);
+      await jalan();
+      expect(await pembacaan()).toMatchObject({ hasil: "dipakai", pasal_baru: 3, percobaan: 1 });
+
+      // Tanpa `ulangi`, yang sudah dibaca dilewati (pesan ganda tak membayar dua kali).
+      panggilan.length = 0;
+      expect(await jalan()).toEqual({ diakui: 1, diulang: [] });
+      expect(panggilan).toHaveLength(0);
+
+      // Dengan `ulangi`, Gemini membaca lagi (di sini hasilnya satu pasal lebih banyak) dan menggantikan bacaan sebelumnya.
+      pasangGemini([ok(NASKAH_AI.replace("Agar setiap orang", "Pasal 4\\nPasal tambahan.\\nAgar setiap orang"))]);
+      expect(await jalan({ ulangi: true })).toEqual({ diakui: 1, diulang: [] });
+      expect(await pembacaan()).toMatchObject({ hasil: "dipakai", percobaan: 2 });
       expect((await pasalTersimpan()).map((p) => p.nomor_pasal)).toEqual(["1", "2", "2", "3", "4"]);
-      expect((await pembacaan())?.hasil).toBe("digantikan");
-      expect(await detail()).toBeNull();
+    });
+
+    it("yang dilindungi hanya bacaan yang dipakai: percobaan kering atau gagal sebelumnya tidak menghalangi konversi bawaan", async () => {
+      for (const hasil of ["uji", "gagal", "ditolak", "dipertahankan"]) {
+        await l.db.prepare(`DELETE FROM pembacaan_ai`).run();
+        await l.db.prepare(`DELETE FROM articles`).run();
+        await l.db.prepare(`INSERT INTO pembacaan_ai (frbr_uri, hasil) VALUES (?, ?)`).bind(URI, hasil).run();
+        l.ai.markdown.set("99.pdf", NASKAH_AI.replace(/=== HALAMAN \d+ ===\n/g, ""));
+        await jalankanAntrean(l, [{ tipe: "ekstrak_pdf", frbr_uri: URI, r2_key: KUNCI_PDF }]);
+        expect((await pasalTersimpan()).length, hasil).toBeGreaterThan(0);
+      }
+    });
+
+    it("uraian ulang dari arsip (dari_teks, mis. usang) atas peraturan bacaan Gemini tidak dilewati: arsipnya teks Gemini", async () => {
+      await tanamLama({ vonis: "tanpa_pasal" });
+      pasangGemini([ok(NASKAH_AI)]);
+      await jalan();
+      await l.db.prepare(`UPDATE ekstraksi_log SET versi_parser = 0 WHERE frbr_uri = ?`).bind(URI).run();
+      await jalankanAntrean(l, [{ tipe: "ekstrak_pdf", frbr_uri: URI, r2_key: KUNCI_PDF, dari_teks: true }]);
+      const log = await satu<{ versi_parser: number }>(l, `SELECT versi_parser FROM ekstraksi_log WHERE frbr_uri = ?`, URI);
+      expect(log?.versi_parser).toBeGreaterThan(0);
     });
 
     it("hanya catatan 'dipakai' yang menjadi 'digantikan': percobaan gagal sebelumnya tetap tercatat apa adanya", async () => {

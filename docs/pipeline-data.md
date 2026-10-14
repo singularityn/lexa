@@ -421,17 +421,24 @@ menerima pesannya, kecuali `ulangi: true` atau `uri`; pesan ganda tidak membaca 
 `GEMINI_BATAS_HARIAN` (bawaan 5.000.000), termasuk pembacaan yang gagal. 429 dan 5xx membuat pesan diulang antrean dengan jeda
 `Retry-After`; PDF ditolak, jawaban diblokir (`RECITATION`, `SAFETY`) atau terlalu besar dicatat `gagal` dan tidak diulang; kunci
 atau model yang salah dilepas tanpa menandai dokumen (tetap layak dicoba setelah diperbaiki). Satu pemanggilan konsumer dibatasi 15
-menit, jadi pesan Gemini yang tersisa dalam satu batch dikembalikan ke antrean setelah 8 menit.
+menit, jadi pesan Gemini yang tersisa dalam satu batch ditunda (dikirim ulang) setelah 4 menit.
 
-**Otomatis di Cloudflare** (`lib/geminiOtomatis.ts`, Cron `*/15 * * * *`). Mati kecuali variabel `GEMINI_OTOMATIS` dipasang:
-`uji` (percobaan kering; hasilnya hanya di `pembacaan_ai` dan `teks-ai/`; berhenti sendiri setelah `GEMINI_OTOMATIS_UJI_MAKS`
-percobaan, bawaan 8) atau `ya` (membaca sungguhan). Tiap putaran mengantrekan paling banyak `GEMINI_OTOMATIS_BATAS` (bawaan 2,
-maks 10) peraturan ber-PDF yang vonisnya `tanpa_pasal`, `berat`, atau `gagal` (`GEMINI_OTOMATIS_VONIS`) dan belum pernah dicoba,
-menurut prioritas panen (UU dan PP terbaru lebih dulu). Putaran berikutnya menunggu semua pesan putaran sebelumnya tercatat di
-`pembacaan_ai`, atau 45 menit (keadaannya di KV `gemini:otomatis:putaran`), supaya antrean tak menumpuk. Pagar biayanya sama:
-anggaran token harian, satu peraturan satu pembacaan. Pesan dari Cron membawa `otomatis: true` (dan `uji: true` pada mode uji,
-yang dikerjakan `ujiGemini`; kolom `catatan` percobaan memuat keputusan, rangkaian pasal, dan kesesuaian dengan teks lama, cukup
-untuk menilai dari D1). `GET /api/impor/ringkasan` memuat blok `gemini.otomatis` dan `gemini.calon_belum_dicoba`.
+**Otomatis di Cloudflare** (`lib/geminiOtomatis.ts`, Cron `*/15 * * * *`). Alurnya: panen BPK mengunggah PDF ke R2 dan konversi bawaan
+langsung menghasilkan teks sementara; Cron ini lalu membaca ulang SEMUA PDF dengan Gemini dan menggantikan teks sementara itu bila hasilnya
+lolos pagar. Mati kecuali variabel `GEMINI_OTOMATIS` dipasang: `uji` (percobaan kering atas peraturan yang teksnya bermasalah, yaitu
+vonis `tanpa_pasal`, `berat`, `gagal`; hasilnya hanya di `pembacaan_ai` dan `teks-ai/`; berhenti sendiri setelah
+`GEMINI_OTOMATIS_UJI_MAKS` percobaan, bawaan 8) atau `ya` (membaca sungguhan, semua vonis). Tiap putaran mengantrekan paling banyak
+`GEMINI_OTOMATIS_BATAS` (bawaan 2 pada `uji`, 5 pada `ya`, maks 20) peraturan ber-PDF yang belum pernah dibaca Gemini sungguhan
+(`GEMINI_OTOMATIS_VONIS` mempersempit). Percobaan kering mengambil contoh menurut prioritas panen (UU dan PP terbaru lebih dulu);
+pembacaan sungguhan mendahulukan teks yang paling rusak (`tanpa_pasal`, `gagal`, `berat`, `ringan`, `bersih`), lalu prioritas yang sama.
+PDF yang sudah di R2 tetapi belum punya baris `ekstraksi_log` dihitung `tanpa_pasal`. Konversi bawaan melewati peraturan yang sudah punya
+bacaan Gemini yang dipakai, jadi teks hasil Gemini tak pernah turun lagi ke hasil OCR. Putaran berikutnya menunggu semua pesan putaran
+sebelumnya tercatat di `pembacaan_ai`, atau 45 menit (keadaannya di KV `gemini:otomatis:putaran`), supaya antrean tak menumpuk; pesan
+yang tak sempat dikerjakan dalam satu giliran konsumer ditunda dengan dikirim ulang (bukan `retry()`), sehingga tak menghabiskan
+`max_retries`. Pagar biayanya sama: anggaran token harian, satu peraturan satu pembacaan. Pesan dari Cron membawa `otomatis: true` (dan
+`uji: true` pada mode uji, yang dikerjakan `ujiGemini`; kolom `catatan` percobaan memuat keputusan, rangkaian pasal, dan kesesuaian dengan
+teks lama, cukup untuk menilai dari D1). `GET /api/impor/ringkasan` memuat blok `gemini.otomatis`, `gemini.calon_belum_dicoba` (teks
+rusak) dan `gemini.belum_dibaca` (semuanya, per vonis); skrip konsol mencetak ringkasan itu di awal setiap jalan.
 
 Memeriksa hasil di D1:
 
