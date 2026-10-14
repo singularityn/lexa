@@ -214,7 +214,9 @@ Akun (bagian bantuan, tertutup) dan pada `redirect_uri` di `GET /api/auth/status
 
 Secret dipasang dengan `npx wrangler secret put NAMA` (jangan lewat pipa, newline ikut tersimpan) atau
 lewat dashboard. Nilainya tidak pernah masuk Git. Variabel teks lain saat ini dipertahankan dari dashboard
-(`keep_vars` di `wrangler.jsonc`); `CAKUPAN_JENIS` ditetapkan di `wrangler.jsonc` dan ikut setiap deploy.
+(`keep_vars` di `wrangler.jsonc`); `CAKUPAN_JENIS` ditetapkan di `wrangler.jsonc` dan ikut setiap deploy. `placement.region` (AS Timur) juga
+ditetapkan di sana: Google menolak alamat keluar dari sebagian pusat data Cloudflare di Asia (galat Gemini `User location is not supported`),
+dan lokasi itu sekaligus dekat dengan D1; lihat [docs/hubungkan-github-cloudflare.md](docs/hubungkan-github-cloudflare.md).
 
 Sisa pengaturan sumber lama (variabel `PASAL_API_BASE` dan `TIK_CADANGAN`, secret `PASAL_API_TOKEN`) tidak dibaca kode lagi;
 hapus saja dari dashboard Cloudflare (Workers & Pages > lexa > Settings > Variables and Secrets).

@@ -80,6 +80,14 @@
   // test/cakupan.test.ts.
   "triggers": { "crons": ["0 19 * * *", "*/15 * * * *"] },
 
+  // Lokasi eksekusi Worker (hanya penangan `fetch`, yaitu API dan semua rute di bawah "run_worker_first"; antrean dan Cron tidak
+  // terpengaruh, dan aset statis tetap dilayani dari pusat data terdekat dengan pembaca). Tanpa ini Worker berjalan di pusat data
+  // terdekat dengan pemanggil, dan dari Asia Tenggara itu bisa Singapura atau Hong Kong: Google menilai lokasi dari alamat IP keluar
+  // dan menjawab Gemini dengan 400 "User location is not supported for the API use" dari sebagian pusat data itu. Wilayah AS Timur
+  // sekaligus dekat dengan D1 (lexa-db berada di ENAM), jadi pemanggilan D1 beruntun dalam satu permintaan menjadi jauh lebih cepat.
+  // Pembaca di Indonesia menambah satu perjalanan ke AS per permintaan API; berkas statis tidak.
+  "placement": { "region": "aws:us-east-1" },
+
   // Antarmuka (SPA) ada di ./public dan tidak memerlukan langkah build. Rute yang
   // diselesaikan Worker lebih dulu: seluruh API, robots.txt, sitemap.xml, dan /peraturan
   // (cangkang SPA; untuk perayap dan aplikasi pesan ditambah judul, deskripsi, dan gambar
@@ -99,7 +107,7 @@
 
   // Tidak dicantumkan karena nilai live tidak terlihat dari luar dashboard, dan
   // menimpanya dengan tebakan lebih berbahaya daripada membiarkannya apa adanya:
-  //   - observability / logs, placement, limits (cpu_ms), compatibility_flags
+  //   - observability / logs, limits (cpu_ms), compatibility_flags
   //   - route / custom domain
   // Bila ingin dikelola dari Git, tambahkan di sini setelah mencocokkannya dengan
   // dashboard (Workers & Pages > lexa > Settings).

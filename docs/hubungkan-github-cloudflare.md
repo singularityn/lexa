@@ -29,9 +29,10 @@ Deploy dari Git **menimpa pengaturan Worker dengan isi `wrangler.jsonc`**. Rinci
 | Variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `SEARCH_CACHE_TTL`) | dipertahankan (`keep_vars: true`). Sisa `PASAL_API_BASE` dan `TIK_CADANGAN` di dashboard tidak dibaca kode lagi; hapus saja |
 | Secret (`ADMIN_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GEMINI_API`) | tidak tersentuh. `PASAL_API_TOKEN` tidak dibaca kode lagi; hapus dari dashboard |
 | Cron | ditetapkan `0 19 * * *` (pemeliharaan harian) dan `*/15 * * * *` (Gemini otomatis; tak mengerjakan apa pun kecuali `GEMINI_OTOMATIS` dipasang). Deploy **mengganti** seluruh daftar pemicu dengan isi berkas, jadi pemicu per menit yang lama otomatis hilang |
+| Placement | ditetapkan `region: aws:us-east-1` (hanya penangan `fetch`, yaitu API; aset statis, antrean, dan Cron tak terpengaruh): Worker berjalan di AS Timur, dekat D1 (`lexa-db` ada di ENAM), dan dari lokasi yang diterima Google. Penjelasan di bagian Gemini di bawah |
 | Konsumer antrean (batch, retry, jeda, konkurensi, DLQ) | **tidak tersentuh**: sengaja tidak dideklarasikan |
 | Compatibility date | `2026-08-05` (diperkirakan dari tanggal pembuatan Worker) |
-| Observability, placement, limits, rute/domain khusus | tidak dicantumkan; periksa di dashboard setelah deploy |
+| Observability, limits, rute/domain khusus | tidak dicantumkan; periksa di dashboard setelah deploy |
 
 Bila ada pengaturan di dashboard yang tidak ada dalam daftar di atas (mis. binding tambahan atau domain
 khusus), catat dulu: itu yang perlu dicocokkan sebelum deploy produksi.
@@ -253,6 +254,25 @@ berjalan seperti biasa.
 
 Konsumer antrean `lexa-ingest` memproses pesan secara berurutan, dan satu pemanggilan dibatasi 15 menit oleh Cloudflare; pembacaan
 Gemini memakan menit per PDF, jadi pesannya dikirim dalam kelompok kecil (skrip memakai `batas: 3` dan menunggu selesai).
+
+### Galat `User location is not supported for the API use` (HTTP 400)
+
+Google menilai lokasi dari alamat IP keluar, dan Worker berjalan di pusat data Cloudflare terdekat dengan pemanggilnya: dari Asia
+Tenggara itu kadang Singapura atau Hong Kong, yang alamatnya sebagian dikenali Google sebagai wilayah tak didukung. Itu bukan salah
+kunci, model, atau dokumen, dan tak ada hubungannya dengan negara tempat Anda tinggal. Yang dilakukan Lexa:
+
+- `placement.region = "aws:us-east-1"` di `wrangler.jsonc`: penangan `fetch` (route `/api/impor/gemini-*` yang dipanggil skrip konsol)
+  berjalan di AS Timur. Placement **tidak** berlaku untuk konsumer antrean dan Cron (dokumentasi Cloudflare: hanya penangan `fetch`).
+- Galat itu digolongkan `lokasi` (sementara): diulang tiga kali di tempat (jeda 4 dan 12 detik), lalu pesan antrean dikembalikan dengan
+  jeda 120 detik. Ia tak pernah dicatat `gagal` pada dokumen, jadi tak ada peraturan yang hilang dari daftar calon karenanya.
+- `geminiCek` mencetak pusat data tempat Worker berjalan (`Worker berjalan di pusat data IAD (remote-IAD)`); galatnya membawa
+  `lokasi_worker` yang sama. Bila konsumer antrean terkena, satu baris `sync_log` (job `gemini_galat`, paling banyak satu per jenis per
+  10 menit) memuat jenis galat, alamat peraturan, dan lokasi keluar Worker (`[colo=SIN loc=SG]`): `SELECT created_at, detail FROM
+  sync_log WHERE job = 'gemini_galat' ORDER BY id DESC LIMIT 10`.
+- AI Gateway Cloudflare tidak dijamin memperbaikinya (laporan pengguna lain: galat yang sama lewat gateway dari Singapura atau Hong
+  Kong), jadi `GEMINI_BASE_URL` bukan jalan keluar untuk masalah ini.
+- Bila konsumer antrean ternyata sering terkena, langkah berikutnya: meneruskan panggilan Gemini lewat Durable Object dengan
+  `locationHint` AS (belum dibangun; keputusan sesudah melihat baris `gemini_galat` di atas).
 
 ### Menjalankannya otomatis di Cloudflare (tanpa konsol)
 

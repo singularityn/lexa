@@ -217,6 +217,61 @@ describe("panggilGemini", () => {
     expect(tanpaTidur).toHaveBeenCalledTimes(2);
   });
 
+  describe("400 'User location is not supported for the API use' (pusat data Cloudflare yang ditolak Google)", () => {
+    const LOKASI = "User location is not supported for the API use.";
+    const galatLokasi = () => new Response(JSON.stringify({ error: { code: 400, message: LOKASI, status: "FAILED_PRECONDITION" } }), { status: 400 });
+
+    it("digolongkan 'lokasi': sementara, bukan 'permintaan' yang tetap, dengan jeda 120 detik dan petunjuk placement.region", async () => {
+      tanpaTidur.mockClear();
+      const { fn } = fetchPalsu([galatLokasi(), galatLokasi(), galatLokasi()]);
+      const e = await panggilGemini(K, {}, { fetchFn: fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(e).toBeInstanceOf(GalatGemini);
+      expect(e).toMatchObject({ jenis: "lokasi", sementara: true, status: 400, jedaDetik: 120 });
+      expect(e.message).toContain(LOKASI);
+      expect(e.message).toContain("placement.region");
+      expect(e.message).not.toContain(KUNCI);
+    });
+
+    it("diulang di tempat (alamat keluar bisa berganti) dengan jeda 4 dan 12 detik, lalu berhasil", async () => {
+      tanpaTidur.mockClear();
+      const { fn, panggilan } = fetchPalsu([galatLokasi(), galatLokasi(), ok("akhirnya")]);
+      expect((await panggilGemini(K, {}, { fetchFn: fn, tidur: tanpaTidur })).teks).toBe("akhirnya");
+      expect(panggilan).toHaveLength(3);
+      expect(tanpaTidur.mock.calls.map((c) => c[0])).toEqual([4000, 12000]);
+    });
+
+    it("tiga kali ditolak: tiga panggilan saja, lalu galat sementara (antrean mengulang dari lokasi lain)", async () => {
+      tanpaTidur.mockClear();
+      const { fn, panggilan } = fetchPalsu([galatLokasi(), galatLokasi(), galatLokasi(), ok("tak terpakai")]);
+      const e = await panggilGemini(K, {}, { fetchFn: fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "lokasi", sementara: true });
+      expect(panggilan).toHaveLength(3);
+      expect(tanpaTidur).toHaveBeenCalledTimes(2);
+    });
+
+    it("huruf besar-kecil tak berpengaruh; 400 lain (isi salah, parameter tak dikenal) tetap 'permintaan' yang tidak diulang", async () => {
+      const kecil = await panggilGemini(K, {}, { fetchFn: fetchPalsu([galat(400, "user LOCATION is not Supported"), galat(400, "USER LOCATION IS NOT SUPPORTED"), galat(400, "user location is not supported for the api use")]).fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(kecil).toMatchObject({ jenis: "lokasi" });
+      const { fn, panggilan } = fetchPalsu([galat(400, "Thinking level MINIMAL is not supported for this model"), ok("tak terpakai")]);
+      const lain = await panggilGemini(K, {}, { fetchFn: fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(lain).toMatchObject({ jenis: "permintaan", sementara: false });
+      expect(panggilan).toHaveLength(1);
+    });
+
+    it("hanya HTTP 400: pesan yang sama pada status lain tidak digolongkan lokasi", async () => {
+      const e = await panggilGemini(K, {}, { fetchFn: fetchPalsu([galat(403, LOKASI)]).fn }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "kunci" });
+      const f = await panggilGemini(K, {}, { fetchFn: fetchPalsu([galat(404, LOKASI)]).fn }).catch((x) => x);
+      expect(f).toMatchObject({ jenis: "model" });
+    });
+
+    it("pingGemini (geminiCek) melaporkannya sebagai 'lokasi' setelah tiga percobaan", async () => {
+      tanpaTidur.mockClear();
+      const e = await pingGemini(K, { fetchFn: fetchPalsu([galatLokasi(), galatLokasi(), galatLokasi()]).fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "lokasi", sementara: true });
+    });
+  });
+
   it("gangguan jaringan diulang; lewat batas waktu tidak diulang di tempat", async () => {
     tanpaTidur.mockClear();
     const a = fetchPalsu([new TypeError("fetch failed"), ok("pulih")]);

@@ -140,9 +140,10 @@ export type JenisGalatGemini =
   | "kuota" //         429: laju atau kuota Google habis (sementara)
   | "server" //        5xx dari Google (sementara)
   | "jaringan" //     Google tak terjangkau atau melewati batas waktu (sementara)
+  | "lokasi" //       400 "User location is not supported": Google menilai alamat keluar pusat data Cloudflare tempat Worker berjalan berada di wilayah tak didukung; sifat lokasi eksekusi, bukan dokumen atau kunci (sementara)
   | "tertunda"; //     tenggat giliran habis di tengah pembacaan; bagian yang selesai tersimpan, sisanya dilanjutkan (sementara)
 
-const SEMENTARA: ReadonlySet<JenisGalatGemini> = new Set(["kuota", "server", "jaringan", "tertunda"]);
+const SEMENTARA: ReadonlySet<JenisGalatGemini> = new Set(["kuota", "server", "jaringan", "tertunda", "lokasi"]);
 
 /**
  * Galat pemanggilan Gemini. Yang `sementara` layak dicoba lagi nanti (konsumer antrean mengulang pesan dengan jeda
@@ -363,6 +364,16 @@ async function galatDariRespons(res: Response, k: KonfigGemini): Promise<GalatGe
   const status = res.status;
   const rincian = { status };
   const sisipan = ringkas ? `: ${ringkas}` : "";
+  // Google menilai lokasi dari alamat IP keluar. Worker berjalan di pusat data Cloudflare terdekat dengan pemanggilnya (kadang
+  // Hong Kong atau Singapura), dan alamat sebagian pusat data dikenali sebagai wilayah yang tak didukung. Itu keadaan lokasi
+  // eksekusi, bukan salah dokumen atau kunci: percobaan berikutnya (alamat atau pusat data lain) bisa berhasil, jadi bukan "permintaan".
+  if (status === 400 && /user location is not supported/i.test(pesan)) {
+    return new GalatGemini(
+      "lokasi",
+      `Google menolak lokasi tempat Worker berjalan (HTTP 400)${sisipan}. Dicoba lagi di lokasi lain; bila terus terjadi, tetapkan placement.region ke wilayah AS di wrangler.jsonc`,
+      { status, jedaDetik: 120 },
+    );
+  }
   // Kunci yang salah dijawab 400 INVALID_ARGUMENT ("API key not valid"), bukan 401.
   if (status === 401 || status === 403 || /API[ _]?KEY/i.test(`${pesan} ${kode}`)) {
     return new GalatGemini("kunci", `Gemini menolak kunci (HTTP ${status})${sisipan}`, rincian);
@@ -375,7 +386,7 @@ async function galatDariRespons(res: Response, k: KonfigGemini): Promise<GalatGe
   return new GalatGemini("permintaan", `Gemini menolak permintaan (HTTP ${status})${sisipan}`, rincian);
 }
 
-/** Satu pemanggilan generateContent, dengan pengulangan untuk gangguan jaringan dan 5xx. Kuota (429) langsung dilaporkan. */
+/** Satu pemanggilan generateContent, dengan pengulangan untuk gangguan jaringan, 5xx, dan penolakan lokasi (alamat keluar bisa berganti). Kuota (429) langsung dilaporkan. */
 export async function panggilGemini(k: KonfigGemini, badan: unknown, opsi: OpsiPanggilan = {}): Promise<HasilPanggilan> {
   const fetchFn = opsi.fetchFn ?? fetch;
   const tidur = opsi.tidur ?? tidurNyata;
@@ -417,7 +428,7 @@ export async function panggilGemini(k: KonfigGemini, badan: unknown, opsi: OpsiP
     }
 
     const galat = await galatDariRespons(res, k);
-    if (galat.jenis === "server" && percobaan < MAKS_PERCOBAAN) {
+    if ((galat.jenis === "server" || galat.jenis === "lokasi") && percobaan < MAKS_PERCOBAAN) {
       await tidur(JEDA_ULANG_MS[percobaan - 1] ?? 12_000);
       continue;
     }

@@ -71,6 +71,38 @@ export function buatKonteksIngest(env: Env): KonteksIngest {
   };
 }
 
+/**
+ * Lokasi keluar Worker menurut Cloudflare (cdn-cgi/trace), mis. "colo=SIN loc=SG". Hanya untuk diagnosis galat lokasi Gemini; yang gagal
+ * menghasilkan teks kosong.
+ */
+export async function jejakLokasiKeluar(fetchFn: typeof fetch = fetch): Promise<string> {
+  try {
+    const res = await fetchFn("https://www.cloudflare.com/cdn-cgi/trace", { signal: AbortSignal.timeout(3000) });
+    const teks = await res.text();
+    const ambil = (kunci: string) => new RegExp(`^${kunci}=(\\S+)$`, "m").exec(teks)?.[1];
+    return [ambil("colo") && `colo=${ambil("colo")}`, ambil("loc") && `loc=${ambil("loc")}`].filter(Boolean).join(" ");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Galat sementara Gemini di konsumer antrean hanya diulang antrean dan tak meninggalkan jejak di D1, jadi "pesan terus diulang tetapi tak
+ * ada hasilnya" tak terlihat dari luar. Satu baris `sync_log` (job `gemini_galat`) per jenis galat per 10 menit; pada galat lokasi
+ * ditambah lokasi keluar Worker, karena itulah yang dinilai Google. Tak pernah melempar: diagnosis tak boleh mengganggu pengulangan.
+ */
+export async function catatGalatGeminiSementara(ctx: KonteksIngest, e: GalatGemini, uri: string | null, fetchFn: typeof fetch = fetch): Promise<void> {
+  try {
+    const kunci = `gemini:galat:${e.jenis}`;
+    if (ctx.kv && (await ctx.kv.get(kunci))) return;
+    await ctx.kv?.put(kunci, "1", { expirationTtl: 600 });
+    const jejak = e.jenis === "lokasi" ? await jejakLokasiKeluar(fetchFn) : "";
+    await catatLog(ctx.db, "gemini_galat", "gagal", `${uri ? `${uri}: ` : ""}${e.jenis}: ${e.message}${jejak ? ` [${jejak}]` : ""}`.slice(0, 400));
+  } catch {
+    /* sengaja diam */
+  }
+}
+
 async function catatLog(
   db: D1Database,
   job: string,

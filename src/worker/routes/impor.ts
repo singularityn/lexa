@@ -533,9 +533,18 @@ impor.post("/ringkas", async (c) => {
 // ditulis; teks Gemini diarsipkan di teks-ai/ untuk diperiksa. Jalankan ini lebih dulu pada beberapa peraturan sebelum membaca
 // sungguhan lewat ekstrak-ulang `gemini`.
 // ---------------------------------------------------------------------------
+/**
+ * Di mana Worker berjalan untuk permintaan ini: kode bandara pusat data Cloudflare (`colo`) dan, bila placement dipasang, penempatannya
+ * (`cf-placement`, mis. "remote-IAD"). Google menolak alamat keluar dari wilayah tertentu ("User location is not supported"), jadi
+ * lokasi ini yang pertama diperiksa bila `geminiCek` gagal. null di luar Cloudflare (uji, pratinjau lokal).
+ */
+function lokasiEksekusi(c: Context<{ Bindings: Bindings }>) {
+  return { colo: c.req.raw.cf?.colo ?? null, placement: c.req.header("cf-placement") ?? null };
+}
+
 function jawabGalatGemini(c: Context<{ Bindings: Bindings }>, e: GalatGemini) {
   return c.json(
-    { error: "gemini_galat", jenis: e.jenis, status: e.status ?? null, sementara: e.sementara, message: e.message },
+    { error: "gemini_galat", jenis: e.jenis, status: e.status ?? null, sementara: e.sementara, message: e.message, lokasi_worker: lokasiEksekusi(c) },
     e.jenis === "anggaran" ? 429 : 502,
     headerCors(c),
   );
@@ -556,6 +565,7 @@ impor.get("/gemini-cek", async (c) => {
       {
         tersedia: true, model: k.model, versi_model: ping.versiModel, alamat: new URL(k.baseUrl).host, balasan: ping.balasan,
         berpikir: k.berpikir, halaman_per_panggilan: k.halamanPerPanggilan, paralel: k.paralel, halaman_maks: k.halamanMaks,
+        lokasi_worker: lokasiEksekusi(c),
         selesai: ping.selesai, token: ping.token, durasi_ms: ping.durasiMs, anggaran: { terpakai, batas: k.anggaranHarian },
       },
       200,

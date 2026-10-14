@@ -21,7 +21,7 @@ import { tanya } from "./routes/tanya";
 import { koleksi } from "./routes/koleksi";
 import { layaniPeraturan } from "./lib/pratinjau";
 import { bacaCakupan, klausaCakupan } from "../shared/cakupan";
-import { buatKonteksIngest, prosesPesanIngest, type PesanIngest } from "./lib/ingest";
+import { buatKonteksIngest, catatGalatGeminiSementara, prosesPesanIngest, type PesanIngest } from "./lib/ingest";
 import { GalatGemini } from "./lib/gemini";
 import { catatDenyut } from "./lib/keadaan";
 import { CRON_GEMINI, CRON_HARIAN } from "./lib/jadwal";
@@ -143,6 +143,7 @@ export default {
         // retry() memakai backoff bawaan Queues; setelah max_retries pesan jatuh ke lexa-ingest-dlq untuk diperiksa manual.
         // Kuota atau gangguan Gemini membawa jeda yang disarankan (Retry-After): mengulang seketika hanya menghabiskan percobaan.
         const jeda = e instanceof GalatGemini ? e.jedaDetik : undefined;
+        if (e instanceof GalatGemini && e.sementara) await catatGalatGeminiSementara(ctx, e, (pesan.body as { frbr_uri?: string } | undefined)?.frbr_uri ?? null);
         if (jeda) pesan.retry({ delaySeconds: Math.min(jeda, 3600) });
         else pesan.retry();
       }

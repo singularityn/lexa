@@ -105,6 +105,8 @@ describe("skrip panen BPK: geminiCek", () => {
     expect(baris).toContain("model gemini-pratinjau (versi gemini-pratinjau-001)");
     expect(baris).toContain("anggaran token hari ini 12 dari 5.000.000");
     expect(baris).toContain("pengaturan: berpikir bawaan model, 4 halaman per panggilan, 3 paralel, PDF lebih dari 120 halaman ditolak");
+    expect(baris).not.toMatch(/undefined|null|NaN/); // pratinjau lokal tanpa pusat data: bagian lokasi dilewati, bukan dicetak kosong
+    expect(hasil.geminiCek.lokasi_worker).toEqual({ colo: null, placement: null });
     expect((await ringkasanGemini()).anggaran.terpakai).toBe(12);
   });
 

@@ -9,8 +9,9 @@ import { PDFDocument } from "pdf-lib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bacaKonfigGemini } from "../../src/worker/lib/gemini";
 import { bacaNaskahGemini, catatPembacaanAi, cuplikanNaskah, kesesuaianTeks, nomorLamaHilang, putuskanPenerimaanAi } from "../../src/worker/lib/ingest";
+import worker from "../../src/worker/index";
 import {
-  baris, buatLingkungan, jalankanAntrean, json, kirim, konteksIngestUji, panggil, satu, sisipkan, sqliteAda, TOKEN_ADMIN, type Lingkungan,
+  ASAL, baris, buatLingkungan, jalankanAntrean, json, kirim, konteksIngestUji, panggil, satu, sisipkan, sqliteAda, TOKEN_ADMIN, type Lingkungan,
 } from "./harness";
 
 const adm = { "x-admin-token": TOKEN_ADMIN };
@@ -448,6 +449,102 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
       expect(tokenHariIni()).toEqual([]);
     });
 
+    describe("galat lokasi Google (400 'User location is not supported'): sifat lokasi eksekusi, bukan salah dokumen", () => {
+      const lokasi = () => galatHttp(400, "User location is not supported for the API use.");
+      /** Jawaban untuk jejak lokasi keluar (cdn-cgi/trace); selebihnya dijawab `gemini`. */
+      const pasangDenganJejak = (gemini: Array<Response | (() => Response)>) => {
+        const panggilan: string[] = [];
+        vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+          panggilan.push(String(url));
+          if (String(url).includes("cdn-cgi/trace")) return new Response("fl=1\nip=203.0.113.9\ncolo=HKG\nloc=HK\nhttp=http/2\n");
+          const j = gemini.shift();
+          if (!j) throw new Error("panggilan Gemini tak terduga");
+          return typeof j === "function" ? j() : j;
+        });
+        return panggilan;
+      };
+      /** Jalankan pesan sambil memajukan jeda ulang di tempat (4 dan 12 detik) tanpa menunggu sungguhan. */
+      const jalanDenganJeda = async (ubah: Record<string, unknown> = {}) => {
+        vi.useFakeTimers({ toFake: ["setTimeout"] });
+        try {
+          const p = jalan(ubah);
+          await vi.advanceTimersByTimeAsync(30_000);
+          return await p;
+        } finally {
+          vi.useRealTimers();
+        }
+      };
+
+      it("tiga kali ditolak: pesan dikembalikan ke antrean dengan jeda 120 detik, tanpa catatan 'gagal' dan tanpa anggaran terpakai", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        const panggilan = pasangDenganJejak([lokasi(), lokasi(), lokasi()]);
+        expect(await jalanDenganJeda()).toEqual({ diakui: 0, diulang: [{ penundaanDetik: 120 }] });
+        expect(panggilan.filter((u) => u.includes("generateContent"))).toHaveLength(3);
+        expect(await pembacaan()).toBeNull(); // dokumen ini tetap layak dicoba di lokasi lain
+        expect(tokenHariIni()).toEqual([]);
+        expect(await pasalTersimpan()).toEqual([]);
+      });
+
+      it("diulang di tempat dan berhasil pada percobaan kedua: pembacaan selesai seperti biasa", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        pasangDenganJejak([lokasi(), ok(NASKAH_AI)]);
+        expect(await jalanDenganJeda()).toEqual({ diakui: 1, diulang: [] });
+        expect(await pembacaan()).toMatchObject({ hasil: "dipakai", pasal_baru: 3 });
+      });
+
+      it("percobaan kering dari antrean (Cron): sama, tidak dicatat 'gagal' sehingga tidak hilang dari daftar calon", async () => {
+        pasangDenganJejak([lokasi(), lokasi(), lokasi()]);
+        expect(await jalanDenganJeda({ uji: true })).toEqual({ diakui: 0, diulang: [{ penundaanDetik: 120 }] });
+        expect(await pembacaan()).toBeNull();
+      });
+
+      it("terlihat dari D1: satu baris sync_log 'gemini_galat' memuat jenis, alamat peraturan, dan lokasi keluar Worker; tidak membanjir", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        pasangDenganJejak([lokasi(), lokasi(), lokasi(), lokasi(), lokasi(), lokasi()]);
+        await jalanDenganJeda();
+        await jalanDenganJeda(); // dalam 10 menit: tidak ditulis lagi
+        const catatan = await baris<{ detail: string; status: string }>(l, `SELECT detail, status FROM sync_log WHERE job = 'gemini_galat'`);
+        expect(catatan).toHaveLength(1);
+        expect(catatan[0].status).toBe("gagal");
+        expect(catatan[0].detail).toContain(URI);
+        expect(catatan[0].detail).toContain("lokasi: Google menolak lokasi tempat Worker berjalan");
+        expect(catatan[0].detail).toContain("[colo=HKG loc=HK]");
+        expect(catatan[0].detail).not.toContain("203.0.113.9"); // alamat IP tak dicatat
+        expect(catatan[0].detail).not.toContain(KUNCI);
+        // Pembatasnya kedaluwarsa dalam 10 menit.
+        const sisaDetik = ((l.kv.isi.get("gemini:galat:lokasi")?.kedaluwarsa ?? 0) - Date.now()) / 1000;
+        expect(sisaDetik).toBeGreaterThan(590);
+        expect(sisaDetik).toBeLessThanOrEqual(600);
+
+        // Sesudah 10 menit (kuncinya kedaluwarsa), galat yang sama dicatat lagi.
+        for (const k of [...l.kv.isi.keys()]) if (k.startsWith("gemini:galat:")) l.kv.isi.delete(k);
+        pasangDenganJejak([lokasi(), lokasi(), lokasi()]);
+        await jalanDenganJeda();
+        expect(await baris(l, `SELECT detail FROM sync_log WHERE job = 'gemini_galat'`)).toHaveLength(2);
+      });
+
+      it("jejak lokasi yang tak terjangkau tidak mengganggu pengulangan pesan (diagnosis hanya pelengkap)", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+          if (String(url).includes("cdn-cgi/trace")) throw new Error("jaringan putus");
+          return lokasi();
+        });
+        expect(await jalanDenganJeda()).toEqual({ diakui: 0, diulang: [{ penundaanDetik: 120 }] });
+        const [catat] = await baris<{ detail: string }>(l, `SELECT detail FROM sync_log WHERE job = 'gemini_galat'`);
+        expect(catat.detail).toContain("lokasi:");
+        expect(catat.detail).not.toContain("[colo");
+      });
+
+      it("galat sementara lain (429) juga dicatat satu kali per 10 menit, tanpa jejak lokasi", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        const panggilan = pasangDenganJejak([galatHttp(429, "quota exceeded", { "retry-after": "45" })]);
+        expect(await jalan()).toEqual({ diakui: 0, diulang: [{ penundaanDetik: 45 }] });
+        expect(panggilan.some((u) => u.includes("cdn-cgi/trace"))).toBe(false);
+        const [catat] = await baris<{ detail: string }>(l, `SELECT detail FROM sync_log WHERE job = 'gemini_galat'`);
+        expect(catat.detail).toContain("kuota:");
+      });
+    });
+
     it("kunci salah: berlaku untuk semua dokumen, jadi dilepas tanpa menandai dokumen ini 'gagal' (tetap layak dicoba setelah kunci diperbaiki)", async () => {
       await tanamLama({ vonis: "tanpa_pasal" });
       pasangGemini([galatHttp(400, `API key not valid. Please pass a valid API key. (${KUNCI})`)]);
@@ -706,6 +803,42 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
 
     it("menolak tanpa token admin", async () => {
       expect((await panggil(l, "/api/impor/gemini-cek")).status).toBe(401);
+    });
+
+    /** Panggil `gemini-cek` seolah-olah Worker berjalan di pusat data `colo` (properti `cf` yang diisi runtime Cloudflare). */
+    const cekDi = (colo: string, placement?: string) => {
+      const req = new Request(ASAL + "/api/impor/gemini-cek", { headers: { ...adm, ...(placement ? { "cf-placement": placement } : {}) } });
+      Object.defineProperty(req, "cf", { value: { colo } });
+      return worker.fetch(req, l.env, { waitUntil() {}, passThroughOnException() {} } as never);
+    };
+
+    it("melaporkan di pusat data mana Worker berjalan (colo dan placement); di luar Cloudflare keduanya null", async () => {
+      pasangGemini([ok("siap"), ok("siap"), ok("siap")]);
+      expect((await json<Record<string, unknown>>(await cek())).lokasi_worker).toEqual({ colo: null, placement: null });
+      expect((await json<Record<string, unknown>>(await cekDi("IAD"))).lokasi_worker).toEqual({ colo: "IAD", placement: null });
+      expect((await json<Record<string, unknown>>(await cekDi("IAD", "remote-IAD"))).lokasi_worker).toEqual({ colo: "IAD", placement: "remote-IAD" });
+    });
+
+    it("lokasi ditolak Google: 502 'lokasi' yang sementara, dengan pusat data tempat Worker berjalan, setelah tiga percobaan", async () => {
+      const panggilan = pasangGemini([
+        galatHttp(400, "User location is not supported for the API use."),
+        galatHttp(400, "User location is not supported for the API use."),
+        galatHttp(400, "User location is not supported for the API use."),
+      ]);
+      vi.useFakeTimers({ toFake: ["setTimeout"] });
+      try {
+        const p = cekDi("HKG", "local-HKG");
+        await vi.advanceTimersByTimeAsync(30_000);
+        const res = await p;
+        expect(res.status).toBe(502);
+        expect(await json(res)).toMatchObject({
+          error: "gemini_galat", jenis: "lokasi", sementara: true, status: 400,
+          message: expect.stringContaining("placement.region"), lokasi_worker: { colo: "HKG", placement: "local-HKG" },
+        });
+        expect(panggilan).toHaveLength(3);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("tanpa secret GEMINI_API: 503 dengan petunjuk pemasangan", async () => {
