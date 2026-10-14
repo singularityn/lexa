@@ -341,6 +341,41 @@ describe("skrip panen BPK: panen PDF", () => {
   });
 });
 
+describe("skrip panen BPK: opsi lama dan usang", () => {
+  it("lama: true meminta daftar kerja dengan lama=1 (peraturan berpasal dari teks lama ikut), tanpa itu tidak", async () => {
+    const permintaan = [];
+    page.on("request", (r) => {
+      if (r.url().includes("/api/impor/butuh-teks")) permintaan.push(r.url());
+    });
+    await pasangBpk({});
+    // Pratinjau: semua peraturan contoh sudah berpasal (teks lama), jadi daftar kerja bawaan kosong dan lama=1 memuatnya.
+    expect(await butuh("?batas=200")).toEqual([]);
+    expect((await butuh("?batas=200&lama=1")).length).toBeGreaterThan(3);
+    await jalankan({ kering: true });
+    await jalankan({ kering: true, lama: true, batas: 1 });
+    expect(permintaan).toHaveLength(2);
+    expect(permintaan[0]).not.toContain("lama=1");
+    expect(permintaan[1]).toContain("lama=1");
+  });
+
+  it("usang: true menguraikan ulang arsip teks lewat Lexa sampai habis, tanpa menyentuh BPK", async () => {
+    await pasangBpk({});
+    const awal = diminta.length;
+    const hasil = await jalankan({ usang: true, _jedaUsang: 5 });
+    expect(hasil.usang).toMatchObject({ diantrekan: 1, tersisaAwal: 1, berhentiKarena: "tidak ada lagi yang diantrekan" });
+    expect(diminta.length - awal, "tak ada permintaan ke BPK").toBe(0);
+    // Jenis lain tidak punya apa pun yang usang.
+    const kosong = await jalankan({ usang: true, jenis: "PP", _jedaUsang: 5 });
+    expect(kosong.usang).toMatchObject({ diantrekan: 0, tersisaAwal: 0 });
+  });
+
+  it("usang: token salah menghentikan sejak awal dengan galat yang jelas", async () => {
+    await pasangBpk({});
+    const galat = await page.evaluate((o) => window.lexaPanenBpk(o).then(() => null, (e) => e.message), { lexa: LEXA, token: "salah", usang: true, papan: false });
+    expect(galat).toContain("401");
+  });
+});
+
 describe("skrip panen BPK: penjelajahan daftar", () => {
   /** BPK palsu dengan daftar PP dua halaman: kartu 701-704 di halaman 1-2, kartu 705 (PP 99/2024) tak ada di Lexa. */
   const bpkDaftar = (tambahan = {}) => ({

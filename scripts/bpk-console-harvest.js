@@ -44,6 +44,12 @@
  *   terus         true: ulangi putaran panen PDF sampai daftar kerja habis, atau tak ada kemajuan, atau dihentikan
  *   jenis         "UU,PP" untuk menyaring jenis (bawaan: seluruh cakupan Lexa)
  *   celah         true: sertakan juga peraturan yang teksnya baru sebagian (nomor pasal bercelah)
+ *   lama          true: sertakan juga peraturan yang sudah berpasal dari teks lama (bukan dari BPK), supaya naskah BPK
+ *                 menggantikannya; didahulukan yang belum punya teks sama sekali. Jalankan sesudah yang tanpa teks habis
+ *   usang         true: tidak memanen apa pun dari BPK. Lexa menguraikan ulang arsip teks peraturan yang terakhir diurai
+ *                 dengan versi pengurai lama (POST /api/impor/ekstrak-ulang), per `batas` (maks 100) peraturan sekali
+ *                 jalan, sampai habis. Perlu SEKALI sesudah pengurai Lexa diperbarui; tab ini bisa dibuka di situs mana pun
+ *                 yang diizinkan Lexa. `jedaUsang`: jeda antarputaran dalam milidetik (bawaan 8000)
  *   jeda          jeda minimum antarpermintaan ke BPK dalam milidetik (bawaan 4000; minimum 2000; jangan dikecilkan)
  *   kering        true: tidak menulis apa pun ke Lexa (penjelajahan tak mengirim tautan, PDF diunduh tetapi tak diunggah)
  *   rincian       true: buka halaman rincian walau tautan PDF langsung dari daftar diketahui (metadata ikut diperbarui,
@@ -630,7 +636,7 @@
   async function panenPdf(ctx) {
     var opsi = ctx.opsi;
     var batas = Math.min(Math.max(Number(opsi.batas) || 50, 1), 200);
-    var query = "?batas=" + batas + (opsi.jenis ? "&jenis=" + encodeURIComponent(opsi.jenis) : "") + (opsi.celah ? "&celah=1" : "");
+    var query = "?batas=" + batas + (opsi.jenis ? "&jenis=" + encodeURIComponent(opsi.jenis) : "") + (opsi.celah ? "&celah=1" : "") + (opsi.lama ? "&lama=1" : "");
     var hasil = [];
     var gagalBeruntun = 0;
     var terakhir = null;
@@ -712,6 +718,43 @@
   }
 
   // ---------------------------------------------------------------------------------------------------------------
+  // Uraikan ulang arsip teks yang diurai dengan versi pengurai lama (tak menyentuh BPK)
+  // ---------------------------------------------------------------------------------------------------------------
+
+  async function uraikanUlangUsang(ctx) {
+    var opsi = ctx.opsi;
+    var batas = Math.min(Math.max(Number(opsi.batas) || 100, 1), 100);
+    var jeda = typeof opsi._jedaUsang === "number" ? opsi._jedaUsang : Math.max(Number(opsi.jedaUsang) || 8000, 1000);
+    var diantrekan = 0;
+    var tersisaAwal = null;
+    var tersisa = null;
+    var setelah = "";
+    var berhentiKarena = "";
+
+    for (var putaran = 1; !berhenti; putaran++) {
+      var badan = { usang: true, batas: batas };
+      if (setelah) badan.setelah = setelah;
+      if (opsi.jenis) badan.jenis = String(opsi.jenis).split(",").map(function (j) { return j.trim(); }).filter(Boolean);
+      var jawab = await kirimJson(ctx.lexaMinta, "/api/impor/ekstrak-ulang", badan);
+      if (tersisaAwal === null) {
+        tersisaAwal = jawab.usang_tersisa;
+        console.log("[Lexa panen] " + angka(jawab.usang_tersisa) + " peraturan diurai dengan versi pengurai lama (versi terkini " + jawab.versi_parser + "); diantrekan " + batas + " sekali jalan.");
+      }
+      tersisa = jawab.usang_tersisa;
+      if (!jawab.diantrekan) { berhentiKarena = "tidak ada lagi yang diantrekan"; break; }
+      diantrekan += jawab.diantrekan;
+      setelah = jawab.terakhir || "";
+      var catatan = "Uraikan ulang: " + angka(diantrekan) + " diantrekan; " + angka(tersisa) + " belum diurai ulang di Lexa\nTerakhir: " + setelah;
+      if (ctx.papan) ctx.papan.tulis(catatan);
+      console.log("[Lexa panen] putaran " + putaran + ": " + jawab.diantrekan + " diantrekan, " + angka(tersisa) + " belum diurai ulang (sampai " + setelah + ")");
+      // Antrean Cloudflare mengerjakannya di latar belakang; jeda supaya tidak menumpuk puluhan ribu pesan sekaligus.
+      await tungguSopan(jeda);
+    }
+    if (berhenti && !berhentiKarena) berhentiKarena = "dihentikan";
+    return { diantrekan: diantrekan, tersisaAwal: tersisaAwal, tersisaTerakhirDilihat: tersisa, berhentiKarena: berhentiKarena };
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
   // Analisis halaman yang sedang dibuka
   // ---------------------------------------------------------------------------------------------------------------
 
@@ -783,6 +826,13 @@
         console.warn("[Lexa panen] Lexa belum menjalankan versi terbaru (tanpa /api/impor/ringkasan); panen PDF tetap dilanjutkan.");
       }
       if (document.hidden) console.warn("[Lexa panen] Tab ini tersembunyi; peramban memperlambat tab semacam itu. Biarkan tab terlihat selama berjalan.");
+
+      if (opsi.usang) {
+        var ulang = await uraikanUlangUsang(ctx);
+        console.log("[Lexa panen] uraian ulang selesai:", ulang, "\nLexa mengerjakan antreannya di latar belakang; kemajuannya tampak lewat jumlah `usang_tersisa` pada panggilan berikutnya.");
+        if (ctx.papan) ctx.papan.tulis("Selesai: " + angka(ulang.diantrekan) + " diantrekan" + (ulang.berhentiKarena ? "\n(" + ulang.berhentiKarena + ")" : ""));
+        return { usang: ulang };
+      }
 
       var jel = null;
       if (opsi.jelajah || opsi.hanyaJelajah) {
