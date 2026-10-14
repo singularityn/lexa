@@ -184,6 +184,85 @@ describe('uraikanPasal: judul gaya lama bertitik ("Pasal 1.")', () => {
   });
 });
 
+describe("uraikanPasal: artefak halaman PDF tidak masuk ke isi pasal", () => {
+  const P = (n: number) => `\n\n\n\n### Page ${n}\n`;
+
+  it("pasal yang membentang antarhalaman tersambung bersih: tanpa penanda, kepala, kaki, dan catchword", () => {
+    const naskah = [
+      "BAB I\nKETENTUAN UMUM\nPasal 1\n(1) Setiap orang berhak atas upah yang layak.",
+      "(2) Upah dibayar tepat waktu sesuai kesepakatan yang dibuat antara pekerja dan pengusaha sebagaimana",
+      `dimaksud dalam Pasal 3.SK No 004269 A(3) Dalam...${P(2)}PRESIDEN\nREPUBLIK INDONESIA- 2 -(3) Dalam hal terjadi sengketa, para pihak menyelesaikannya secara musyawarah.`,
+      "Pasal 2\nKetentuan lebih lanjut diatur dengan Peraturan Pemerintah.www.peraturan.go.id",
+      `${P(3)}PRESIDEN\nREPUBLIK INDONESIA- 3 -Pasal 3\nUndang-undang ini mulai berlaku pada tanggal diundangkan.`,
+    ].join("\n");
+    const pasal = uraikanPasal(naskah);
+    expect(pasal.map((p) => [p.nomor_pasal, p.ayat])).toEqual([["1", "1"], ["1", "2"], ["1", "3"], ["2", null], ["3", null]]);
+    expect(pasal[1].isi).toBe("Upah dibayar tepat waktu sesuai kesepakatan yang dibuat antara pekerja dan pengusaha sebagaimana\ndimaksud dalam Pasal 3.");
+    expect(pasal[2].isi).toBe("Dalam hal terjadi sengketa, para pihak menyelesaikannya secara musyawarah.");
+    expect(pasal[3].isi).toBe("Ketentuan lebih lanjut diatur dengan Peraturan Pemerintah.");
+    for (const p of pasal) expect(p.isi).not.toMatch(/Page|REPUBLIK INDONESIA|SK No|www\.|\.\.\./);
+  });
+
+  it("judul pasal yang menempel pada kepala halaman ('REPUBLIK INDONESIA- 17 -Pasal 20') tetap terdeteksi sebagai pasal", () => {
+    const naskah = `Pasal 19\nIsi sembilan belas.${P(17)}PRESIDEN\nREPUBLIK INDONESIA- 17 -Pasal 20\nIsi dua puluh.${P(18)}PRESIDEN\nREPUBLIK INDONESIA- 18 -Pasal 21\nIsi dua puluh satu.`;
+    expect(uraikanPasal(naskah).map((p) => [p.nomor_pasal, p.isi])).toEqual([
+      ["19", "Isi sembilan belas."], ["20", "Isi dua puluh."], ["21", "Isi dua puluh satu."],
+    ]);
+  });
+
+  it("pembersihan juga berlaku sebelum PENJELASAN, yang tetap menghentikan penguraian", () => {
+    const naskah = `Pasal 1\nSatu.${P(2)}PRESIDEN\nREPUBLIK INDONESIA- 2 -Pasal 2\nDua.${P(3)}PRESIDEN\nREPUBLIK INDONESIA- 3 -PENJELASAN\nATAS\nPasal 1\nCukup jelas.`;
+    expect(uraikanPasal(naskah).map((p) => p.nomor_pasal)).toEqual(["1", "2"]);
+  });
+
+  it("judul PENJELASAN yang menempel pada kepala halaman tanpa nomor tetap menjadi batas (UU 7/1998 dan 700 peraturan lain)", () => {
+    // Produksi 14 Okt 2026: "PRESIDEN⏎REPUBLIK INDONESIAPENJELASAN" lolos dari batas penguraian, dan seluruh Penjelasan
+    // (hingga 24.000 karakter) tersimpan di pasal terakhir.
+    const naskah = [
+      "Pasal 2\nIsi dua.",
+      "Pasal 3\nUndang-undang ini mulai berlaku pada tanggal diundangkan.\nAgar setiap orang mengetahuinya, memerintahkan pengundangan Undang-undang ini.",
+      `Disahkan di Jakarta.\nPRESIDEN REPUBLIK INDONESIA,\nLEMBARAN NEGARA REPUBLIK INDONESIA TAHUN 1998 NOMOR 175${P(9)}PRESIDEN\nREPUBLIK INDONESIAPENJELASAN\nATAS\nUNDANG-UNDANG REPUBLIK INDONESIA\nNOMOR 7 TAHUN 1998\nTENTANG\nPERUBAHAN\nUMUM\nUraian umum.\nPASAL DEMI PASAL\nPasal 1\nCukup jelas.`,
+    ].join("\n");
+    const pasal = uraikanPasal(naskah);
+    expect(pasal.map((p) => p.nomor_pasal)).toEqual(["2", "3"]);
+    const akhir = pasal[pasal.length - 1].isi;
+    expect(akhir).toContain("LEMBARAN NEGARA REPUBLIK INDONESIA TAHUN 1998 NOMOR 175");
+    expect(akhir).not.toMatch(/PENJELASAN|UMUM|Uraian umum|Cukup jelas|^PRESIDEN$/m);
+  });
+
+  it("tanpa penanda halaman pun: kepala yang menempel dibuang dari pasal terakhir, dan judul yang menempel pada kata lain dipisah", () => {
+    const polos = uraikanPasal("Pasal 3\nIsi tiga.\nPRESIDEN\nREPUBLIK INDONESIAPENJELASAN\nATAS\nUNDANG-UNDANG\nPasal 1\nCukup jelas.");
+    expect(polos.map((p) => [p.nomor_pasal, p.isi])).toEqual([["3", "Isi tiga."]]);
+    const menempel = uraikanPasal("Pasal 3\nIsi tiga.\nLEMBARAN NEGARA NOMOR 175PENJELASAN\nATAS\nUNDANG-UNDANG\nPasal 1\nCukup jelas.");
+    expect(menempel.map((p) => [p.nomor_pasal, p.isi])).toEqual([["3", "Isi tiga.\nLEMBARAN NEGARA NOMOR 175"]]);
+  });
+
+  it("pindaian yang menyambung judul tanpa spasi ('PENJELASANATASUNDANG-UNDANG') juga menjadi batas", () => {
+    const naskah = `Pasal 1\nSatu.\nPasal 2\nDua.${P(30)}PENJELASANATASUNDANG-UNDANG REPUBLIK INDONESIA\nNOMOR 38 TAHUN 2014TENTANG\nKEPERAWATANI. UMUMKesehatan sebagai hak asasi.`;
+    const pasal = uraikanPasal(naskah);
+    expect(pasal.map((p) => [p.nomor_pasal, p.isi])).toEqual([["1", "Satu."], ["2", "Dua."]]);
+  });
+
+  it("'PENJELASAN' di dalam kalimat atau huruf kecil tidak menghentikan penguraian", () => {
+    const naskah = "Pasal 1\nUraian ini dijelaskan dalam PENJELASAN pasal lain.\nPasal 2\nSebagaimana dalam penjelasan ayat ini.\nPasal 3\nTiga.";
+    expect(uraikanPasal(naskah).map((p) => p.nomor_pasal)).toEqual(["1", "2", "3"]);
+  });
+
+  it("pasal di dalam sel tabel ('| Pasal 1 |') terbaca sebagai judul, tanpa pipa di isinya", () => {
+    const naskah = "| Pasal 1 |\n| Dalam Undang-Undang ini yang dimaksud dengan petani. |\n| - |\n| Pasal 2 |\n| Isi dua\nsambungan. |";
+    expect(uraikanPasal(naskah).map((p) => [p.nomor_pasal, p.isi])).toEqual([
+      ["1", "Dalam Undang-Undang ini yang dimaksud dengan petani."],
+      ["2", "Isi dua\nsambungan."],
+    ]);
+  });
+
+  it("naskah yang sudah bersih menghasilkan pasal yang sama (bersih dua kali = sekali)", () => {
+    const kotor = `Pasal 1\n(1) Satu.\nPemantau . . .${P(2)}PRESIDEN\nREPUBLIK INDONESIA- 2 -(2) Pemantau dua.\nPasal 2\nDua.`;
+    const sekali = uraikanPasal(kotor);
+    expect(sekali.map((p) => p.isi)).toEqual(["Satu.", "Pemantau dua.", "Dua."]);
+  });
+});
+
 describe("uraikanPasal", () => {
   const naskah = [
     "# UNDANG-UNDANG",

@@ -239,6 +239,24 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
       expect(baris?.nomor_pasal).toBe("1O");
     });
 
+    it("penjelasan menurut urutan naskah (Umum dulu); kosong bila belum ada; tabel belum ada (migrasi 0007) sama dengan kosong", async () => {
+      const uri = "/akn/id/act/uu/2003/13";
+      expect((await json<{ penjelasan: unknown[] }>(await detail(uri))).penjelasan).toEqual([]);
+
+      for (const [i, [nomor, isi]] of [["Umum", "Uraian umum."], ["156", "Cukup jelas."], ["82", "Ayat (1)\nCukup jelas."]].entries()) {
+        await l.db.prepare(`INSERT INTO penjelasan (frbr_uri, nomor_pasal, isi, urutan) VALUES (?,?,?,?)`).bind(uri, nomor, isi, i).run();
+      }
+      await l.db.prepare(`INSERT INTO penjelasan (frbr_uri, nomor_pasal, isi, urutan) VALUES (?,?,?,?)`).bind("/akn/id/act/uu/2020/11", "1", "Milik peraturan lain.", 0).run();
+      expect((await json<{ penjelasan: unknown[] }>(await detail(uri))).penjelasan).toEqual([
+        { nomor_pasal: "Umum", isi: "Uraian umum." }, { nomor_pasal: "156", isi: "Cukup jelas." }, { nomor_pasal: "82", isi: "Ayat (1)\nCukup jelas." },
+      ]);
+
+      await l.db.exec(`DROP TABLE penjelasan`);
+      const res = await detail(uri);
+      expect(res.status).toBe(200);
+      expect((await json<{ penjelasan: unknown[]; articles: unknown[] }>(res))).toMatchObject({ penjelasan: [], articles: [expect.anything(), expect.anything()] });
+    });
+
     it("relasi menyertakan metadata peraturan tujuan (LEFT JOIN)", async () => {
       const b = await json<{ relations: Array<Record<string, unknown>> }>(await detail("/akn/id/act/uu/2020/11"));
       expect(b.relations).toEqual([

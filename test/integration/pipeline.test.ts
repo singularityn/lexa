@@ -264,7 +264,7 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       ]);
       expect(await l.db.prepare(`SELECT jumlah_pasal FROM laws`).first()).toEqual({ jumlah_pasal: 5 });
       expect(await l.db.prepare(`SELECT catatan FROM ekstraksi_log`).first()).toEqual({
-        catatan: "dipertahankan: 5 pasal tersimpan lebih banyak dari 3 hasil PDF",
+        catatan: "dipertahankan: 5 nomor pasal tersimpan lebih banyak dari 2 hasil PDF",
       });
       expect(await l.r2.get("teks/akn/id/act/pp/2025/99.md").then((o) => o?.text())).toBe(NASKAH); // teks konversi tetap diarsipkan
     });
@@ -546,6 +546,21 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       await tanam("/akn/id/act/uu/2000/3", { bpkId: "3" }); // tanpa teks
       expect((await daftar()).daftar.map((d) => d.frbr_uri)).toEqual(["/akn/id/act/uu/2000/3"]);
       expect((await daftar("?celah=1")).daftar.map((d) => d.frbr_uri).sort()).toEqual(["/akn/id/act/uu/2000/2", "/akn/id/act/uu/2000/3"]);
+    });
+
+    it("lama=1 menyertakan peraturan berpasal dari teks lama (bukan BPK) yang belum ber-PDF, sesudah yang tanpa teks sama sekali", async () => {
+      await tanam("/akn/id/act/uu/2020/1", { pasal: [1, 2, 3], bpkId: "1", tahun: 2020 }); // teks lama: tak ada arsip BPK
+      await tanam("/akn/id/act/uu/2020/2", { bpkId: "2", tahun: 2020 }); // tanpa teks, tahun sama: harus didahulukan
+      await tanam("/akn/id/act/uu/2021/3", { pasal: [1, 2], bpkId: "3", tahun: 2021 });
+      await l.db.prepare(`UPDATE laws SET r2_text_key = 'teks/akn/id/act/uu/2021/3.md' WHERE frbr_uri = '/akn/id/act/uu/2021/3'`).run(); // sudah teks BPK
+      await tanam("/akn/id/act/uu/2019/4", { pasal: [1], bpkId: "4", tahun: 2019, pdf: "pdf/akn/id/act/uu/2019/4.pdf" }); // PDF-nya sudah ada
+      await tanam("/akn/id/act/uu/2022/5", { pasal: [1], bpkId: "5", tahun: 2022 });
+      await l.db.prepare(`UPDATE laws SET r2_text_key = 'teks/akn/id/act/uu/2022/5.txt' WHERE frbr_uri = '/akn/id/act/uu/2022/5'`).run(); // arsip lama (.txt)
+
+      expect((await daftar()).daftar.map((d) => d.frbr_uri)).toEqual(["/akn/id/act/uu/2020/2"]);
+      const lama = await daftar("?lama=1");
+      expect(lama.total).toBe(3);
+      expect(lama.daftar.map((d) => d.frbr_uri)).toEqual(["/akn/id/act/uu/2020/2", "/akn/id/act/uu/2022/5", "/akn/id/act/uu/2020/1"]);
     });
 
     it("sesudah PDF-nya diunggah, peraturan tak muncul lagi (pemanggilan berikutnya mengembalikan yang baru)", async () => {

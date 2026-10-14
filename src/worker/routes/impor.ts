@@ -11,13 +11,14 @@
  *   POST /manifest       metadata dan relasi dari halaman rincian BPK
  *   PUT  /pdf            berkas PDF sebuah peraturan; diantrekan untuk diekstrak menjadi pasal
  *   POST /tanpa-berkas   tandai peraturan yang di BPK memang tak berkas PDF (tak diminta lagi)
- *   POST /ekstrak-ulang  antrekan ulang ekstraksi PDF yang sudah tersimpan tetapi belum menghasilkan pasal
+ *   POST /ekstrak-ulang  antrekan ulang ekstraksi PDF yang sudah tersimpan: yang belum menghasilkan pasal, atau (`usang`) yang
+ *                        diurai dengan versi pengurai lama
  *   POST /ringkas        antrekan ringkasan AI untuk peraturan yang sudah berteks tetapi belum beringkasan
  */
 
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { petakanDokumen, type DokumenBpk, type Manifest } from "../lib/bpk";
+import { petakanDokumen, VERSI_PARSER, type DokumenBpk, type Manifest } from "../lib/bpk";
 import { tokenSah } from "../lib/auth";
 import { batchBerkelompok, pilihDalam } from "../lib/d1";
 import { headerCors as corsUntuk } from "../lib/cors";
@@ -76,6 +77,8 @@ async function hitungTanpaBerkas(db: D1Database): Promise<number> {
 //   ?jenis=UU,PP   saring jenis (bawaan: seluruh cakupan)
 //   ?batas=50      paling banyak berapa (1-200, bawaan 50)
 //   ?celah=1       sertakan juga peraturan yang teksnya sebagian (nomor pasalnya bercelah)
+//   ?lama=1        sertakan juga peraturan berpasal dari teks lama (sumber yang sudah dihentikan), supaya naskah BPK
+//                  menggantikannya; didahulukan yang belum punya teks sama sekali
 //   ?semua=1       sertakan juga yang sudah ditandai "tanpa berkas" di BPK (untuk memeriksa ulang)
 // Yang sudah diunggah PDF-nya (r2_pdf_key) tak muncul lagi, jadi pemanggilan berikutnya mengembalikan yang baru.
 // ---------------------------------------------------------------------------
@@ -85,25 +88,33 @@ impor.get("/butuh-teks", async (c) => {
   const jenis = diminta.length ? cakupan.filter((j) => diminta.includes(j)) : cakupan;
   const batas = Math.min(Math.max(Number(c.req.query("batas")) || 50, 1), 200);
   const denganCelah = c.req.query("celah") === "1";
+  const denganLama = c.req.query("lama") === "1";
   const semua = c.req.query("semua") === "1";
   if (!jenis.length) {
     return c.json({ error: "di_luar_cakupan", message: `Jenis di luar cakupan Lexa: ${cakupan.join(", ")}.`, cakupan }, 400, headerCors(c));
   }
 
   const dalam = klausaCakupan(jenis, "l.jenis");
-  // Tanpa teks sama sekali, atau (bila diminta) yang teksnya sebagian, dengan nomor pasal bercelah. Yang PDF-nya sudah diunggah tak diulang.
-  const kondisi = denganCelah
-    ? `(l.jumlah_pasal = 0 OR l.frbr_uri IN (
+  // Tanpa teks sama sekali, atau (bila diminta) yang teksnya sebagian, dengan nomor pasal bercelah (`celah`), atau yang
+  // berpasal dari teks lama sumber yang sudah dihentikan, bukan dari BPK (`lama`): naskah BPK akan menggantikannya bila cukup
+  // utuh. Yang PDF-nya sudah diunggah tak diulang.
+  const kondisi = `(${[
+    "l.jumlah_pasal = 0",
+    ...(denganCelah
+      ? [`l.frbr_uri IN (
          SELECT a.frbr_uri FROM articles a WHERE a.nomor_pasal GLOB '[0-9]*'
-          GROUP BY a.frbr_uri HAVING MAX(CAST(a.nomor_pasal AS INTEGER)) - COUNT(DISTINCT a.nomor_pasal) >= 2))`
-    : `l.jumlah_pasal = 0`;
+          GROUP BY a.frbr_uri HAVING MAX(CAST(a.nomor_pasal AS INTEGER)) - COUNT(DISTINCT a.nomor_pasal) >= 2)`]
+      : []),
+    ...(denganLama ? ["(l.jumlah_pasal > 0 AND (l.r2_text_key IS NULL OR l.r2_text_key NOT LIKE '%.md'))"] : []),
+  ].join(" OR ")})`;
   const tanpaTanda = semua ? "" : `AND NOT EXISTS (SELECT 1 FROM sync_state s WHERE s.key = '${AWALAN_TANPA_BERKAS}' || l.frbr_uri)`;
   const dasar = `FROM laws l WHERE ${dalam} AND ${kondisi} AND l.r2_pdf_key IS NULL ${tanpaTanda}`;
 
   const { results } = await c.env.DB.prepare(
     `SELECT l.frbr_uri, l.jenis, l.nomor, l.tahun, l.judul, l.bpk_id, l.sumber_url, l.jumlah_pasal, l.isi_status
        ${dasar}
-      ORDER BY (CASE WHEN l.bpk_id IS NOT NULL AND l.bpk_id <> '' THEN 0 ELSE 1 END), ${sqlPrioritas("l.")}, l.frbr_uri
+      ORDER BY (CASE WHEN l.jumlah_pasal > 0 THEN 1 ELSE 0 END), (CASE WHEN l.bpk_id IS NOT NULL AND l.bpk_id <> '' THEN 0 ELSE 1 END),
+               ${sqlPrioritas("l.")}, l.frbr_uri
       LIMIT ?`,
   ).bind(batas).all<{
     frbr_uri: string; jenis: string; nomor: string; tahun: number; judul: string; bpk_id: string | null;
@@ -476,7 +487,7 @@ impor.post("/ringkas", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/impor/ekstrak-ulang — { uri?: string, batas?: number, jenis?: string[], dariTeks?: boolean }
+// POST /api/impor/ekstrak-ulang — { uri?: string, batas?: number, jenis?: string[], dariTeks?: boolean, usang?: boolean, setelah?: string }
 //
 // Mengantrekan ulang ekstraksi PDF yang sudah tersimpan di R2 tetapi belum menghasilkan pasal (mis. setelah pengurai
 // pasal diperbaiki). Tanpa `uri`: peraturan ber-PDF yang jumlah_pasal-nya 0, yang belum pernah dicoba didahulukan, paling
@@ -486,9 +497,17 @@ impor.post("/ringkas", async (c) => {
 // `dariTeks: true` menguraikan arsip teks hasil konversi yang sudah ada (laws.r2_text_key), tanpa membaca PDF dan tanpa
 // konversi Workers AI: cukup untuk memulihkan hasil perbaikan pengurai. Peraturan tanpa arsip tetap dikonversi dari PDF-nya.
 // Jangan dipakai bila PDF-nya baru diganti dan konversinya belum berhasil: arsip itu milik PDF yang lama.
+//
+// `usang: true` menguraikan ulang (selalu dari arsip teks, tanpa konversi) peraturan yang terakhir diurai dengan versi pengurai
+// lebih lama dari yang berlaku (ekstraksi_log.versi_parser < VERSI_PARSER; migrasi 0007), menurut urutan alamat. `batas` (1-100)
+// peraturan per panggilan; jawabannya memuat `terakhir`, yang diteruskan sebagai `setelah` pada panggilan berikutnya, sampai
+// `diantrekan` bernilai 0. `usang_tersisa` menyusut seiring antrean dikerjakan. Hasil ekstraksi yang gagal atau PDF yang
+// ditolak tak ditawarkan: tak ada yang bisa diperbaiki dari arsip teksnya.
 // ---------------------------------------------------------------------------
 impor.post("/ekstrak-ulang", async (c) => {
-  const body = await c.req.json<{ uri?: unknown; batas?: unknown; jenis?: unknown; dariTeks?: unknown }>().catch(() => null);
+  const body = await c.req
+    .json<{ uri?: unknown; batas?: unknown; jenis?: unknown; dariTeks?: unknown; usang?: unknown; setelah?: unknown }>()
+    .catch(() => null);
   const dariTeks = body?.dariTeks === true;
   const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
   const batas = Math.min(Math.max(Number(body?.batas) || 25, 1), 100);
@@ -499,6 +518,39 @@ impor.post("/ekstrak-ulang", async (c) => {
   }
 
   const dalam = klausaCakupan(jenis, "l.jenis");
+
+  if (body?.usang === true) {
+    const setelah = typeof body.setelah === "string" ? body.setelah : "";
+    const dasar = `FROM laws l JOIN ekstraksi_log e ON e.frbr_uri = l.frbr_uri
+                   WHERE ${dalam} AND l.r2_pdf_key IS NOT NULL AND e.vonis <> 'gagal' AND e.versi_parser < ?`;
+    try {
+      const { results } = await c.env.DB.prepare(`SELECT l.frbr_uri, l.r2_pdf_key ${dasar} AND l.frbr_uri > ? ORDER BY l.frbr_uri LIMIT ?`)
+        .bind(VERSI_PARSER, setelah, batas)
+        .all<{ frbr_uri: string; r2_pdf_key: string }>();
+      if (results.length) {
+        await c.env.INGEST_QUEUE.sendBatch(
+          results.map((r) => ({ body: { tipe: "ekstrak_pdf", frbr_uri: r.frbr_uri, r2_key: r.r2_pdf_key, dari_teks: true } satisfies PesanIngest })),
+        );
+      }
+      const sisa = await c.env.DB.prepare(`SELECT COUNT(*) AS n ${dasar}`).bind(VERSI_PARSER).first<{ n: number }>();
+      return c.json(
+        {
+          diantrekan: results.length, usang_tersisa: sisa?.n ?? 0, versi_parser: VERSI_PARSER,
+          terakhir: results.at(-1)?.frbr_uri ?? null, uris: results.slice(0, 20).map((r) => r.frbr_uri),
+        },
+        200,
+        headerCors(c),
+      );
+    } catch (e) {
+      if (!/versi_parser/.test(String(e))) throw e;
+      return c.json(
+        { error: "migrasi_belum_diterapkan", message: "Kolom ekstraksi_log.versi_parser belum ada: terapkan migrasi 0007 (npm run d1:migrate:remote) lebih dulu." },
+        503,
+        headerCors(c),
+      );
+    }
+  }
+
   const uri = typeof body?.uri === "string" ? body.uri : null;
   const { results } = uri
     ? await c.env.DB.prepare(`SELECT l.frbr_uri, l.r2_pdf_key FROM laws l WHERE l.frbr_uri = ? AND ${dalam} AND l.r2_pdf_key IS NOT NULL`)

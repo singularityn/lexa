@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import type { BrowseResponse, LawDetailResponse, Law, Article, Relation, SearchMode, SearchFilters, StatusPeraturan } from "../../shared/types";
+import type { BrowseResponse, LawDetailResponse, Law, Article, PenjelasanPasal, Relation, SearchMode, SearchFilters, StatusPeraturan } from "../../shared/types";
 import { cariDenganCache, type KonteksPencarian } from "../lib/search";
 import { pilahBerjudul } from "../lib/judul";
 import { uraiKueri } from "../lib/query";
@@ -261,7 +261,7 @@ api.get("/laws/detail", async (c) => {
   }
   const uri = law.frbr_uri;
 
-  const [articles, relations] = await Promise.all([
+  const [articles, relations, penjelasan] = await Promise.all([
     c.env.DB.prepare(
       `SELECT id, frbr_uri, nomor_pasal, ayat, bab, bagian, judul, isi, urutan
          FROM articles WHERE frbr_uri = ? ORDER BY urutan`,
@@ -277,11 +277,18 @@ api.get("/laws/detail", async (c) => {
         WHERE r.from_uri = ?
         ORDER BY r.jenis_relasi, l.tahun DESC`,
     ).bind(uri).all<Relation>(),
+
+    // Tabel `penjelasan` baru ada setelah migrasi 0007; sebelum itu tak adanya tabel sama dengan tak adanya penjelasan.
+    c.env.DB.prepare(`SELECT nomor_pasal, isi FROM penjelasan WHERE frbr_uri = ? ORDER BY urutan`)
+      .bind(uri)
+      .all<PenjelasanPasal>()
+      .catch(() => ({ results: [] as PenjelasanPasal[] })),
   ]);
 
   const body: LawDetailResponse = {
     law: rapikanLaw(law),
     articles: articles.results.map(rapikanArtikel),
+    penjelasan: penjelasan.results.map(rapikanArtikel),
     // Relasi ke peraturan di luar cakupan disembunyikan: tautannya hanya akan berujung "di luar cakupan". Tujuan yang
     // barisnya ada dinilai dari kolom `jenis`-nya; yang belum ter-ingest dari URI-nya (hanya yang jelas di luar yang disembunyikan).
     relations: await perbaikiRelasiBeralias(

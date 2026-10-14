@@ -9,6 +9,7 @@
 
 import type { Law, JenisRelasi, StatusPeraturan } from "../../shared/types";
 import { bersihkanJudul, rapikanNomorPasal } from "../../shared/label";
+import { bersihkanHalaman } from "./halaman";
 import { nomorKanonik } from "./nomor";
 import { uraiSitasi } from "./sitasi";
 
@@ -342,6 +343,15 @@ export function periksaKecocokanNaskah(
 // Pengurai naskah peraturan
 // ---------------------------------------------------------------------------
 
+/**
+ * Versi hasil pengurai (bpk.ts, halaman.ts, penjelasan.ts). Naikkan setiap kali sebuah perubahan mengubah hasil untuk naskah
+ * yang sama. `ekstraksi_log.versi_parser` mencatat versi yang menghasilkan pasal tersimpan; peraturan dengan versi lebih
+ * rendah ditawarkan ke ekstrak-ulang mode `usang`, yang menguraikan ulang arsip teksnya tanpa konversi PDF.
+ *
+ * 1: pembersih halaman, batas Penjelasan yang menempel, dan Penjelasan per pasal (14 Okt 2026).
+ */
+export const VERSI_PARSER = 1;
+
 export interface PasalTerurai {
   nomor_pasal: string;
   ayat: string | null;
@@ -351,8 +361,8 @@ export interface PasalTerurai {
   urutan: number;
 }
 
-const RE_BAB = /^#{0,6}\s*\**\s*(BAB\s+[IVXLCDM]+|BAB\s+\d+)\b\s*\**\s*(.*)$/i;
-const RE_BAGIAN = /^#{0,6}\s*\**\s*(Bagian\s+[A-Za-z]+)\b\s*\**\s*(.*)$/i;
+export const RE_BAB = /^#{0,6}\s*\**\s*(BAB\s+[IVXLCDM]+|BAB\s+\d+)\b\s*\**\s*(.*)$/i;
+export const RE_BAGIAN = /^#{0,6}\s*\**\s*(Bagian\s+[A-Za-z]+)\b\s*\**\s*(.*)$/i;
 
 /**
  * Judul pasal, beserta sisa barisnya.
@@ -401,7 +411,7 @@ const RE_TITIK_TUNGGAL = /^\.$/;
 const RE_PENUTUP_JUDUL = /^(?:\.\s*[-–—]*|[-–—]+)$/;
 
 /** Nilai bilangan nomor pasal ("12" dan "12A" -> 12, "IV" -> 4); null bila bukan angka maupun romawi. */
-function nilaiNomorPasal(nomor: string): number | null {
+export function nilaiNomorPasal(nomor: string): number | null {
   const angka = /^(\d+)/.exec(nomor);
   if (angka) return Number(angka[1]);
   if (!/^[IVXLC]+$/.test(nomor)) return null;
@@ -442,9 +452,13 @@ const RE_AYAT = /^\((\d+[a-z]?)\)\s+/;
  * baris tepat sebelum kata "penjelasan" ikut menghentikan penguraian. Pada
  * UU 10/2010 hal itu terjadi di baris 769 ("penjelasan ayat ini.") dan
  * membuang 35 dari 39 pasal — tanpa error apa pun.
+ *
+ * Alternatif kedua: konversi PDF pindaian menyambung judul tanpa spasi
+ * ("PENJELASANATASUNDANG-UNDANG REPUBLIK INDONESIA"), dan untuk judul sepanjang itu
+ * "ATAS" disusul langsung nama jenisnya, tanda yang cukup khas.
  */
-const RE_PENJELASAN =
-  /^#{0,6}\s*\**\s*(?:PENJELASAN|P\s+E\s+N\s+J\s+E\s+L\s+A\s+S\s+A\s+N)\b(?:\s+ATAS\b.*)?\s*\**\s*$/;
+export const RE_PENJELASAN =
+  /^#{0,6}\s*\**\s*(?:PENJELASAN|P\s+E\s+N\s+J\s+E\s+L\s+A\s+S\s+A\s+N)\b(?:\s+ATAS\b.*)?\s*\**\s*$|^#{0,6}\s*\**\s*PENJELASAN\s*ATAS\s*(?:UNDANG|PERATURAN|PERPPU)/;
 
 /**
  * Penanda berhenti kedua: subjudul "PASAL DEMI PASAL" di dalam penjelasan.
@@ -454,7 +468,7 @@ const RE_PENJELASAN =
  * dan "Pasal II" berisi "Cukup jelas". Tanpa penanda ini, tiap pasal
  * mendapat kembaran kosong makna.
  */
-const RE_PASAL_DEMI_PASAL = /^#{0,6}\s*\**\s*PASAL\s+DEMI\s+PASAL\s*\**\s*$/i;
+export const RE_PASAL_DEMI_PASAL = /^#{0,6}\s*\**\s*PASAL\s+DEMI\s+PASAL\s*\**\s*$/i;
 
 /**
  * Pisahkan judul pasal yang menempel di AKHIR baris sebelumnya.
@@ -472,16 +486,21 @@ const RE_PASAL_DEMI_PASAL = /^#{0,6}\s*\**\s*PASAL\s+DEMI\s+PASAL\s*\**\s*$/i;
  * Prosa normal selalu menulis ". Pasal 5" atau "dalam Pasal 5" dengan spasi,
  * sehingga rujukan silang tidak ikut terpecah.
  */
-function pisahkanJudulMenempel(naskah: string): string {
+export function pisahkanJudulMenempel(naskah: string): string {
   return naskah
     // Menempel pada tanda baca penutup kalimat.
     .replace(/([.;:)"])(Pasal\s+(?:\d|[IVXLC]))/g, "$1\n$2")
     // Menempel pada artefak nomor halaman, mis. "- 17 -Pasal 20".
-    .replace(/(-\s*\d+\s*-)\s*(Pasal\s+(?:\d|[IVXLC]))/g, "$1\n$2");
+    .replace(/(-\s*\d+\s*-)\s*(Pasal\s+(?:\d|[IVXLC]))/g, "$1\n$2")
+    // Judul PENJELASAN menempel pada kepala halaman ("PRESIDEN⏎REPUBLIK INDONESIAPENJELASAN"): 701 peraturan BPK di produksi
+    // menyimpan seluruh Penjelasan di pasal terakhirnya karena judul ini lolos dari batas penguraian. Kepalanya dibuang
+    // (lib/halaman.ts melakukannya di awal halaman; ini untuk naskah tanpa penanda halaman), judulnya diberi baris sendiri.
+    .replace(/(?:[PF]RESIDEN[ \t]*\n?[ \t]*)?REPUBLIK[ \t]+INDONESIA(?=PENJELASAN)/g, "\n")
+    .replace(/([A-Z0-9])(PENJELASAN)(?=[ \t]*(?:\r?\n|$)|[ \t]*ATAS(?:[ \t\r\n]|UNDANG|PERATURAN|PERPPU|$))/gm, "$1\n$2");
 }
 
 /** Buang artefak konversi PDF yang mengotori teks. */
-function bersihkanBaris(baris: string): string {
+export function bersihkanBaris(baris: string): string {
   return baris
     .replace(/\r/g, "")
     .replace(/^\s*[-*]{3,}\s*$/, "")      // garis horizontal markdown
@@ -492,10 +511,11 @@ function bersihkanBaris(baris: string): string {
 
 /**
  * Urai naskah (markdown hasil `env.AI.toMarkdown()` atau teks polos) menjadi
- * daftar pasal/ayat.
+ * daftar pasal/ayat. Artefak halaman PDF (penanda "### Page N", kepala dan kaki cetak, catchword) dibuang lebih dulu
+ * (lib/halaman.ts); naskah yang sudah dibersihkan boleh diberikan lagi tanpa akibat.
  */
 export function uraikanPasal(naskah: string): PasalTerurai[] {
-  const baris = pisahkanJudulMenempel(naskah).split("\n").map(bersihkanBaris);
+  const baris = pisahkanJudulMenempel(bersihkanHalaman(naskah)).split("\n").map(bersihkanBaris);
 
   const hasil: PasalTerurai[] = [];
   let bab: string | null = null;

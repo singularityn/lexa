@@ -168,11 +168,19 @@ export interface BrowseResponse {
   di_luar_cakupan?: string[];
 }
 
+/** Penjelasan resmi sebuah pasal; `nomor_pasal` sama dengan `Article.nomor_pasal`, atau "Umum" untuk Penjelasan Umum. */
+export interface PenjelasanPasal {
+  nomor_pasal: string;
+  isi: string;
+}
+
 /** Respons `GET /api/laws/detail?uri=…`. */
 export interface LawDetailResponse {
   law: Law;
   articles: Article[];
   relations: Relation[];
+  /** Penjelasan (Umum dan per pasal) menurut urutan di naskah; kosong bila belum diurai atau naskahnya tak memuatnya. */
+  penjelasan: PenjelasanPasal[];
   /** Tautan ke naskah di peraturan.bpk.go.id, bila `bpk_id` diketahui. */
   bpk_url: string | null;
 }

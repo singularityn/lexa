@@ -4,7 +4,7 @@
  * Worker tidak pernah menghubungi sumber data mana pun. PDF diunggah dari sesi peramban pengelola
  * (scripts/bpk-console-harvest.js, lewat PUT /api/impor/pdf), lalu pekerjaan di bawah dikerjakan konsumer antrean
  * Cloudflare Queues; semuanya aman diulang:
- *   - `ekstrak_pdf`   : PDF dari impor BPK -> teks (Workers AI toMarkdown) -> pasal terstruktur;
+ *   - `ekstrak_pdf`   : PDF dari impor BPK -> teks (Workers AI toMarkdown) -> pasal terstruktur dan Penjelasan-nya;
  *   - `indeks_vektor` : embedding semua pasal sebuah peraturan lalu upsert ke Vectorize (Workers AI);
  *   - `ringkas`       : ringkasan AI sebuah peraturan.
  * Pesan jenis lain (sisa antrean dari alur sumber lama: `peraturan`, `tik`) dibuang tanpa dikerjakan.
@@ -12,7 +12,11 @@
 
 import { labelSitasi } from "../../shared/label";
 import { dalamCakupan, uriJelasDiLuarCakupan, type Cakupan } from "../../shared/cakupan";
-import { uraikanPasal, idPasalUnik, nilaiKualitasEkstraksi, periksaKecocokanNaskah, type LaporanKualitas } from "./bpk";
+import {
+  idPasalUnik, nilaiKualitasEkstraksi, periksaKecocokanNaskah, uraikanPasal, VERSI_PARSER, type LaporanKualitas, type PasalTerurai,
+} from "./bpk";
+import { bersihkanHalaman } from "./halaman";
+import { barisPenjelasan, uraikanPenjelasan } from "./penjelasan";
 
 export type PesanIngest =
   | { tipe: "indeks_vektor"; frbr_uri: string }
@@ -183,10 +187,119 @@ async function catatEkstraksi(
 }
 
 /**
+ * Catat versi pengurai yang memproses naskah ini (VERSI_PARSER), pada setiap hasil penguraian: berhasil, tanpa pasal,
+ * ditolak, maupun hasil yang tidak dipakai. Peraturan yang sudah diurai dengan versi terkini tak ditawarkan lagi oleh
+ * ekstrak-ulang mode `usang`. Pernyataan terpisah dan galatnya ditahan: kolom ini baru ada setelah migrasi 0007.
+ */
+async function catatVersiParser(db: D1Database, frbrUri: string) {
+  await db
+    .prepare(`UPDATE ekstraksi_log SET versi_parser = ? WHERE frbr_uri = ?`)
+    .bind(VERSI_PARSER, frbrUri)
+    .run()
+    .catch(() => {});
+}
+
+/**
+ * Penjelasan peraturan menggantikan yang tersimpan (tabel `penjelasan`, migrasi 0007). Ditulis terpisah dari pasal dan galatnya
+ * ditahan: tabel baru ada setelah migrasi, dan pasal yang sudah tersimpan tak boleh gagal karenanya.
+ */
+async function simpanPenjelasan(db: D1Database, frbrUri: string, baris: ReturnType<typeof barisPenjelasan>): Promise<boolean> {
+  try {
+    await db.batch([
+      db.prepare(`DELETE FROM penjelasan WHERE frbr_uri = ?`).bind(frbrUri),
+      ...baris.map((b) =>
+        db
+          .prepare(`INSERT INTO penjelasan (frbr_uri, nomor_pasal, isi, urutan) VALUES (?,?,?,?)`)
+          .bind(frbrUri, b.nomor_pasal, b.isi, b.urutan),
+      ),
+    ]);
+    return true;
+  } catch (e) {
+    console.warn("Lexa: Penjelasan tidak tersimpan (migrasi 0007 belum diterapkan?):", String(e).slice(0, 200));
+    return false;
+  }
+}
+
+const KARAKTER_PER_POTONGAN = 500;
+
+/**
+ * Id vektor potongan lanjutan (`id~n`) yang mungkin ada untuk pasal sepanjang `panjang` karakter, dari potongan ke-`mulai`.
+ * Batas atas yang longgar (potongTeks memotong di sekitar 1200 karakter): menghapus id yang tak pernah ada tidak berakibat apa
+ * pun di Vectorize, sedangkan melewatkan satu id meninggalkan vektor yatim.
+ */
+export function idPotongan(id: string, panjang: number, mulai = 1): string[] {
+  if (panjang <= MAKS_KARAKTER_CHUNK) return [];
+  const maks = Math.ceil(panjang / KARAKTER_PER_POTONGAN);
+  const hasil: string[] = [];
+  for (let n = mulai; n <= maks; n++) hasil.push(`${id}~${n}`);
+  return hasil;
+}
+
+/** Id vektor yang PASTI dibuat indeksVektor untuk sebuah pasal: potongan pertama memakai id pasal, lanjutannya `id~n`. */
+function idVektorTepat(id: string, isi: string): string[] {
+  const jumlah = potongTeks(isi).length;
+  return [id, ...Array.from({ length: Math.max(jumlah - 1, 0) }, (_, i) => `${id}~${i + 1}`)];
+}
+
+export type Vonis = LaporanKualitas["vonis"];
+
+export type Keputusan = { ganti: true } | { ganti: false; alasan: string };
+
+/**
+ * Apakah hasil penguraian ini menggantikan pasal yang sudah tersimpan? Dihitung dengan NOMOR pasal berbeda, bukan baris:
+ * naskah lama yang menyimpan Penjelasan sebagai pasal kembar punya jauh lebih banyak baris daripada nomor.
+ *
+ *  - belum ada pasal tersimpan: ganti;
+ *  - uraian ulang arsip BPK yang sama (pengurai yang lebih baru): ganti, kecuali nomornya menyusut lebih dari separuh pada
+ *    naskah yang cukup besar, yang lebih mungkin kerusakan pengurai daripada perbaikan;
+ *  - hasil PDF baru: dipertahankan yang lama bila teks PDF rusak berat atau nomornya lebih sedikit (pindaian yang terbaca
+ *    buruk tak boleh menimpa naskah yang lebih utuh), selain itu ganti. Yang tersimpan bisa teks lama dari sumber yang sudah
+ *    dihentikan; teks BPK menggantikannya begitu cukup utuh.
+ */
+export function putuskanPenggantian(p: { nomorLama: number; nomorBaru: number; vonis: Vonis; sumberSama: boolean }): Keputusan {
+  const { nomorLama, nomorBaru } = p;
+  if (nomorLama === 0) return { ganti: true };
+  if (p.sumberSama) {
+    if (nomorLama >= 10 && nomorBaru * 2 < nomorLama) {
+      return { ganti: false, alasan: `dipertahankan: uraian ulang hanya ${nomorBaru} dari ${nomorLama} nomor pasal tersimpan` };
+    }
+    return { ganti: true };
+  }
+  if (p.vonis === "berat") {
+    return { ganti: false, alasan: `dipertahankan: teks PDF rusak berat; ${nomorLama} nomor pasal tersimpan` };
+  }
+  if (nomorBaru < nomorLama) {
+    return { ganti: false, alasan: `dipertahankan: ${nomorLama} nomor pasal tersimpan lebih banyak dari ${nomorBaru} hasil PDF` };
+  }
+  return { ganti: true };
+}
+
+interface BarisLama {
+  id: string;
+  nomor_pasal: string;
+  ayat: string | null;
+  bab: string | null;
+  bagian: string | null;
+  isi: string;
+}
+
+/** Pasal tersimpan persis sama dengan hasil penguraian: tak ada yang perlu ditulis ulang, diindeks ulang, atau dihapus. */
+function samaDenganTersimpan(lama: BarisLama[], baru: PasalTerurai[]): boolean {
+  return (
+    lama.length === baru.length &&
+    lama.every((r, i) => r.nomor_pasal === baru[i].nomor_pasal && r.ayat === baru[i].ayat && r.bab === baru[i].bab && r.bagian === baru[i].bagian && r.isi === baru[i].isi)
+  );
+}
+
+const POTONGAN_DAFTAR_HAPUS = 90;
+
+/**
  * Ubah PDF di R2 menjadi pasal terstruktur.
  *
  * Dokumen datang dari panen BPK: metadata + berkas PDF. `env.AI.toMarkdown()` menangani ekstraksi teksnya, lalu
- * `uraikanPasal` memecahnya menjadi pasal dan ayat.
+ * `uraikanPasal` memecahnya menjadi pasal dan ayat, dan `uraikanPenjelasan` mengurai Penjelasan-nya (tabel `penjelasan`).
+ * Keputusan menimpa pasal yang sudah tersimpan ada di `putuskanPenggantian`; yang digantikan membuang vektor dan teks
+ * arsipnya lewat `daftar_hapus`. Mode `dariTeks` menguraikan ulang arsip teks BPK di R2 tanpa membaca PDF-nya.
  */
 export async function ekstrakPdf(
   ctx: KonteksIngest,
@@ -205,16 +318,24 @@ export async function ekstrakPdf(
   const kunciTeks = `teks/${frbrUri.replace(/^\//, "")}.md`;
   let markdown = "";
   let ukuranPdf = 0;
-  let dariArsip = false;
+  /** Kunci arsip teks yang diuraikan ulang (mode dari_teks); null bila teksnya datang dari konversi PDF. */
+  let kunciArsip: string | null = null;
 
-  // Mode dari_teks (ekstrak-ulang setelah pengurai pasal diperbaiki): uraikan arsip teks yang sudah ada, tanpa membaca
-  // PDF-nya dan tanpa konversi Workers AI. Arsip yang tak ada atau kosong jatuh ke jalur biasa di bawah.
-  if (opsi.dariTeks && baris?.r2_text_key) {
-    const arsip = await ctx.docs.get(baris.r2_text_key).catch(() => null);
-    const teksArsip = arsip ? await arsip.text() : "";
-    if (teksArsip.trim()) {
-      markdown = teksArsip;
-      dariArsip = true;
+  // Mode dari_teks (ekstrak-ulang setelah pengurai diperbaiki): uraikan arsip teks yang sudah ada, tanpa membaca PDF dan tanpa
+  // konversi Workers AI. Arsip BPK (teks/<uri>.md) didahulukan; arsip lain yang tercatat (sisa sumber lama, .txt) hanya
+  // dipakai bila arsip BPK tak ada. Arsip yang tak ada atau kosong jatuh ke jalur biasa di bawah.
+  if (opsi.dariTeks) {
+    for (const kunci of new Set([kunciTeks, baris?.r2_text_key ?? ""])) {
+      if (!kunci) continue;
+      const arsip = await ctx.docs.get(kunci).catch(() => null);
+      const teksArsip = arsip ? await arsip.text() : "";
+      if (teksArsip.trim()) {
+        markdown = teksArsip;
+        kunciArsip = kunci;
+        break;
+      }
+    }
+    if (kunciArsip) {
       const log = await ctx.db
         .prepare(`SELECT ukuran_pdf FROM ekstraksi_log WHERE frbr_uri = ?`)
         .bind(frbrUri)
@@ -224,7 +345,7 @@ export async function ekstrakPdf(
     }
   }
 
-  if (!dariArsip) {
+  if (!kunciArsip) {
     const objek = await ctx.docs.get(r2Key);
     if (!objek) throw new Error(`Berkas ${r2Key} tidak ada di R2`);
 
@@ -274,8 +395,10 @@ export async function ekstrakPdf(
   }
 
   // Kunci arsip yang dicatat di D1. Mode dari_teks memakai arsip yang sudah ada, yang kuncinya bisa berbeda dari kunci
-  // baku (mis. arsip .txt dari jalur pasal.id), jadi tautan ke arsipnya tidak boleh diganti.
-  const kunciSimpan = dariArsip && baris?.r2_text_key ? baris.r2_text_key : kunciTeks;
+  // baku (arsip .txt sisa sumber lama), jadi tautan ke arsipnya tidak boleh diganti.
+  const kunciSimpan = kunciArsip ?? kunciTeks;
+  /** Pasal tersimpan berasal dari arsip BPK yang sama dengan yang diurai sekarang: ini uraian ulang, bukan naskah baru. */
+  const sumberSama = kunciArsip !== null && kunciArsip === kunciTeks && baris?.r2_text_key === kunciTeks;
 
   // PDF yang bukan naskah peraturan ini (tautan BPK keliru, berkas lain di halaman rincian) tak boleh menghasilkan pasalnya:
   // pasal yang keliru lebih buruk daripada pasal yang kosong. Teks konversi tetap diarsipkan di atas, untuk diperiksa;
@@ -286,6 +409,7 @@ export async function ekstrakPdf(
       const d = cocok.ditemukan;
       const catatan = `PDF memuat judul ${d.jenis} ${d.nomor}/${d.tahun}, bukan ${baris.jenis} ${baris.nomor}/${baris.tahun}: pasal tidak disimpan`;
       await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, null, Date.now() - mulai, catatan);
+      await catatVersiParser(ctx.db, frbrUri);
       await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: ${catatan}`);
       await ctx.db.prepare(`UPDATE laws SET isi_catatan = ? WHERE frbr_uri = ?`).bind(catatan, frbrUri).run().catch(() => {});
       return 0;
@@ -293,12 +417,13 @@ export async function ekstrakPdf(
   }
 
   const pasal = uraikanPasal(markdown);
-  const laporan = nilaiKualitasEkstraksi(markdown, pasal);
+  const laporan = nilaiKualitasEkstraksi(bersihkanHalaman(markdown), pasal);
 
   if (!pasal.length) {
     // Bukan kegagalan sistem: sebagian PDF adalah pindaian tanpa struktur yang
     // bisa dikenali. Catat, lalu berhenti — jangan retry, hasilnya akan sama.
     await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai, "tidak ada pasal terdeteksi");
+    await catatVersiParser(ctx.db, frbrUri);
     await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: tidak ada pasal terdeteksi`);
     // Teksnya milik PDF ini, hanya pengurainya yang belum mengenali strukturnya. Kuncinya dicatat supaya teks bisa dibaca
     // (tab Dokumen) dan diperiksa untuk memperbaiki pengurai, lalu diuraikan ulang tanpa konversi (dari_teks). Peraturan yang
@@ -311,36 +436,72 @@ export async function ekstrakPdf(
     return 0;
   }
 
-  // Hasil PDF yang lebih sedikit dari pasal yang sudah tersimpan (mis. dari pasal.id) tidak menggantikannya:
-  // pindaian yang terbaca buruk tak boleh menimpa naskah yang lebih utuh. Teks hasil konversi tetap diarsipkan di R2.
-  const lama = baris?.jumlah_pasal ?? 0;
-  if (pasal.length < lama) {
-    await catatEkstraksi(
-      ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai,
-      `dipertahankan: ${lama} pasal tersimpan lebih banyak dari ${pasal.length} hasil PDF`,
-    );
-    await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: hasil PDF ${pasal.length} pasal < ${lama} tersimpan, dipertahankan`);
+  // Pasal yang tersimpan, untuk memutuskan penggantian dan, bila diganti, membersihkan vektornya yang tak terpakai lagi.
+  const { results: lamaBaris } = await ctx.db
+    .prepare(`SELECT id, nomor_pasal, ayat, bab, bagian, isi FROM articles WHERE frbr_uri = ? ORDER BY urutan`)
+    .bind(frbrUri)
+    .all<BarisLama>();
+  const keputusan = putuskanPenggantian({
+    nomorLama: new Set(lamaBaris.map((r) => r.nomor_pasal)).size,
+    nomorBaru: new Set(pasal.map((p) => p.nomor_pasal)).size,
+    vonis: laporan.vonis,
+    sumberSama,
+  });
+  if (!keputusan.ganti) {
+    await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai, keputusan.alasan);
+    await catatVersiParser(ctx.db, frbrUri);
+    await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: ${keputusan.alasan}`);
     return 0;
   }
 
-  // Id dijamin unik lebih dulu: satu tabrakan PRIMARY KEY membatalkan seluruh
-  // batch, dan bersamanya seluruh pasal dokumen ini.
-  const ids = idPasalUnik(frbrUri, pasal);
+  const identik = samaDenganTersimpan(lamaBaris, pasal);
+  const statements: D1PreparedStatement[] = [];
 
-  const statements: D1PreparedStatement[] = [
-    ctx.db.prepare(`DELETE FROM articles WHERE frbr_uri = ?`).bind(frbrUri),
-  ];
+  if (!identik) {
+    // Id dijamin unik lebih dulu: satu tabrakan PRIMARY KEY membatalkan seluruh
+    // batch, dan bersamanya seluruh pasal dokumen ini.
+    const ids = idPasalUnik(frbrUri, pasal);
 
-  pasal.forEach((p, i) => {
-    statements.push(
-      ctx.db
-        .prepare(
-          `INSERT INTO articles (id, frbr_uri, nomor_pasal, ayat, bab, bagian, judul, isi, urutan)
-           VALUES (?,?,?,?,?,?,NULL,?,?)`,
-        )
-        .bind(ids[i], frbrUri, p.nomor_pasal, p.ayat, p.bab, p.bagian, p.isi, p.urutan),
-    );
-  });
+    // Vektor pasal yang lenyap atau memendek tidak ikut terhapus dengan baris D1-nya; keduanya dicatat untuk dibersihkan
+    // pemeliharaan harian. Calonnya semua id vektor pasal lama (batas atas yang longgar: menghapus id yang tak pernah ada tak
+    // berakibat apa pun); id yang dipakai lagi oleh hasil baru tak boleh dihapus, termasuk yang tertunda dari penggantian
+    // sebelumnya (pemeliharaan akan menghapus vektor yang baru dibuat).
+    const vektorBaru = new Set(pasal.flatMap((p, i) => idVektorTepat(ids[i], p.isi)));
+    const kunciYatim = [...new Set(lamaBaris.flatMap((r) => [r.id, ...idPotongan(r.id, r.isi.length)]))].filter((k) => !vektorBaru.has(k));
+    const tertunda = await ctx.db
+      .prepare(`SELECT kunci FROM daftar_hapus WHERE jenis_objek = 'vektor' AND kunci >= ? AND kunci < ?`)
+      .bind(`${frbrUri}#`, `${frbrUri}$`)
+      .all<{ kunci: string }>();
+    const dipakaiLagi = tertunda.results.map((r) => r.kunci).filter((k) => vektorBaru.has(k));
+
+    statements.push(ctx.db.prepare(`DELETE FROM articles WHERE frbr_uri = ?`).bind(frbrUri));
+    pasal.forEach((p, i) => {
+      statements.push(
+        ctx.db
+          .prepare(
+            `INSERT INTO articles (id, frbr_uri, nomor_pasal, ayat, bab, bagian, judul, isi, urutan)
+             VALUES (?,?,?,?,?,?,NULL,?,?)`,
+          )
+          .bind(ids[i], frbrUri, p.nomor_pasal, p.ayat, p.bab, p.bagian, p.isi, p.urutan),
+      );
+    });
+    for (let i = 0; i < kunciYatim.length; i += POTONGAN_DAFTAR_HAPUS) {
+      const potong = kunciYatim.slice(i, i + POTONGAN_DAFTAR_HAPUS);
+      statements.push(
+        ctx.db
+          .prepare(`INSERT OR IGNORE INTO daftar_hapus (jenis_objek, kunci) VALUES ${potong.map(() => "('vektor', ?)").join(",")}`)
+          .bind(...potong),
+      );
+    }
+    for (let i = 0; i < dipakaiLagi.length; i += POTONGAN_DAFTAR_HAPUS) {
+      const potong = dipakaiLagi.slice(i, i + POTONGAN_DAFTAR_HAPUS);
+      statements.push(
+        ctx.db
+          .prepare(`DELETE FROM daftar_hapus WHERE jenis_objek = 'vektor' AND kunci IN (${potong.map(() => "?").join(",")})`)
+          .bind(...potong),
+      );
+    }
+  }
 
   statements.push(
     ctx.db
@@ -351,6 +512,12 @@ export async function ekstrakPdf(
       )
       .bind(pasal.length, kunciSimpan, frbrUri),
   );
+
+  // Teks arsip yang digantikan (mis. .txt sisa sumber lama) tak lagi ditunjuk siapa pun.
+  const kunciLama = baris?.r2_text_key;
+  if (kunciLama && kunciLama !== kunciSimpan && kunciLama.startsWith("teks/")) {
+    statements.push(ctx.db.prepare(`INSERT OR IGNORE INTO daftar_hapus (jenis_objek, kunci) VALUES ('r2', ?)`).bind(kunciLama));
+  }
 
   // Pencatatan mutu dilakukan SETELAH penyimpanan berhasil. Urutan sebaliknya
   // membuat laporan menyatakan "210 pasal, ringan" untuk dokumen yang
@@ -366,11 +533,18 @@ export async function ekstrakPdf(
     throw e;
   }
 
+  await simpanPenjelasan(ctx.db, frbrUri, barisPenjelasan(uraikanPenjelasan(markdown)));
   await catatEkstraksi(ctx.db, frbrUri, r2Key, ukuranPdf, laporan, Date.now() - mulai, null);
-  await ctx.queue.sendBatch([
-    { body: { tipe: "indeks_vektor", frbr_uri: frbrUri } },
-    { body: { tipe: "ringkas", frbr_uri: frbrUri } },
-  ]);
+  await catatVersiParser(ctx.db, frbrUri);
+  if (!identik) {
+    // Uraian ulang naskah BPK yang sama tak mengubah isi peraturan, jadi ringkasan AI-nya (Workers AI berbayar, dan satu
+    // putaran `usang` menyentuh ribuan peraturan) tidak disusun lagi. Naskah baru, atau yang tadinya belum berpasal, diringkas.
+    const uraianUlang = sumberSama && lamaBaris.length > 0;
+    await ctx.queue.sendBatch([
+      { body: { tipe: "indeks_vektor", frbr_uri: frbrUri } },
+      ...(uraianUlang ? [] : [{ body: { tipe: "ringkas", frbr_uri: frbrUri } as PesanIngest }]),
+    ]);
+  }
   await catatLog(ctx.db, "ekstrak_pdf", "sukses", frbrUri, pasal.length);
 
   return pasal.length;

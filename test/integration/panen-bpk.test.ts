@@ -3,6 +3,7 @@
  * disimpan tak menjatuhkan yang lain, penanda "tanpa berkas", ringkasan kemajuan, dan ekstraksi ulang PDF.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { VERSI_PARSER } from "../../src/worker/lib/bpk";
 import { buatLingkungan, json, kirim, kurasSemua, panggil, sisipkan, sqliteAda, TOKEN_ADMIN, type Lingkungan, type PeraturanUji } from "./harness";
 
 const adm = { "x-admin-token": TOKEN_ADMIN };
@@ -372,6 +373,76 @@ describe.skipIf(!sqliteAda)("panen BPK (sisi server)", () => {
       expect((await ulang({ jenis: ["PERPRES"] })).status).toBe(400);
       expect((await panggil(l, "/api/impor/ekstrak-ulang", kirim("POST", {}))).status).toBe(401);
       expect(await (await ulang()).json()).toEqual({ diantrekan: 0, belum_berpasal: 0, uris: [] });
+    });
+
+    describe("usang: uraikan ulang yang terakhir diurai dengan versi pengurai lama", () => {
+      const kode = VERSI_PARSER;
+      const dengan = async (n: number, o: { versi?: number; vonis?: string; pdf?: boolean; jenis?: string } = {}) => {
+        const uri = `/akn/id/act/${(o.jenis ?? "PP").toLowerCase()}/2021/${n}`;
+        await sisipkan(l, [{ uri, jenis: o.jenis ?? "PP", nomor: String(n), tahun: 2021, judul: `P ${n}/2021` }]);
+        if (o.pdf !== false) await l.db.prepare(`UPDATE laws SET r2_pdf_key = ? WHERE frbr_uri = ?`).bind(`pdf${uri}.pdf`, uri).run();
+        await l.db.prepare(`INSERT INTO ekstraksi_log (frbr_uri, vonis, versi_parser) VALUES (?, ?, ?)`).bind(uri, o.vonis ?? "bersih", o.versi ?? 0).run();
+        return uri;
+      };
+      const pesanUsang = (uri: string) => ({ tipe: "ekstrak_pdf", frbr_uri: uri, r2_key: `pdf${uri}.pdf`, dari_teks: true });
+
+      it("hanya yang versinya lebih lama, ber-PDF, dan bukan hasil gagal; semuanya dari arsip teks; menurut urutan alamat", async () => {
+        const b = await dengan(2);
+        const a = await dengan(1);
+        await dengan(3, { versi: kode });
+        await dengan(4, { pdf: false });
+        await dengan(5, { vonis: "gagal" });
+        const tanpaPasal = await dengan(6, { vonis: "tanpa_pasal" });
+        const res = await ulang({ usang: true });
+        expect(await res.json()).toEqual({
+          diantrekan: 3, usang_tersisa: 3, versi_parser: kode, terakhir: tanpaPasal, uris: [a, b, tanpaPasal],
+        });
+        expect(l.antrean.kuras()).toEqual([pesanUsang(a), pesanUsang(b), pesanUsang(tanpaPasal)]);
+      });
+
+      it("setelah dan batas memotong putaran: satu panggilan demi satu sampai diantrekan 0", async () => {
+        const uris = [await dengan(1), await dengan(2), await dengan(3), await dengan(4), await dengan(5)];
+        const dikumpulkan: string[] = [];
+        let setelah: string | undefined;
+        for (let putaran = 0; putaran < 5; putaran++) {
+          const b = await json<{ diantrekan: number; terakhir: string | null; uris: string[] }>(await ulang({ usang: true, batas: 2, setelah }));
+          if (!b.diantrekan) break;
+          dikumpulkan.push(...b.uris);
+          setelah = b.terakhir ?? undefined;
+        }
+        expect(dikumpulkan).toEqual(uris);
+        expect(l.antrean.pesan).toHaveLength(5);
+      });
+
+      it("yang sudah diurai ulang tak ditawarkan lagi (usang_tersisa menyusut), walau diproses dengan galat versi tak berubah", async () => {
+        const uri = await dengan(1);
+        l.r2.objek.set(`pdf${uri}.pdf`, { bytes: PDF });
+        await l.r2.put("teks/akn/id/act/pp/2021/1.md", "Pasal 1\nSatu.");
+        await l.db.prepare(`UPDATE laws SET r2_text_key = 'teks/akn/id/act/pp/2021/1.md' WHERE frbr_uri = ?`).bind(uri).run();
+        expect(await json(await ulang({ usang: true }))).toMatchObject({ diantrekan: 1, usang_tersisa: 1 });
+        const { jalankanAntrean } = await import("./harness");
+        await jalankanAntrean(l, l.antrean.kuras());
+        expect(l.ai.konversi).toEqual([]);
+        expect(await json(await ulang({ usang: true }))).toEqual({ diantrekan: 0, usang_tersisa: 0, versi_parser: kode, terakhir: null, uris: [] });
+      });
+
+      it("jenis menyaring dan dijepit pada cakupan; tanpa token 401", async () => {
+        await dengan(1);
+        await dengan(2, { jenis: "UU" });
+        expect(await json(await ulang({ usang: true, jenis: ["UU"] }))).toMatchObject({ diantrekan: 1, usang_tersisa: 1 });
+        expect((await ulang({ usang: true, jenis: ["PERPRES"] })).status).toBe(400);
+        expect((await panggil(l, "/api/impor/ekstrak-ulang", kirim("POST", { usang: true }))).status).toBe(401);
+      });
+
+      it("migrasi 0007 belum diterapkan: 503 dengan petunjuk, tanpa mengantrekan apa pun", async () => {
+        await dengan(1);
+        await l.db.exec(`DROP INDEX idx_ekstraksi_versi`);
+        await l.db.exec(`ALTER TABLE ekstraksi_log DROP COLUMN versi_parser`);
+        const res = await ulang({ usang: true });
+        expect(res.status).toBe(503);
+        expect(await res.json()).toMatchObject({ error: "migrasi_belum_diterapkan", message: expect.stringContaining("migrasi 0007") });
+        expect(l.antrean.pesan).toEqual([]);
+      });
     });
 
     it("pesan yang diantrekan benar-benar diproses konsumer antrean dan menghasilkan pasal", async () => {
