@@ -123,6 +123,20 @@ export function jawabanContoh(prompt: string): string {
   return `Berdasarkan kutipan pasal yang tersedia (jawaban contoh dari pratinjau lokal, bukan dari model AI):\n\n${baris.join("\n")}\n\nPeriksa pasal yang dikutip untuk memastikan ketentuannya sesuai dengan kasus Anda.`;
 }
 
+/**
+ * Penjelasan contoh (tabel `penjelasan`, urutan seperti di naskah) untuk memperagakan penjelasan di bawah pasal. Parafrase
+ * pendek, bukan naskah resmi. Pasal 79 sengaja tanpa penjelasan, dan Pasal 1 dan 156 hanya "Cukup jelas".
+ */
+export const PENJELASAN_CONTOH: Record<string, Array<[nomor: string, isi: string]>> = {
+  "/akn/id/act/uu/2003/13": [
+    ["Umum", "Pembangunan ketenagakerjaan merupakan bagian integral dari pembangunan nasional yang dilaksanakan untuk meningkatkan harkat, martabat, dan harga diri tenaga kerja.\nPeraturan ini mengatur hubungan kerja, waktu kerja, pengupahan, dan pemutusan hubungan kerja secara menyeluruh."],
+    ["1", "Cukup jelas."],
+    ["77", "Ayat (1)\nCukup jelas.\nAyat (2)\nHuruf a\nWaktu kerja yang dimaksud dihitung di luar waktu istirahat.\nHuruf b\nCukup jelas."],
+    ["82", "Ayat (1)\nYang dimaksud dengan “istirahat” adalah masa pekerja perempuan tidak bekerja karena persalinan, dengan upah tetap dibayar.\nAyat (2)\nCukup jelas."],
+    ["156", "Cukup jelas."],
+  ],
+};
+
 export async function isiDataContoh(l: Lingkungan, sisipkan: (l: Lingkungan, d: PeraturanUji[]) => Promise<void>, sisipkanRelasi: (l: Lingkungan, d: RelasiUji[]) => Promise<void>) {
   await sisipkan(l, PERATURAN_CONTOH);
   for (const p of PERATURAN_CONTOH) {
@@ -132,4 +146,9 @@ export async function isiDataContoh(l: Lingkungan, sisipkan: (l: Lingkungan, d: 
       .run();
   }
   await sisipkanRelasi(l, RELASI_CONTOH);
+  for (const [uri, daftar] of Object.entries(PENJELASAN_CONTOH)) {
+    for (const [urutan, [nomor, isi]] of daftar.entries()) {
+      await l.db.prepare(`INSERT INTO penjelasan (frbr_uri, nomor_pasal, isi, urutan) VALUES (?,?,?,?)`).bind(uri, nomor, isi, urutan).run();
+    }
+  }
 }

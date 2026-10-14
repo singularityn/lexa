@@ -110,6 +110,19 @@ export function sitasiPasal(l, pasal, ayat) {
   return `${sitasi(l)} Pasal ${rapikanNomorPasal(pasal)}${ayat ? ` ayat (${ayat})` : ""}`;
 }
 
+/**
+ * Kutipan dalam penulisan hukum: "Pasal 156 Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan". Tanpa nomor: nama
+ * peraturannya saja. Topiknya dari judul resmi (lihat `judulRingkas`), jadi huruf kapital semua dari BPK dirapikan.
+ * @param {{ jenis: string, nomor: string, tahun: number, judul: string }} l
+ * @param {string | null | undefined} [pasal]
+ * @param {string | null | undefined} [ayat]
+ */
+export function kutipanPasal(l, pasal, ayat) {
+  const awal = pasal ? `Pasal ${rapikanNomorPasal(pasal)}${ayat ? ` ayat (${ayat})` : ""} ` : "";
+  const topik = judulRingkas(l.judul);
+  return `${awal}${namaLengkap(l)}${topik ? ` tentang ${topik}` : ""}`;
+}
+
 /** "Undang-Undang Nomor 13 Tahun 2003" @param {{ jenis: string, nomor: string, tahun: number }} l */
 export function namaLengkap(l) {
   // UUD: "Undang-Undang Dasar 1945" dan "Undang-Undang Dasar 1945 Perubahan 4", bukan "... Nomor 1945/P4 Tahun 1945".
@@ -798,6 +811,28 @@ export function teksPasal(g, { kepala = true } = {}) {
     baris.push(...isiBlok);
   }
   return baris.join("\n");
+}
+
+/**
+ * Teks polos isi sebuah pasal atau penjelasan (untuk disalin): tiap blok pada barisnya sendiri, butir dengan penandanya.
+ * @param {string | null | undefined} isi
+ */
+export function teksIsiPasal(isi) {
+  return bacaIsiPasal(isi).map((x) => (x.tipe === "butir" ? `${x.penanda} ${x.teks}` : x.teks)).join("\n");
+}
+
+/**
+ * Penjelasan yang hanya berbunyi "Cukup jelas" (boleh per ayat atau huruf): tak ada uraian untuk dibaca. Salinan dari
+ * `hanyaCukupJelas` di src/worker/lib/penjelasan.ts (dijaga sama oleh test/web.test.ts).
+ * @param {string | null | undefined} isi
+ */
+export function hanyaCukupJelas(isi) {
+  if (!isi) return false;
+  const sisa = isi
+    .replace(/\bAyat\s*\(\d+[a-z]?\)|\b(?:Huruf\s+[a-z]{1,2}|Angka\s+\d+|Butir\s+\d+)\b/gi, " ")
+    .replace(/cukup\s+jelas/gi, " ")
+    .replace(/[\s.,;:]+/g, "");
+  return sisa === "" && /cukup\s+jelas/i.test(isi);
 }
 
 // --- Rujukan antarpasal ---------------------------------------------------------

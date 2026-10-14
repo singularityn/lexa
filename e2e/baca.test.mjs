@@ -332,6 +332,7 @@ describe("ponsel: halaman baca", () => {
   it("Penjelasan (nomor pasal yang berulang) punya judul sendiri, tidak ikut dihitung sebagai pasal, dan punya kelompok sendiri di daftar isi", async () => {
     const p = await halaman({ hp: true });
     await ubahDetail(p, (json) => {
+      json.penjelasan = []; // data lama: penjelasan hanya tersimpan sebagai pasal kembar
       const babAkhir = json.articles.at(-1).bab;
       const kembar = (nomor, isi) => ({ ...json.articles.find((a) => a.nomor_pasal === nomor), id: `${UU13}#pasal-${nomor}~2`, ayat: null, bab: babAkhir, isi, urutan: 100 + Number(nomor) });
       json.articles.push(kembar("1", "Cukup jelas."), kembar("77", "Yang dimaksud dengan waktu kerja adalah jam kerja."), kembar("156", "Cukup jelas."));
@@ -691,6 +692,7 @@ describe("ponsel: halaman baca", () => {
   it("penjelasan umum yang terbawa di teks pasal terakhir dipisah menjadi bagiannya sendiri", async () => {
     const p = await halaman({ hp: true });
     await ubahDetail(p, (json) => {
+      json.penjelasan = []; // data lama: Penjelasan Umum terbawa di teks pasal terakhir
       json.articles.at(-1).isi +=
         "\nDisahkan di Jakarta\npada tanggal 25 Maret 2003\n\n\n### Page 80\nPRESIDEN\nREPUBLIK INDONESIAPENJELASAN\nATAS\nUNDANG-UNDANG REPUBLIK INDONESIA\nNOMOR 13 TAHUN 2003\nTENTANG\nKETENAGAKERJAAN\nI. UMUM\nPembangunan ketenagakerjaan adalah bagian dari pembangunan nasional.\nII. PASAL DEMI PASAL";
     });
@@ -792,7 +794,7 @@ describe("ponsel: halaman baca", () => {
     expect(await lembar.locator("h2").textContent()).toBe("UU 13/2003 Pasal 82");
     // "Lihat di PDF" ikut tampil karena pratinjau menyimpan PDF contoh untuk UU 13/2003 (peraturan tanpa PDF tidak punya butir ini).
     expect((await lembar.locator(".aksi-baris .aksi-teks > span:first-child").allTextContents())).toEqual([
-      "Lihat di PDF", "Salin teks pasal", "Salin sitasi", "Salin tautan ke pasal ini", "Laporkan kesalahan",
+      "Lihat di PDF", "Salin teks pasal", "Salin kutipan lengkap", "Salin pasal beserta penjelasannya", "Salin sitasi", "Salin tautan ke pasal ini", "Laporkan kesalahan",
     ]);
     await lembar.locator(".aksi-baris", { hasText: "Salin teks pasal" }).tap();
     await p.waitForFunction(() => !document.querySelector("dialog.lembar"));
@@ -855,6 +857,132 @@ describe("ponsel: halaman baca", () => {
       await p.waitForFunction(() => !document.querySelector("dialog.lembar"));
 
       expect(laporan).toEqual([]);
+    });
+  }
+});
+
+describe("penjelasan resmi di bawah pasal (tabel penjelasan)", () => {
+  it("Penjelasan Umum: lipatan tertutup di awal teks, dibuka dengan ketukan; tautan langsung membukanya", async () => {
+    const p = await halaman({ hp: true });
+    await bukaPeraturan(p);
+    const umum = p.locator("details#penjelasan-umum");
+    expect(await umum.locator("summary").textContent()).toBe("Penjelasan Umum");
+    expect(await umum.evaluate((el) => el.open)).toBe(false);
+    expect(await p.evaluate(() => document.querySelector("#penjelasan-umum").compareDocumentPosition(document.querySelector(".pasal")) & Node.DOCUMENT_POSITION_FOLLOWING), "di atas pasal pertama").toBeTruthy();
+    expect(await umum.locator(".penjelasan-isi").isVisible()).toBe(false);
+    await umum.locator("summary").tap();
+    expect(await umum.locator(".penjelasan-isi").isVisible()).toBe(true);
+    expect(await umum.locator(".penjelasan-isi").innerText()).toContain("Pembangunan ketenagakerjaan merupakan bagian integral");
+    expect(await umum.locator(".penjelasan-isi p").count(), "dua paragraf").toBe(2);
+
+    await p.goto(BASE + urlUU(UU13) + "#penjelasan-umum", { waitUntil: "networkidle" });
+    await p.waitForSelector(".pasal");
+    expect(await p.locator("details#penjelasan-umum").evaluate((el) => el.open)).toBe(true);
+  });
+
+  it("penjelasan sebuah pasal ada di bawah pasalnya sebagai lipatan; label ayat dan huruf ditata sebagai label", async () => {
+    const p = await halaman({ hp: true });
+    await bukaPeraturan(p);
+    const pasal = p.locator("#pasal-82");
+    const lipatan = pasal.locator("details.penjelasan");
+    expect(await lipatan.count()).toBe(1);
+    expect(await lipatan.locator("summary").textContent()).toBe("Penjelasan");
+    expect(await lipatan.evaluate((el) => el.open)).toBe(false);
+    expect(await pasal.evaluate((el) => el.lastElementChild.classList.contains("penjelasan")), "tepat di bawah teks pasal").toBe(true);
+    await lipatan.locator("summary").tap();
+    expect(await lipatan.locator(".label-bagian").allTextContents()).toEqual(["Ayat (1)", "Ayat (2)"]);
+    expect(await lipatan.locator(".penjelasan-isi").innerText()).toContain("Yang dimaksud dengan “istirahat” adalah masa pekerja perempuan tidak bekerja karena persalinan");
+    // Pasal 77: label bersarang (Ayat (2) > Huruf a/b).
+    await p.locator("#pasal-77 details.penjelasan summary").tap();
+    expect(await p.locator("#pasal-77 details.penjelasan .label-bagian").allTextContents()).toEqual(["Ayat (1)", "Ayat (2)", "Huruf a", "Huruf b"]);
+  });
+
+  it("penjelasan yang hanya 'Cukup jelas' menjadi penanda kecil tanpa lipatan; pasal tanpa penjelasan tak punya apa pun", async () => {
+    const p = await halaman({ hp: true });
+    await bukaPeraturan(p);
+    for (const id of ["pasal-1", "pasal-156"]) {
+      expect(await p.locator(`#${id} .penjelasan-ringkas`).textContent(), id).toBe("Penjelasan: cukup jelas");
+      expect(await p.locator(`#${id} details`).count(), id).toBe(0);
+    }
+    expect(await p.locator("#pasal-79 .penjelasan, #pasal-79 .penjelasan-ringkas").count()).toBe(0);
+  });
+
+  it("peraturan tanpa penjelasan tersimpan: tak ada elemen penjelasan, dan kepala tidak menyebut penjelasannya", async () => {
+    const p = await halaman({ hp: true });
+    await ubahDetail(p, (json) => {
+      json.penjelasan = [];
+    });
+    await bukaPeraturan(p);
+    expect(await p.locator(".penjelasan, .penjelasan-ringkas, #penjelasan-umum").count()).toBe(0);
+    expect(await p.locator(".meta-baris").innerText()).not.toContain("penjelasannya");
+    // Jawaban lama yang tersimpan di perangkat tidak memuat `penjelasan` sama sekali.
+    const lama = await halaman({ hp: true });
+    await ubahDetail(lama, (json) => {
+      delete json.penjelasan;
+    });
+    await bukaPeraturan(lama);
+    expect(await lama.locator(".penjelasan, .penjelasan-ringkas").count()).toBe(0);
+  });
+
+  it("pencarian di dalam peraturan menemukan istilah yang hanya ada di penjelasan, dan membuka lipatannya", async () => {
+    const p = await halaman();
+    await bukaPeraturan(p);
+    expect(await p.locator("#pasal-77 details.penjelasan").evaluate((el) => el.open)).toBe(false);
+    await p.fill(".cari-dalam input", "dihitung di luar waktu istirahat");
+    await p.waitForFunction(() => document.querySelectorAll(".pasal:not(.tidak-cocok)").length === 1);
+    expect(await p.locator(".pasal:not(.tidak-cocok) h3").textContent()).toBe("Pasal 77");
+    expect(await p.locator("#pasal-77 details.penjelasan").evaluate((el) => el.open), "lipatan yang memuat istilah terbuka").toBe(true);
+    expect(await p.locator("#pasal-77 details.penjelasan mark").first().isVisible()).toBe(true);
+  });
+
+  it("salin kutipan lengkap dan salin pasal beserta penjelasannya (lembar aksi di ponsel)", async () => {
+    const p = await halaman({ hp: true });
+    await bukaPeraturan(p);
+    await p.locator("#pasal-82 .pasal-lainnya").tap();
+    await p.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Salin kutipan lengkap" }).tap();
+    await p.waitForFunction(() => !document.querySelector("dialog.lembar"));
+    const kutipan = await p.evaluate(() => navigator.clipboard.readText());
+    expect(kutipan.startsWith("Pasal 82 Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan\n\n(1) Pekerja perempuan berhak memperoleh istirahat")).toBe(true);
+    expect(kutipan).toContain("(2) Pekerja perempuan yang mengalami keguguran");
+    expect(kutipan).toMatch(/\n\nhttp:\/\/localhost:\d+\/peraturan\?uri=.*#pasal-82$/);
+    expect(kutipan).not.toContain("Penjelasan");
+
+    await p.locator("#pasal-82 .pasal-lainnya").tap();
+    await p.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Salin pasal beserta penjelasannya" }).tap();
+    await p.waitForFunction(() => !document.querySelector("dialog.lembar"));
+    const lengkap = await p.evaluate(() => navigator.clipboard.readText());
+    expect(lengkap.startsWith(kutipan + "\n\nPenjelasan Pasal 82:\nAyat (1)\nYang dimaksud dengan “istirahat”")).toBe(true);
+    expect(lengkap.endsWith("Ayat (2)\nCukup jelas.")).toBe(true);
+
+    // Pasal yang penjelasannya hanya "Cukup jelas" atau tak ada tidak menawarkan salinan beserta penjelasan.
+    for (const id of ["pasal-1", "pasal-79"]) {
+      await p.locator(`#${id} .pasal-lainnya`).tap();
+      expect(await p.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Salin pasal beserta penjelasannya" }).count(), id).toBe(0);
+      expect(await p.locator("dialog.lembar-aksi .aksi-baris", { hasText: "Salin kutipan lengkap" }).count(), id).toBe(1);
+      await p.keyboard.press("Escape");
+      await p.waitForFunction(() => !document.querySelector("dialog.lembar"));
+    }
+  });
+
+  it("layar lebar: ikon 'Salin kutipan lengkap' ada di baris aksi pasal dan menyalin kutipannya", async () => {
+    const p = await halaman();
+    await bukaPeraturan(p);
+    await p.hover("#pasal-156");
+    const tombol = p.locator('#pasal-156 .pasal-aksi button[aria-label="Salin kutipan lengkap Pasal 156"]');
+    expect(await tombol.getAttribute("title")).toContain("kutipan lengkap");
+    await tombol.click();
+    const kutipan = await p.evaluate(() => navigator.clipboard.readText());
+    expect(kutipan.startsWith("Pasal 156 Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan\n\n(1) Dalam hal terjadi pemutusan hubungan kerja")).toBe(true);
+    expect(kutipan.endsWith("#pasal-156")).toBe(true);
+  });
+
+  for (const tema of ["terang", "gelap"]) {
+    it(`axe: lipatan penjelasan terbuka lolos (tema ${tema})`, async () => {
+      const p = await halaman({ tema: tema === "gelap" ? "dark" : "light", bypassCSP: true });
+      await bukaPeraturan(p);
+      await p.locator("details#penjelasan-umum summary").click();
+      await p.locator("#pasal-82 details.penjelasan summary").click();
+      expect(await pelanggaranAxe(p)).toEqual([]);
     });
   }
 });

@@ -137,6 +137,27 @@ describe("index.html", () => {
     expect(html).toContain('name="mobile-web-app-capable"');
   });
 
+  it("modulepreload memuat tepat modul yang di-import main.js secara statis (tanpa halaman yang dimuat malas)", () => {
+    const dipra = [...html.matchAll(/<link rel="modulepreload" href="([^"]+)">/g)].map((m) => m[1]).sort();
+
+    // Grafik import statis dari main.js: `import ... from "./x.js"`, `export ... from`, dan `import "./x.js"`; import() dinamis tidak.
+    const tutupan = new Set<string>();
+    const telusuri = (berkas: string) => {
+      if (tutupan.has(berkas)) return;
+      tutupan.add(berkas);
+      const sumber = baca(berkas.slice(1));
+      for (const m of sumber.matchAll(/(?:^|\n)\s*(?:import|export)\s[^;]*?from\s+"(\.{1,2}\/[^"]+)"|(?:^|\n)\s*import\s+"(\.{1,2}\/[^"]+)"/g)) {
+        telusuri(posix.normalize(posix.join(berkas.slice(0, berkas.lastIndexOf("/")), (m[1] ?? m[2]) as string)));
+      }
+    };
+    telusuri("/js/main.js");
+
+    expect(dipra).toEqual([...tutupan].sort());
+    for (const u of dipra) expect(existsSync(join(PUBLIK, u)), u).toBe(true);
+    // Halaman yang dimuat malas (import() di main.js) tidak ikut: pengunjung beranda tak perlu mengunduh halaman baca.
+    expect(dipra.some((u) => u.startsWith("/js/halaman/"))).toBe(false);
+  });
+
   it("viewport memakai seluruh layar (area aman) tetapi tidak mengunci zoom pengguna", () => {
     const viewport = /<meta name="viewport" content="([^"]+)"/.exec(html)?.[1] ?? "";
     expect(viewport).toContain("width=device-width");

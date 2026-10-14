@@ -28,7 +28,25 @@
   <link rel="preload" href="/fonts/newsreader-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
   <script src="/js/tema.js"></script>
   <link rel="stylesheet" href="/css/app.css">
+  <!-- Modul yang di-import main.js secara statis (bukan halaman yang dimuat malas): tanpa ini peramban baru menemukannya setelah
+       main.js diunduh dan diurai, lalu tingkat demi tingkat. Daftar ini dijaga sama dengan grafik import oleh test/pwa.test.ts. -->
   <link rel="modulepreload" href="/js/main.js">
+  <link rel="modulepreload" href="/js/api.js">
+  <link rel="modulepreload" href="/js/dom.js">
+  <link rel="modulepreload" href="/js/format.js">
+  <link rel="modulepreload" href="/js/komponen/ikon.js">
+  <link rel="modulepreload" href="/js/komponen/jenis.js">
+  <link rel="modulepreload" href="/js/komponen/kotakCari.js">
+  <link rel="modulepreload" href="/js/komponen/navBawah.js">
+  <link rel="modulepreload" href="/js/komponen/pitaLuring.js">
+  <link rel="modulepreload" href="/js/komponen/progresBaca.js">
+  <link rel="modulepreload" href="/js/komponen/sisiDilihat.js">
+  <link rel="modulepreload" href="/js/komponen/toast.js">
+  <link rel="modulepreload" href="/js/navigasi.js">
+  <link rel="modulepreload" href="/js/pwa.js">
+  <link rel="modulepreload" href="/js/riwayat.js">
+  <link rel="modulepreload" href="/js/router.js">
+  <link rel="modulepreload" href="/js/state.js">
 </head>
 <body>
   <a class="lewati" href="#konten">Lewati ke konten</a>

@@ -6,9 +6,10 @@ import { describe, expect, it } from "vitest";
 import {
   angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, daftarCakupan, istilahDariKueri, jangkarDariId,
   hitungPasal, judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, namaPasal, nomorTahun, pisahJudul,
-  bacaIsiPasal, celahNomorPasal, pecahRujukan, peraturanPerubahan, pisahPenjelasanTertanam, pratinjauPeraturan, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
+  bacaIsiPasal, celahNomorPasal, hanyaCukupJelas, kutipanPasal, pecahRujukan, peraturanPerubahan, pisahPenjelasanTertanam, pratinjauPeraturan, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksIsiPasal, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
 } from "../public/js/format.js";
 import { labelSitasi, nomorTahun as nomorTahunServer, rapikanNomorPasal as rapikanNomorPasalServer } from "../src/shared/label";
+import { hanyaCukupJelas as hanyaCukupJelasServer } from "../src/worker/lib/penjelasan";
 
 const artikel = (nomor: string, ayat: string | null, bab: string | null, urutan = 0, bagian: string | null = null) => ({
   id: `/akn/id/act/uu/2003/13#pasal-${nomor}${ayat ? `-ayat-${ayat}` : ""}`,
@@ -733,6 +734,45 @@ describe("nomor pasal yang angka nolnya terbaca huruf O (salah baca OCR)", () =>
 
   it("sitasiPasal menulis nomor yang rapi", () => {
     expect(sitasiPasal({ jenis: "UU", nomor: "1", tahun: 2023 }, "1O", "2")).toBe("UU 1/2023 Pasal 10 ayat (2)");
+  });
+});
+
+describe("penjelasan resmi: hanyaCukupJelas, teksIsiPasal, dan kutipanPasal", () => {
+  const CONTOH = [
+    "Cukup jelas.", "cukup jelas", "  Cukup   jelas.  ", "Ayat (1)\nCukup jelas.\nAyat (2)\nCukup jelas.", "Huruf a\nCukup jelas.\nHuruf b\nCukup jelas.",
+    "Angka 1\nCukup jelas.\nAngka 2\nCukup jelas.", "Butir 3\nCukup jelas.", "Ayat(2)\nCukup jelas.",
+    "", "   ", "Ayat (1)", "Cukup jelas, kecuali huruf b.", "Ayat (1)\nCukup jelas.\nAyat (2)\nYang dimaksud dengan itu.",
+    "Yang dimaksud dengan itu. Cukup jelas.", "Lihat penjelasan Pasal 8 angka 9.", "Cukup jelas.\nPasal 5",
+  ];
+
+  it("salinan klien sama persis dengan fungsi di Worker (src/worker/lib/penjelasan.ts)", () => {
+    for (const isi of CONTOH) expect(hanyaCukupJelas(isi), JSON.stringify(isi)).toBe(hanyaCukupJelasServer(isi));
+    expect(hanyaCukupJelas("Ayat (1)\nCukup jelas.\nAyat (2)\nCukup jelas.")).toBe(true);
+    expect(hanyaCukupJelas("Ayat (1)\nCukup jelas.\nAyat (2)\nYang dimaksud dengan itu.")).toBe(false);
+    expect(hanyaCukupJelas(null)).toBe(false);
+    expect(hanyaCukupJelas(undefined)).toBe(false);
+  });
+
+  it("teksIsiPasal: tiap blok pada barisnya, butir dengan penandanya, label tetap berdiri sendiri", () => {
+    const isi = "Ayat (1)\nYang dimaksud dengan:\na. perintah kedinasan;\nb. peraturan perundang-undangan.\nAyat (2)\nCukup jelas.";
+    expect(teksIsiPasal(isi)).toBe("Ayat (1)\nYang dimaksud dengan:\na. perintah kedinasan;\nb. peraturan perundang-undangan.\nAyat (2)\nCukup jelas.");
+    expect(teksIsiPasal("Satu baris yang patah\ndi tengah kalimat.")).toBe("Satu baris yang patah di tengah kalimat.");
+    expect(teksIsiPasal("")).toBe("");
+    expect(teksIsiPasal(null)).toBe("");
+  });
+
+  it("kutipanPasal: Pasal, nama lengkap, dan topik dari judul resmi (huruf kapital BPK dirapikan)", () => {
+    const uu = { jenis: "UU", nomor: "13", tahun: 2003, judul: "Undang-Undang Nomor 13 Tahun 2003 tentang KETENAGAKERJAAN" };
+    expect(kutipanPasal(uu, "156")).toBe("Pasal 156 Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan");
+    expect(kutipanPasal(uu, "156", "1")).toBe("Pasal 156 ayat (1) Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan");
+    expect(kutipanPasal(uu, "1O")).toBe("Pasal 10 Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan");
+    expect(kutipanPasal(uu)).toBe("Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan");
+    expect(kutipanPasal({ ...uu, judul: "Ketenagakerjaan" }, "5A")).toBe("Pasal 5A Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan");
+    expect(kutipanPasal({ ...uu, judul: "" }, "5")).toBe("Pasal 5 Undang-Undang Nomor 13 Tahun 2003");
+    expect(kutipanPasal({ jenis: "PP", nomor: "35", tahun: 2021, judul: "Peraturan Pemerintah Nomor 35 Tahun 2021 tentang Perjanjian Kerja Waktu Tertentu" }, "40")).toBe(
+      "Pasal 40 Peraturan Pemerintah Nomor 35 Tahun 2021 tentang Perjanjian Kerja Waktu Tertentu",
+    );
+    expect(kutipanPasal({ jenis: "UUD", nomor: "1945/P4", tahun: 2002, judul: "Undang-Undang Dasar 1945 Perubahan Keempat" }, "28")).toContain("Pasal 28 Undang-Undang Dasar 1945 Perubahan 4");
   });
 });
 

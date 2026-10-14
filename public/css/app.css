@@ -943,6 +943,18 @@ dialog.daftar-isi:not([open]) { display: none; }
 .butir-2 { margin-inline-start: 1.7em; }
 .ayat:target > .isi, .ayat.disorot > .isi { background: var(--aksen-lembut); border-radius: 4px; box-shadow: 0 0 0 4px var(--aksen-lembut); }
 .tidak-cocok { display: none; }
+/* Penjelasan resmi di bawah pasalnya: lipatan tertutup bila ada uraian; penanda kecil bila hanya "Cukup jelas". */
+.penjelasan { margin: 12px 0 0; border: 1px solid var(--garis); border-radius: 12px; background: var(--permukaan); font-size: 0.94em; }
+.penjelasan > summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 40px; padding: 8px 12px; border-radius: 12px; font-family: var(--font-badan); font-size: 0.86rem; font-weight: 650; letter-spacing: 0.02em; color: var(--teks-redup); cursor: pointer; list-style: none; }
+.penjelasan > summary::-webkit-details-marker { display: none; }
+.penjelasan > summary::after { content: ""; flex: none; width: 7px; height: 7px; margin-inline-end: 4px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform 0.15s; }
+.penjelasan[open] > summary { border-bottom: 1px solid var(--garis); border-radius: 12px 12px 0 0; }
+.penjelasan[open] > summary::after { transform: rotate(-135deg); }
+.penjelasan-isi { padding: 8px 14px 12px; }
+.penjelasan-isi > :first-child { margin-top: 0.2em; }
+.penjelasan-umum { margin: 0 0 18px; }
+.penjelasan-ringkas { margin: 10px 0 0; font-family: var(--font-badan); font-size: 0.8rem; color: var(--teks-redup); }
+.penjelasan-ringkas span { display: inline-block; padding: 1px 10px; border: 1px solid var(--garis); border-radius: 999px; background: var(--permukaan-2); }
 
 .daftar-relasi { list-style: none; padding: 0; margin: 0 0 20px; display: grid; gap: 8px; }
 .daftar-relasi li { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; padding: 10px 14px; border: 1px solid var(--garis); border-radius: 16px; background: var(--permukaan); }

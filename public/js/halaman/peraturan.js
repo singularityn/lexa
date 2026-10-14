@@ -2,8 +2,8 @@
 import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
-  angka, bacaIsiPasal, bersihkanArtefak, celahNomorPasal, daftarCakupan, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, labelJenis, labelRelasi,
-  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, peraturanPerubahan, pratinjauPeraturan, queryString, rapikanHuruf, sitasi, sitasiPasal, tanggalIndonesia, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
+  angka, bacaIsiPasal, bersihkanArtefak, celahNomorPasal, daftarCakupan, hanyaCukupJelas, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, kutipanPasal, labelJenis, labelRelasi,
+  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, peraturanPerubahan, pratinjauPeraturan, queryString, rapikanHuruf, rapikanNomorPasal, sitasi, sitasiPasal, tanggalIndonesia, teksIsiPasal, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
 import { bacaPref, HURUF, simpanPref, terapkanPref, UKURAN } from "../bacaan.js";
 import { buatDaftarIsi } from "../komponen/daftarIsi.js";
@@ -403,7 +403,7 @@ function tampilkan(ctx, d, q) {
   );
 
   const jumlahPasal = hitungPasal(kelompok);
-  const adaPenjelasan = kelompok.some((g) => g.penjelasan);
+  const adaPenjelasan = kelompok.some((g) => g.penjelasan) || (d.penjelasan?.length ?? 0) > 0;
   const kepala = h(
     "header",
     { class: "kepala-peraturan" },
@@ -538,6 +538,39 @@ function renderBlok(b, peta) {
 }
 
 /**
+ * Penjelasan resmi sebuah pasal, tepat di bawah pasalnya: lipatan yang tertutup bila ada uraian, dan penanda kecil bila hanya
+ * berbunyi "Cukup jelas" (tak ada yang perlu dibuka).
+ * @param {string} isi
+ * @param {ReturnType<typeof petaRujukan>} peta
+ */
+function blokPenjelasan(isi, peta) {
+  if (hanyaCukupJelas(isi)) return h("p", { class: "penjelasan-ringkas" }, h("span", null, "Penjelasan: cukup jelas"));
+  return h(
+    "details",
+    { class: "penjelasan" },
+    h("summary", null, "Penjelasan"),
+    h("div", { class: "penjelasan-isi" }, bacaIsiPasal(isi).map((blok) => renderBlok(blok, peta))),
+  );
+}
+
+/**
+ * Penjelasan Umum, di awal teks sebagai lipatan yang tertutup (uraiannya panjang dan mendorong pasal pertama keluar dari layar).
+ * @param {string} isi
+ * @param {ReturnType<typeof petaRujukan>} peta
+ */
+function blokPenjelasanUmum(isi, peta) {
+  const el = h(
+    "details",
+    { class: "penjelasan penjelasan-umum", id: "penjelasan-umum" },
+    h("summary", null, "Penjelasan Umum"),
+    h("div", { class: "penjelasan-isi" }, bacaIsiPasal(isi).map((blok) => renderBlok(blok, peta))),
+  );
+  // Tautan langsung ke #penjelasan-umum membuka lipatannya.
+  if (location.hash === "#penjelasan-umum") /** @type {HTMLDetailsElement} */ (el).open = true;
+  return el;
+}
+
+/**
  * Panel "Isi": pasal, daftar isi, pencarian di dalam peraturan, dan pengaturan tampilan teks.
  * @param {import("../router.js").Konteks} ctx
  * @param {Detail} d
@@ -581,6 +614,13 @@ function panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus) {
   /** @type {Array<{ el: HTMLElement, teks: string, jangkar: string, nama: string }>} */
   const indeks = [];
 
+  // Penjelasan resmi (tabel `penjelasan`): Umum di awal teks, dan penjelasan tiap pasal tepat di bawah pasalnya. Jawaban lama
+  // yang tersimpan di perangkat tidak memuatnya.
+  const penjelasan = d.penjelasan ?? [];
+  const penjelasanUmum = penjelasan.find((p) => p.nomor_pasal === "Umum")?.isi ?? null;
+  const penjelasanPerPasal = new Map(penjelasan.filter((p) => p.nomor_pasal !== "Umum").map((p) => [rapikanNomorPasal(p.nomor_pasal).toLowerCase(), p.isi]));
+  if (penjelasanUmum) daftar.appendChild(blokPenjelasanUmum(penjelasanUmum, peta));
+
   for (const g of kelompok) {
     // Penjelasan (pasal demi pasal) memakai ulang nomor batang tubuh; ia diberi judul sendiri, tanpa BAB.
     if (g.penjelasanBaru) daftar.appendChild(h("h2", { class: "bab", id: "penjelasan" }, "Penjelasan"));
@@ -592,6 +632,13 @@ function panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus) {
     const sitasiPs = g.penjelasan ? `${nama} ${namaPs}` : sitasiPasal(l, g.nomor);
     const salinTeks = async () => toast((await salin(`${sitasiPs}\n${teksPasal(g, { kepala: false })}`)) ? `Disalin: ${sitasiPs}` : "Penyalinan gagal");
     const salinSitasiPasal = async () => toast((await salin(sitasiPs)) ? `Disalin: ${sitasiPs}` : "Penyalinan gagal");
+    // Penjelasan resmi pasal ini, bila ada (hanya batang tubuh; penjelasan lama yang tersimpan sebagai pasal kembar tak punya).
+    const isiPenjelasan = g.penjelasan ? undefined : penjelasanPerPasal.get(g.nomor.toLowerCase());
+    const tautanPs = () => location.origin + urlPeraturan(l.frbr_uri, { jangkar: g.jangkar });
+    const kutipanLengkap = () => `${kutipanPasal(l, g.nomor)}\n\n${teksPasal(g, { kepala: false })}\n\n${tautanPs()}`;
+    const salinKutipan = async () => toast((await salin(kutipanLengkap())) ? `Disalin: kutipan ${sitasiPs}` : "Penyalinan gagal");
+    const salinDenganPenjelasan = async () =>
+      toast((await salin(`${kutipanLengkap()}\n\nPenjelasan ${namaPs}:\n${teksIsiPasal(isiPenjelasan)}`)) ? `Disalin: ${sitasiPs} beserta penjelasannya` : "Penyalinan gagal");
     const salinTautanPasal = async () => toast((await salin(location.origin + urlPeraturan(l.frbr_uri, { jangkar: g.jangkar }))) ? "Tautan disalin." : "Penyalinan gagal");
     const bagikanPasal = () =>
       bagikan({ teks: `${sitasiPs}: ${potongTeks(teksPasal(g, { kepala: false }), 160)}`, url: location.origin + urlPeraturan(l.frbr_uri, { jangkar: g.jangkar }) });
@@ -605,6 +652,9 @@ function panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus) {
       { class: "pasal-aksi" },
       h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Salin sitasi", "aria-label": `Salin sitasi ${namaPs}`, onclick: salinSitasiPasal }, ikon("salin")),
       h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Salin tautan ke pasal ini", "aria-label": `Salin tautan ${namaPs}`, onclick: salinTautanPasal }, ikon("tautan")),
+      g.penjelasan
+        ? null
+        : h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Salin kutipan lengkap (nama peraturan, teks pasal, dan tautan)", "aria-label": `Salin kutipan lengkap ${namaPs}`, onclick: salinKutipan }, ikon("kutip")),
       // Hanya batang tubuh: penjelasan memakai ulang nomor pasal, jadi halamannya tak bisa ditebak dari nomornya. Tombol ini
       // baru tampil setelah diketahui PDF-nya ada (kelas `ada-pdf` pada daftar, dipasang di bawah).
       g.penjelasan
@@ -626,6 +676,8 @@ function panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus) {
               { ikon: "bagikan", label: "Bagikan pasal ini", keterangan: "Kirim lewat WhatsApp, Telegram, dan lainnya", saat: bagikanPasal, tampil: bisaBagikan },
               { ikon: "dokumen", label: "Lihat di PDF", keterangan: "Bandingkan dengan naskah aslinya", saat: () => void akses.buka(g.nomor), tampil: !g.penjelasan && akses.tersedia() },
               { ikon: "salin", label: "Salin teks pasal", keterangan: "Dengan sitasinya", saat: salinTeks },
+              { ikon: "kutip", label: "Salin kutipan lengkap", keterangan: "Nama peraturan, teks pasal, dan tautan", saat: salinKutipan, tampil: !g.penjelasan },
+              { ikon: "kutip", label: "Salin pasal beserta penjelasannya", keterangan: "Kutipan lengkap dan penjelasan resminya", saat: salinDenganPenjelasan, tampil: Boolean(isiPenjelasan) && !hanyaCukupJelas(isiPenjelasan) },
               { ikon: "salin", label: "Salin sitasi", keterangan: sitasiPs, saat: salinSitasiPasal },
               { ikon: "tautan", label: "Salin tautan ke pasal ini", saat: salinTautanPasal },
               { ikon: "bendera", label: "Laporkan kesalahan", saat: laporPasal },
@@ -648,9 +700,16 @@ function panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus) {
               ? bacaIsiPasal(b.isi).map((blok) => renderBlok(blok, peta))
               : h("div", { class: "ayat", id: jangkarDariId(b.id) }, h("span", { class: "no" }, `(${b.ayat})`), h("div", { class: "isi" }, bacaIsiPasal(b.isi).map((blok) => renderBlok(blok, peta)))),
           ),
+      isiPenjelasan ? blokPenjelasan(isiPenjelasan, peta) : null,
     );
     daftar.appendChild(el);
-    indeks.push({ el, teks: `${namaPs} ${g.judul ?? ""} ${g.butir.map((b) => bersihkanArtefak(b.isi)).join(" ")}`.toLowerCase(), jangkar: g.jangkar, nama: namaPs });
+    // Penjelasan ikut dicari: pasal yang hanya penjelasannya memuat istilahnya tetap cocok (dan lipatannya dibuka, lihat `terapkan`).
+    indeks.push({
+      el,
+      teks: `${namaPs} ${g.judul ?? ""} ${g.butir.map((b) => bersihkanArtefak(b.isi)).join(" ")} ${isiPenjelasan ? teksIsiPasal(isiPenjelasan) : ""}`.toLowerCase(),
+      jangkar: g.jangkar,
+      nama: namaPs,
+    });
   }
 
   // --- Pencarian di dalam peraturan --------------------------------------
@@ -676,6 +735,9 @@ function panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus) {
       if (ya) {
         cocok++;
         tandaiIstilah(el, istilah);
+        // Istilah yang cocok di dalam penjelasan yang tertutup tak terlihat; bukalah.
+        const lipatan = el.querySelector("details.penjelasan");
+        if (lipatan && istilah.some((t) => (lipatan.textContent ?? "").toLowerCase().includes(t))) /** @type {HTMLDetailsElement} */ (lipatan).open = true;
       }
     }
     status.textContent = cocok ? `${angka(cocok)} pasal memuat ${istilah.join(", ")}` : `Tidak ada pasal yang memuat ${istilah.join(" dan ")}`;

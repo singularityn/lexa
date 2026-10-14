@@ -88,6 +88,14 @@ async function siapkan(): Promise<Lingkungan> {
     .prepare(`UPDATE laws SET r2_pdf_key = 'pdf/akn/id/act/uu/2003/13.pdf', r2_text_key = 'teks/akn/id/act/uu/2003/13.md' WHERE frbr_uri = ?`)
     .bind(uri)
     .run();
+  // Satu baris log ekstraksi berversi pengurai lama (0), supaya ekstrak-ulang mode `usang` punya sesuatu untuk diantrekan.
+  await l.db
+    .prepare(
+      `INSERT INTO ekstraksi_log (frbr_uri, r2_pdf_key, vonis, versi_parser)
+       SELECT frbr_uri, 'pdf/akn/id/act/uu/2003/13.pdf', 'bersih', 0 FROM laws WHERE frbr_uri = ?`,
+    )
+    .bind(uri)
+    .run();
   await l.db.prepare(`INSERT INTO sync_log (job, status, detail, jumlah, durasi_ms) VALUES ('jadwal_sinkronisasi','sukses','diperiksa 11',11,420)`).run();
   await l.db.prepare(`INSERT INTO sync_log (job, status, detail, jumlah) VALUES ('ekstrak_pdf','gagal','tidak ada pasal terdeteksi',0)`).run();
   return l;
