@@ -194,7 +194,8 @@ Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bp
 1. **Cek sambungan.** `window.LEXA_PANEN = { geminiCek: true }`. Hasil yang baik mencetak model, versi model, dan anggaran. Galat
    menyebut penyebabnya (kunci salah, model tak ada, kuota).
 2. **Uji kering pada beberapa peraturan** (tak menulis pasal): `window.LEXA_PANEN = { geminiUji: ["/akn/id/act/uu/2019/24",
-   "/akn/id/act/uu/2014/33", "/akn/id/act/pp/1961/3"] }`. Pilih sedikitnya satu pindaian modern, satu ketikan lama, dan satu `berat`.
+   "/akn/id/act/uu/2014/33", "/akn/id/act/pp/1961/3", "/akn/id/act/pp/2026/13"] }`. Keempatnya mewakili tiga kelompok
+   (dua pindaian modern, satu ketikan lama, satu `berat`) dan semuanya ada di D1 produksi per 14 Oktober 2026.
    Tiap peraturan melaporkan keputusan, pasal terbaca dibanding tersimpan, mutu, halaman terbaca dari halaman PDF, token, dan
    kesesuaian dengan teks lama. Baca juga teksnya di R2 (`teks-ai/...`) dan bandingkan beberapa pasal dengan PDF-nya.
 3. **Putuskan.** Layak dilanjutkan bila keputusan `dipakai`, `masalah` kosong, halaman lengkap, dan sampel pasal cocok dengan PDF.
