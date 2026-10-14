@@ -89,7 +89,7 @@ async function siapkan(): Promise<Lingkungan> {
     .bind(uri)
     .run();
   await l.db.prepare(`INSERT INTO sync_log (job, status, detail, jumlah, durasi_ms) VALUES ('jadwal_sinkronisasi','sukses','diperiksa 11',11,420)`).run();
-  await l.db.prepare(`INSERT INTO sync_log (job, status, detail, jumlah) VALUES ('antrean_ingest','gagal','rate limit pasal.id — 3 pesan ditunda 60 detik',3)`).run();
+  await l.db.prepare(`INSERT INTO sync_log (job, status, detail, jumlah) VALUES ('ekstrak_pdf','gagal','tidak ada pasal terdeteksi',0)`).run();
   return l;
 }
 

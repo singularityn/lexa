@@ -1,5 +1,9 @@
 # Analisis lanjutan: pencarian, login Google, menu PDF, dan panen BPK
 
+> **Catatan 14 Okt 2026:** Lexa tidak lagi memakai API atau layanan pasal.id; satu-satunya sumber data kini naskah resmi BPK
+> (lihat [pipeline-data.md](pipeline-data.md)). Bagian dokumen ini yang menyebut pasal.id adalah riwayat analisis pada
+> waktunya dan tidak lagi menggambarkan cara kerja Lexa.
+
 Dokumen ini menjawab empat catatan pemilik sesudah mencoba Lexa di produksi (12 Okt 2026) dan melanjutkan
 [analisis-ux-dan-fitur.md](analisis-ux-dan-fitur.md) serta [pipeline-data.md](pipeline-data.md). Angka produksi diukur
 langsung dari D1 `lexa-db` (hanya dibaca) pada 12 Okt 2026. Hal yang saya tidak bisa periksa dari lingkungan pengembangan

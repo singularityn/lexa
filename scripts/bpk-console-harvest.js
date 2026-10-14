@@ -1,10 +1,9 @@
 /**
  * Panen peraturan dari peraturan.bpk.go.id untuk Lexa.
  *
- * KENAPA ADA: pasal.id sejak 11 Okt 2026 hanya memberi metadata lewat API-nya, jadi teks UUD, Tap MPR, UU, Perppu, dan
- * PP yang belum ada di Lexa hanya bisa datang dari naskah resmi. Seluruh situs BPK berada di balik Cloudflare managed
- * challenge dan Worker Lexa tidak pernah menghubunginya, jadi pengambilan dikerjakan DARI PERAMBAN ANDA SENDIRI, dengan
- * sesi yang sudah lolos challenge. Skrip ini punya dua tahap:
+ * KENAPA ADA: naskah resmi di BPK adalah satu-satunya sumber teks UUD, Tap MPR, UU, Perppu, dan PP di Lexa. Seluruh situs
+ * BPK berada di balik Cloudflare managed challenge dan Worker Lexa tidak pernah menghubunginya, jadi pengambilan
+ * dikerjakan DARI PERAMBAN ANDA SENDIRI, dengan sesi yang sudah lolos challenge. Skrip ini punya dua tahap:
  *
  *  1. PENJELAJAHAN (opsi `jelajah`): membuka daftar peraturan BPK per jenis (UUD, Tap MPR, UU, Perppu, PP), halaman demi
  *     halaman, dan mengirim tiap entri ke Lexa (POST /api/impor/tautan) yang mencocokkannya dengan peraturan di Lexa dan

@@ -7,11 +7,8 @@ import { uraiKueri } from "../lib/query";
 import { tokenSah, diagnosaToken } from "../lib/auth";
 import { headerCors } from "../lib/cors";
 import { klausaBidang } from "../lib/bidang";
-import { PasalApiError, PasalClient, PasalRateLimitError, adaSimpulPasal, catatanAksesTerbatas, uraiDetail, urlBpk } from "../lib/pasal";
-import { uraiAkses } from "../lib/akses";
-import type { KonteksIngest } from "../lib/ingest";
-import { jalankanTik } from "../lib/tik";
-import { arsipkanMentah, arsipkanTeksDanIndeks, SQL_GILIRAN, simpanIsi } from "../lib/isi";
+import { urlBpk } from "../lib/bpk";
+import { CRON_HARIAN } from "../lib/jadwal";
 import { bersihkanJudul, labelSitasi, rapikanArtikel, rapikanLaw } from "../../shared/label";
 import { pilihDalam } from "../lib/d1";
 import { aliasUri, selesaikanUri } from "../lib/uri";
@@ -36,20 +33,6 @@ function konteksPencarian(env: Env): KonteksPencarian {
     cacheTtl: Number(env.SEARCH_CACHE_TTL) || 3600,
     cakupan: bacaCakupan(env.CAKUPAN_JENIS),
     batasVektorMs: Number(env.BATAS_VEKTOR_MS) || undefined,
-  };
-}
-
-function konteksIngest(env: Env): KonteksIngest {
-  return {
-    db: env.DB,
-    vectorize: env.VECTORIZE,
-    ai: env.AI,
-    docs: env.DOCS,
-    queue: env.INGEST_QUEUE,
-    pasal: new PasalClient({ base: env.PASAL_API_BASE, token: env.PASAL_API_TOKEN }),
-    embeddingModel: env.EMBEDDING_MODEL,
-    summaryModel: env.SUMMARY_MODEL,
-    cakupan: bacaCakupan(env.CAKUPAN_JENIS),
   };
 }
 
@@ -356,25 +339,37 @@ api.get("/suggest", async (c) => {
 
 // ---------------------------------------------------------------------------
 // GET /api/stats — kesehatan indeks, dipakai halaman status
+//
+// Kelengkapan data diukur dari sisi panen BPK, satu-satunya sumber teks: berapa peraturan yang sudah bertaut ke BPK,
+// sudah punya PDF-nya, sudah berpasal, dan berapa yang masih menunggu. Teks yang berasal dari konversi PDF BPK
+// ("teks_bpk": arsip teks berekstensi .md, lihat ekstrakPdf) dibedakan dari teks lama yang tersimpan sebelum panen BPK
+// ("teks_lama"), yang akan digantikan begitu PDF-nya dipanen.
 // ---------------------------------------------------------------------------
-type StatusIsi = "lengkap" | "menunggu" | "kosong" | "gagal";
-const STATUS_ISI: readonly StatusIsi[] = ["lengkap", "menunggu", "kosong", "gagal"];
+/** Penanda "di BPK tak ada berkas PDF-nya" di sync_state; lihat routes/impor.ts. */
+const RENTANG_TANPA_BERKAS = ["bpk_tanpa_berkas:", "bpk_tanpa_berkas;"] as const;
 
 api.get("/stats", async (c) => {
   const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
   const dalam = klausaCakupan(cakupan, "jenis");
-  const hari = new Date().toISOString().slice(0, 10);
   const [ringkasan, terbaru, sync, keadaan] = await Promise.all([
-    // Satu pemindaian laws untuk semuanya: jumlah peraturan, pasal, yang terindeks, dan kemajuan isi per jenis dan status.
-    // Jumlah pasal dari `laws.jumlah_pasal` (sama dengan COUNT(*) pada articles), bukan menghitung tabel articles:
-    // beranda memanggil ini pada setiap kunjungan, dan menghitung puluhan ribu baris pasal setiap kali membebani kuota
-    // baca D1 tanpa menambah ketelitian.
+    // Satu pemindaian laws untuk semuanya. Jumlah pasal dari `laws.jumlah_pasal` (sama dengan COUNT(*) pada articles),
+    // bukan menghitung tabel articles: beranda memanggil ini pada setiap kunjungan, dan menghitung puluhan ribu baris
+    // pasal setiap kali membebani kuota baca D1 tanpa menambah ketelitian.
     c.env.DB.prepare(
-      `SELECT jenis, isi_status, COUNT(*) AS n, COALESCE(SUM(jumlah_pasal), 0) AS pasal,
+      `SELECT jenis, COUNT(*) AS n, COALESCE(SUM(jumlah_pasal), 0) AS pasal,
               COALESCE(SUM(CASE WHEN jumlah_pasal > 0 THEN 1 ELSE 0 END), 0) AS berisi,
-              COALESCE(SUM(CASE WHEN indexed_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS terindeks
-         FROM laws WHERE ${dalam} GROUP BY jenis, isi_status`,
-    ).all<{ jenis: string; isi_status: string; n: number; pasal: number; berisi: number; terindeks: number }>(),
+              COALESCE(SUM(CASE WHEN indexed_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS terindeks,
+              COALESCE(SUM(CASE WHEN bpk_id IS NOT NULL AND bpk_id <> '' THEN 1 ELSE 0 END), 0) AS bertaut_bpk,
+              COALESCE(SUM(CASE WHEN r2_pdf_key IS NOT NULL THEN 1 ELSE 0 END), 0) AS ber_pdf,
+              COALESCE(SUM(CASE WHEN jumlah_pasal = 0 AND r2_pdf_key IS NULL THEN 1 ELSE 0 END), 0) AS perlu_pdf,
+              COALESCE(SUM(CASE WHEN jumlah_pasal = 0 AND r2_pdf_key IS NOT NULL THEN 1 ELSE 0 END), 0) AS pdf_belum_terurai,
+              COALESCE(SUM(CASE WHEN jumlah_pasal > 0 AND r2_text_key LIKE '%.md' THEN 1 ELSE 0 END), 0) AS teks_bpk,
+              COALESCE(SUM(CASE WHEN jumlah_pasal > 0 AND (r2_text_key IS NULL OR r2_text_key NOT LIKE '%.md') THEN 1 ELSE 0 END), 0) AS teks_lama
+         FROM laws WHERE ${dalam} GROUP BY jenis`,
+    ).all<{
+      jenis: string; n: number; pasal: number; berisi: number; terindeks: number; bertaut_bpk: number; ber_pdf: number;
+      perlu_pdf: number; pdf_belum_terurai: number; teks_bpk: number; teks_lama: number;
+    }>(),
 
     c.env.DB.prepare(
       `SELECT frbr_uri, jenis, nomor, tahun, judul FROM laws WHERE ${dalam}
@@ -386,49 +381,25 @@ api.get("/stats", async (c) => {
         ORDER BY created_at DESC LIMIT 10`,
     ).all<{ job: string; status: string; jumlah: number; detail: string | null; created_at: string }>(),
 
-    // Kemajuan katalog, jeda pasal.id, jejak pemicu, dan statistik hari ini: baris kecil di sync_state.
+    // Jejak pemeliharaan harian dan jumlah peraturan yang ditandai "tanpa berkas PDF di BPK": baris kecil di sync_state.
     c.env.DB.prepare(
-      `SELECT key, value FROM sync_state
-        WHERE key LIKE 'katalog_%' OR key LIKE 'denyut:%' OR key = 'pasal_tunda_sampai' OR key = 'akses_isi' OR key = ?`,
-    ).bind(`statistik:${hari}`).all<{ key: string; value: string }>(),
+      `SELECT (SELECT value FROM sync_state WHERE key = ?) AS pemeliharaan_terakhir,
+              (SELECT COUNT(*) FROM sync_state WHERE key >= ? AND key < ?) AS tanpa_berkas`,
+    ).bind(`denyut:${CRON_HARIAN}`, ...RENTANG_TANPA_BERKAS).first<{ pemeliharaan_terakhir: string | null; tanpa_berkas: number }>(),
   ]);
 
   let laws = 0, articles = 0, terindeks = 0;
-  const perJenisMap = new Map<string, number>();
   const isiPerJenis: Record<string, Record<string, number>> = {};
   for (const r of ringkasan.results) {
     laws += r.n;
     articles += r.pasal;
     terindeks += r.terindeks;
-    perJenisMap.set(r.jenis, (perJenisMap.get(r.jenis) ?? 0) + r.n);
-    // `berisi`: peraturan yang punya teks pasal tersimpan, apa pun statusnya (yang diantrekan ulang untuk diperbaiki tetap berisi).
-    const j = (isiPerJenis[r.jenis] ??= { total: 0, pasal: 0, berisi: 0, ...Object.fromEntries(STATUS_ISI.map((st) => [st, 0])) });
-    j.total += r.n;
-    j.pasal += r.pasal;
-    j.berisi += r.berisi;
-    if ((STATUS_ISI as readonly string[]).includes(r.isi_status)) j[r.isi_status] += r.n;
-  }
-  const perJenis = [...perJenisMap.entries()].map(([jenis, n]) => ({ jenis, n })).sort((a, b) => b.n - a.n).slice(0, 15);
-
-  const kv = new Map(keadaan.results.map((r) => [r.key, r.value]));
-  const katalog: Record<string, { total_sumber: number | null; selesai: string | null; dukungan: string | null }> = {};
-  for (const jenis of Object.keys(isiPerJenis).concat(["UU", "PERPPU", "PP", "UUD", "TAP_MPR"])) {
-    if (katalog[jenis]) continue;
-    const total = kv.get(`katalog_total:${jenis}`);
-    katalog[jenis] = {
-      total_sumber: total === undefined ? null : Number(total),
-      selesai: kv.get(`katalog_selesai:${jenis}`) ?? null,
-      dukungan: kv.get(`katalog_dukungan:${jenis}`) ?? null,
+    isiPerJenis[r.jenis] = {
+      total: r.n, pasal: r.pasal, berisi: r.berisi, bertaut_bpk: r.bertaut_bpk, ber_pdf: r.ber_pdf,
+      perlu_pdf: r.perlu_pdf, pdf_belum_terurai: r.pdf_belum_terurai, teks_bpk: r.teks_bpk, teks_lama: r.teks_lama,
     };
   }
-  let hariIni: Record<string, number> = {};
-  try {
-    hariIni = JSON.parse(kv.get(`statistik:${hari}`) ?? "{}") as Record<string, number>;
-  } catch {
-    hariIni = {};
-  }
-  const jeda = kv.get("pasal_tunda_sampai");
-  const akses = uraiAkses(kv.get("akses_isi"));
+  const perJenis = ringkasan.results.map((r) => ({ jenis: r.jenis, n: r.n })).sort((a, b) => b.n - a.n).slice(0, 15);
 
   return c.json({
     cakupan,
@@ -438,187 +409,30 @@ api.get("/stats", async (c) => {
     per_jenis: perJenis,
     terbaru: terbaru.results,
     sinkronisasi_terakhir: sync.results,
-    // Kemajuan pengisian data: berapa peraturan per jenis yang sudah punya pasal, masih menunggu, kosong di sumber,
-    // atau gagal; kemajuan katalog; jeda dari pasal.id; dan kapan tiap pemicu terakhir berjalan.
     isi: {
       per_jenis: isiPerJenis,
-      katalog,
-      pasal_dijeda_sampai: jeda && jeda > new Date().toISOString() ? jeda : null,
-      // pasal.id tak memberi naskah peraturan (token tanpa hak teks lengkap atau kuota baca habis); null bila akses baik.
-      akses: akses && { sejak: akses.sejak, terakhir: akses.terakhir, periksa_lagi: akses.periksa_lagi, catatan: akses.catatan.slice(0, 300) },
-      hari_ini: hariIni,
-      denyut: {
-        menit: kv.get("denyut:* * * * *") ?? null,
-        harian: kv.get("denyut:0 19 * * *") ?? null,
-        antrean: kv.get("denyut:antrean") ?? null,
-      },
+      tanpa_berkas: keadaan?.tanpa_berkas ?? 0,
+      pemeliharaan_terakhir: keadaan?.pemeliharaan_terakhir ?? null,
     },
   }, 200, { "Cache-Control": "public, max-age=30, stale-while-revalidate=120" });
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/admin/sync — pemicu manual untuk pipeline isi peraturan
+// POST /api/admin/sync — dihentikan
 //
-//   { tik: true }                    jalankan satu tik sekarang dan kembalikan laporannya
-//   { uri }                          dahulukan satu peraturan (diambil di tik berikutnya; bila belum ada di D1, diambil sekarang)
-//   { jenis: ["UU", ...] }           mulai sapuan katalog ulang untuk jenis itu (tanpa jenis: semua yang dalam cakupan)
-//   { perbaiki_celah: true }         dahulukan pengambilan ulang peraturan yang penomoran pasalnya bercelah
-//   { ulang_arsip: true }            uraikan ulang semua peraturan yang responsnya sudah diarsipkan (tanpa pasal.id)
-//   { ringkas_kosong: true }         susun ringkasan AI untuk yang belum punya
+// Dulu memicu sinkronisasi dengan pasal.id (katalog, pengambilan isi, tik). Lexa tidak lagi memakai pasal.id: data
+// datang dari panen BPK lewat /api/impor/*. Jawaban 410 ini menunjukkan penggantinya kepada yang masih memakai perintah lama.
 // ---------------------------------------------------------------------------
-api.post("/admin/sync", async (c) => {
+api.post("/admin/sync", (c) => {
   if (!tokenSah(c.req.header("x-admin-token"), c.env.ADMIN_TOKEN)) {
     return c.json({ error: "tidak_berwenang", message: "Header x-admin-token tidak valid." }, 401);
   }
-  if (!c.env.PASAL_API_TOKEN) {
-    return c.json({
-      error: "token_belum_diatur",
-      message: "PASAL_API_TOKEN belum dipasang. Jalankan: wrangler secret put PASAL_API_TOKEN",
-    }, 503);
-  }
-
-  type BodySync = {
-    tik?: boolean;
-    jenis?: string[];
-    uri?: string;
-    perbaiki_celah?: boolean;
-    ulang_arsip?: boolean;
-    ringkas_kosong?: boolean;
-    batas?: number;
-  };
-  const body = await c.req.json<BodySync>().catch(() => ({}) as BodySync);
-  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
-  const dalam = klausaCakupan(cakupan, "jenis");
-  const luarCakupan = (extra: Record<string, unknown>) =>
-    c.json({ error: "di_luar_cakupan", message: `Di luar cakupan Lexa saat ini: ${cakupan.join(", ")}.`, cakupan, ...extra }, 400);
-
-  // Satu tik sekarang, untuk diagnosis: laporannya menunjukkan apa yang dikerjakan atau mengapa tidak.
-  if (body.tik) {
-    const laporan = await jalankanTik(konteksIngest(c.env), { pasalSiap: true });
-    return c.json({ status: "selesai", laporan });
-  }
-
-  // Dahulukan satu peraturan tertentu.
-  if (body.uri) {
-    if (uriJelasDiLuarCakupan(cakupan, body.uri)) return luarCakupan({ uri: body.uri });
-    const ada = await c.env.DB.prepare(
-      `UPDATE laws SET isi_status = 'menunggu', isi_giliran = 0, isi_percobaan = 0 WHERE frbr_uri = ? AND ${dalam}`,
-    ).bind(body.uri).run();
-    if (ada.meta.changes) return c.json({ status: "didahulukan", uri: body.uri });
-
-    // Belum ada di D1 (katalog belum menjangkaunya): ambil sekarang. Satu permintaan, atas perintah admin.
-    const ctx = konteksIngest(c.env);
-    let mentah: unknown;
-    try {
-      mentah = await ctx.pasal.getLawMentah(body.uri);
-    } catch (e) {
-      if (e instanceof PasalRateLimitError) {
-        return c.json({ error: "pasal_batas_laju", message: "pasal.id meminta jeda.", coba_lagi_dalam_ms: e.retryAfterMs }, 429);
-      }
-      const status = e instanceof PasalApiError ? e.status : 0;
-      return c.json({ error: "pasal_galat", message: String(e).slice(0, 300), status_pasal: status || null }, status === 404 ? 404 : 502);
-    }
-    // Jawaban tanpa naskah karena pembatasan akses bukan peraturan tanpa pasal: tidak disimpan (lib/akses.ts).
-    const tanpaNaskah = catatanAksesTerbatas(mentah);
-    if (tanpaNaskah !== null) {
-      return c.json({ error: "akses_terbatas", message: "pasal.id tidak memberi naskah peraturan ini.", catatan: tanpaNaskah }, 503);
-    }
-    const detail = uraiDetail(mentah);
-    if (!dalamCakupan(cakupan, detail.law.jenis)) return luarCakupan({ uri: body.uri, jenis: detail.law.jenis });
-    const arsip = adaSimpulPasal(mentah) && (await arsipkanMentah(ctx.docs, detail.law.frbr_uri, mentah).then(() => true, () => false));
-    const hasil = await simpanIsi(ctx.db, detail, arsip);
-    if (hasil.diganti) await arsipkanTeksDanIndeks(ctx, detail.law, detail.articles);
-    return c.json({ status: "disimpan", uri: detail.law.frbr_uri, pasal: hasil.jumlah, isi_status: hasil.status });
-  }
-
-  // Susun ringkasan untuk peraturan yang belum punya.
-  if (body.ringkas_kosong) {
-    const batas = Math.min(Math.max(body.batas ?? 100, 1), 500);
-    const { results } = await c.env.DB.prepare(
-      `SELECT frbr_uri FROM laws
-        WHERE (ringkasan IS NULL OR TRIM(ringkasan) = '')
-          AND (r2_text_key IS NOT NULL OR jumlah_pasal > 0)
-          AND ${dalam}
-        ORDER BY tahun DESC LIMIT ?`,
-    ).bind(batas).all<{ frbr_uri: string }>();
-
-    const pesan = results.map((r) => ({ tipe: "ringkas" as const, frbr_uri: r.frbr_uri }));
-    for (let i = 0; i < pesan.length; i += 100) {
-      await c.env.INGEST_QUEUE.sendBatch(pesan.slice(i, i + 100).map((b) => ({ body: b })));
-    }
-
-    await c.env.DB.prepare(
-      `INSERT INTO sync_log (job, status, detail, jumlah) VALUES ('ringkas','sukses',?,?)`,
-    ).bind("diantrekan untuk diringkas", results.length).run().catch(() => {});
-
-    return c.json({ status: "diantrekan", peraturan: results.length });
-  }
-
-  // Dahulukan pengambilan ulang peraturan yang penomoran pasalnya bercelah.
-  //
-  // Peraturan yang `isi_status`-nya sudah 'lengkap' tak diambil lagi oleh tik, sehingga dokumen yang tersimpan tidak
-  // utuh akan diam di sana selamanya. Celah dideteksi dengan membandingkan nomor pasal tertinggi terhadap jumlah
-  // pasal yang benar-benar ada: kalau UU punya Pasal 13 tetapi hanya 12 baris tersimpan, ada yang hilang. (UU
-  // perubahan memuat nomor pasal peraturan lain di dalam isinya, jadi sebagian celah wajar; pengambilan ulangnya
-  // tak merugikan, hasil yang lebih sedikit tidak menggantikan yang tersimpan.)
-  if (body.perbaiki_celah) {
-    const batas = Math.min(Math.max(body.batas ?? 200, 1), 1000);
-    const { results } = await c.env.DB.prepare(
-      `SELECT a.frbr_uri AS frbr_uri,
-              MAX(CAST(a.nomor_pasal AS INTEGER)) - COUNT(DISTINCT a.nomor_pasal) AS hilang
-         FROM articles a JOIN laws l ON l.frbr_uri = a.frbr_uri
-        WHERE a.nomor_pasal GLOB '[0-9]*' AND ${klausaCakupan(cakupan, "l.jenis")}
-        GROUP BY a.frbr_uri
-       HAVING hilang > 0
-        ORDER BY hilang DESC
-        LIMIT ?`,
-    ).bind(batas).all<{ frbr_uri: string; hilang: number }>();
-
-    const perubahan: D1PreparedStatement[] = results.map((r, i) =>
-      c.env.DB.prepare(
-        `UPDATE laws SET isi_status = 'menunggu', isi_giliran = ?, isi_percobaan = 0, isi_arsip = 0 WHERE frbr_uri = ?`,
-      ).bind(1_000_000 + i, r.frbr_uri),
-    );
-    for (let i = 0; i < perubahan.length; i += 100) await c.env.DB.batch(perubahan.slice(i, i + 100));
-
-    const perkiraanHilang = results.reduce((n, r) => n + r.hilang, 0);
-
-    // Dicatat supaya terlihat di /status. Tanpa ini tidak ada cara membedakan "perintah tidak pernah dijalankan"
-    // dari "sudah dijalankan tapi antreannya masih tertahan rate limit".
-    await c.env.DB.prepare(
-      `INSERT INTO sync_log (job, status, detail, jumlah)
-       VALUES ('perbaiki_celah', 'sukses', ?, ?)`,
-    ).bind(`perkiraan ${perkiraanHilang} pasal hilang`, results.length).run().catch(() => {});
-
-    return c.json({
-      status: "didahulukan",
-      peraturan: results.length,
-      perkiraan_pasal_hilang: perkiraanHilang,
-    });
-  }
-
-  // Uraikan ulang semua peraturan yang responsnya sudah diarsipkan (mis. sesudah pengurai pasal diperbaiki).
-  if (body.ulang_arsip) {
-    const hasil = await c.env.DB.prepare(
-      `UPDATE laws SET isi_status = 'menunggu', isi_percobaan = 0, isi_giliran = ${SQL_GILIRAN}
-        WHERE isi_status IN ('lengkap', 'kosong', 'gagal') AND isi_arsip = 1 AND ${dalam}`,
-    ).run();
-    await c.env.DB.prepare(
-      `INSERT INTO sync_log (job, status, detail, jumlah) VALUES ('ulang_arsip','sukses','diuraikan ulang dari arsip',?)`,
-    ).bind(hasil.meta.changes).run().catch(() => {});
-    return c.json({ status: "dijadwalkan", peraturan: hasil.meta.changes });
-  }
-
-  // Sapuan katalog ulang: hapus tanda selesai dan kursornya; tik berikutnya memulai dari awal.
-  const diminta = body.jenis?.length ? body.jenis : undefined;
-  const diabaikan = diminta?.filter((j) => !dalamCakupan(cakupan, j));
-  if (diminta && diabaikan?.length === diminta.length) return luarCakupan({ jenis: diminta });
-  const sasaran = (diminta ?? cakupan).filter((j) => dalamCakupan(cakupan, j));
-  for (const jenis of sasaran) {
-    await c.env.DB.prepare(`DELETE FROM sync_state WHERE key IN (?, ?)`)
-      .bind(`katalog_selesai:${jenis}`, `katalog_offset:${jenis}`).run();
-  }
-  return c.json({ status: "dijadwalkan", jenis: sasaran, ...(diabaikan?.length ? { diabaikan } : {}) });
+  return c.json({
+    error: "dihentikan",
+    message:
+      "Sinkronisasi dengan sumber lama sudah dihentikan: data peraturan kini hanya datang dari panen BPK. " +
+      "Gunakan /api/impor/butuh-teks, /api/impor/ekstrak-ulang, dan /api/impor/ringkas (lihat docs/pipeline-data.md).",
+  }, 410);
 });
 
 // ---------------------------------------------------------------------------

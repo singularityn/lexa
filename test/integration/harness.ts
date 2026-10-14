@@ -17,7 +17,6 @@ import { createRequire } from "node:module";
 import type { DatabaseSync } from "node:sqlite";
 import worker from "../../src/worker/index";
 import { indeksVektor, type KonteksIngest } from "../../src/worker/lib/ingest";
-import { PasalClient } from "../../src/worker/lib/pasal";
 import { bacaCakupan } from "../../src/shared/cakupan";
 
 // --- SQLite -----------------------------------------------------------------
@@ -477,10 +476,8 @@ export function buatLingkungan(): Lingkungan {
     EMBEDDING_MODEL: "@cf/baai/bge-m3",
     SUMMARY_MODEL: "@cf/uji/teks",
     BPK_BASE: "https://peraturan.bpk.go.id",
-    PASAL_API_BASE: "https://pasal.test/api",
     SEARCH_CACHE_TTL: "3600",
     ADMIN_TOKEN: TOKEN_ADMIN,
-    PASAL_API_TOKEN: "token-pasal-uji",
     GOOGLE_CLIENT_ID: "",
     GOOGLE_CLIENT_SECRET: "",
   } as unknown as Env;
@@ -541,9 +538,8 @@ export async function jalankanAntrean(l: Lingkungan, pesan: unknown[]): Promise<
   return hasil;
 }
 
-/** Pemicu harian (sapuan daftar) dan per menit (tik), seperti di wrangler.jsonc. */
+/** Pemicu harian (pemeliharaan), satu-satunya Cron di wrangler.jsonc. */
 export const CRON_HARIAN = "0 19 * * *";
-export const CRON_MENIT = "* * * * *";
 
 /** Jalankan handler `scheduled` (cron) Worker dan tunggu pekerjaan latar. Bawaannya pemicu harian. */
 export async function jalankanCron(l: Lingkungan, cron: string = CRON_HARIAN): Promise<void> {
@@ -637,6 +633,14 @@ export const KORPUS: PeraturanUji[] = [
 
 // --- Pembantu tes -----------------------------------------------------------
 
+/** Semua baris hasil kueri. */
+export const baris = async <T = Record<string, unknown>>(l: Lingkungan, sql: string, ...nilai: unknown[]) =>
+  (await l.db.prepare(sql).bind(...nilai).all<T>()).results;
+
+/** Baris pertama hasil kueri (null bila tak ada). */
+export const satu = async <T = Record<string, unknown>>(l: Lingkungan, sql: string, ...nilai: unknown[]) =>
+  l.db.prepare(sql).bind(...nilai).first<T>();
+
 /** Konteks ingest yang dibangun dari lingkungan uji, sama seperti `konteksIngest` di Worker. */
 export function konteksIngestUji(l: Lingkungan): KonteksIngest {
   return {
@@ -645,7 +649,6 @@ export function konteksIngestUji(l: Lingkungan): KonteksIngest {
     ai: l.env.AI,
     docs: l.env.DOCS,
     queue: l.env.INGEST_QUEUE,
-    pasal: new PasalClient({ base: l.env.PASAL_API_BASE, token: l.env.PASAL_API_TOKEN }),
     embeddingModel: l.env.EMBEDDING_MODEL,
     summaryModel: l.env.SUMMARY_MODEL,
     cakupan: bacaCakupan(l.env.CAKUPAN_JENIS),

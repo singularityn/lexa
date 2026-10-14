@@ -3,10 +3,11 @@
  *
  * Satu Worker mengerjakan tiga peran:
  *   - `fetch`     : melayani /api/* (sisanya jatuh ke static assets SPA)
- *   - `scheduled` : Cron per menit (tik: kosongkan daftar hapus, sapu katalog, ambil isi peraturan) dan harian
- *                   (pemeliharaan)
- *   - `queue`     : konsumer antrean untuk pekerjaan yang tak menyentuh pasal.id (indeks vektor, ringkasan AI,
- *                   ekstraksi PDF) dan rantai tik cadangan bila Cron per menit tak berjalan
+ *   - `scheduled` : Cron harian, pemeliharaan (lib/pemeliharaan.ts). Satu-satunya pemicu terjadwal.
+ *   - `queue`     : konsumer antrean ingest: ekstraksi PDF hasil panen BPK, indeks vektor, dan ringkasan AI
+ *
+ * Worker tidak pernah menghubungi sumber data peraturan mana pun: data datang dari panen BPK yang dijalankan di
+ * peramban pengelola (scripts/bpk-console-harvest.js) dan masuk lewat /api/impor/*.
  */
 
 import { Hono } from "hono";
@@ -18,32 +19,16 @@ import { auth } from "./routes/auth";
 import { tanya } from "./routes/tanya";
 import { koleksi } from "./routes/koleksi";
 import { layaniPeraturan } from "./lib/pratinjau";
-import { PasalClient } from "./lib/pasal";
 import { bacaCakupan, klausaCakupan } from "../shared/cakupan";
 import { prosesPesanIngest, type KonteksIngest, type PesanIngest } from "./lib/ingest";
-import { jalankanTik } from "./lib/tik";
 import { catatDenyut } from "./lib/keadaan";
 import { CRON_HARIAN } from "./lib/jadwal";
-import { cadanganAktif, generasiSah, sambungTik, semaiTik } from "./lib/cadangan";
 import { jalankanPemeliharaan } from "./lib/pemeliharaan";
 
 const app = new Hono<{ Bindings: Env }>();
 
-/** Semai rantai tik cadangan dari permintaan HTTP biasa, paling sering sekali semenit per isolat (lib/cadangan.ts). */
-let semaiTerakhir = 0;
-
 app.use("*", async (c, next) => {
   await next();
-  if (cadanganAktif(c.env) && Date.now() - semaiTerakhir >= 60_000) {
-    semaiTerakhir = Date.now();
-    try {
-      c.executionCtx.waitUntil(
-        semaiTik(c.env.DB, c.env.INGEST_QUEUE).catch((e) => console.error("Lexa: semai tik gagal", e)),
-      );
-    } catch {
-      // Tanpa ExecutionContext (pratinjau lokal): tidak ada yang disemai.
-    }
-  }
   // Header keamanan dasar. CSP sengaja ketat: aplikasi ini tidak memuat aset
   // pihak ketiga sama sekali.
   c.header("X-Content-Type-Options", "nosniff");
@@ -108,7 +93,6 @@ function konteksIngest(env: Env): KonteksIngest {
     ai: env.AI,
     docs: env.DOCS,
     queue: env.INGEST_QUEUE,
-    pasal: new PasalClient({ base: env.PASAL_API_BASE, token: env.PASAL_API_TOKEN }),
     embeddingModel: env.EMBEDDING_MODEL,
     summaryModel: env.SUMMARY_MODEL,
     cakupan: bacaCakupan(env.CAKUPAN_JENIS),
@@ -119,58 +103,29 @@ export default {
   fetch: app.fetch,
 
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    // Jejak bahwa pemicu ini berjalan; kegagalan mencatat tak boleh menghentikan pekerjaannya.
-    ctx.waitUntil(catatDenyut(env.DB, event.cron).catch((e) => console.error("Lexa: denyut gagal dicatat", e)));
-    const konteks = konteksIngest(env);
-
-    // Dua pemicu di wrangler.jsonc: harian (pemeliharaan) dan per menit (tik). Yang tak dikenal dianggap tik.
-    if (event.cron === CRON_HARIAN) {
-      ctx.waitUntil(
-        (async () => {
-          await jalankanPemeliharaan(konteks).catch((e) => console.error("Lexa: pemeliharaan gagal", e));
-          if (cadanganAktif(env)) await semaiTik(env.DB, env.INGEST_QUEUE).catch((e) => console.error("Lexa: semai tik gagal", e));
-        })(),
-      );
+    // Satu-satunya pemicu yang dikenal adalah pemeliharaan harian. Pemicu lain (sisa konfigurasi lama di dashboard) tidak
+    // mengerjakan apa pun, supaya pemicu yang salah pasang tak menjalankan pemeliharaan berulang-ulang.
+    if (event.cron !== CRON_HARIAN) {
+      console.log("Lexa: pemicu Cron tak dikenal diabaikan:", event.cron);
       return;
     }
+    // Jejak bahwa pemicu ini berjalan; kegagalan mencatat tak boleh menghentikan pekerjaannya.
+    ctx.waitUntil(catatDenyut(env.DB, event.cron).catch((e) => console.error("Lexa: denyut gagal dicatat", e)));
     ctx.waitUntil(
-      jalankanTik(konteks, { pasalSiap: Boolean(env.PASAL_API_TOKEN) }).catch((e) => {
-        console.error("Lexa: tik gagal", e);
-      }),
+      jalankanPemeliharaan({ db: env.DB, docs: env.DOCS, vectorize: env.VECTORIZE }).catch((e) => console.error("Lexa: pemeliharaan gagal", e)),
     );
   },
 
   async queue(batch: MessageBatch<PesanIngest>, env: Env) {
     const ctx = konteksIngest(env);
-    let tikDikerjakan = false;
 
     // Diproses berurutan, bukan paralel: pengindeksan memanggil Workers AI, dan paralel menembus batas lajunya.
     for (const pesan of batch.messages) {
-      const badan = pesan.body;
-
-      if (badan.tipe === "tik") {
-        // Rantai cadangan (lib/cadangan.ts). Satu tik per batch cukup; pesan ganda atau basi dibuang.
-        if (!tikDikerjakan && (await generasiSah(env.DB, badan.g).catch(() => true))) {
-          tikDikerjakan = true;
-          try {
-            const laporan = await jalankanTik(ctx, { pasalSiap: Boolean(env.PASAL_API_TOKEN) });
-            await catatDenyut(env.DB, "antrean").catch(() => {});
-            await sambungTik(env.DB, env.INGEST_QUEUE, badan.g, laporan.dilewati !== "sepi");
-          } catch (e) {
-            console.error("Lexa: tik antrean gagal", e);
-            pesan.retry({ delaySeconds: 60 });
-            continue;
-          }
-        }
-        pesan.ack();
-        continue;
-      }
-
       try {
-        await prosesPesanIngest(ctx, badan);
+        await prosesPesanIngest(ctx, pesan.body);
         pesan.ack();
       } catch (e) {
-        console.error("Lexa: ingest gagal", badan, e);
+        console.error("Lexa: ingest gagal", pesan.body, e);
         // retry() memakai backoff bawaan Queues; setelah max_retries pesan jatuh ke lexa-ingest-dlq untuk diperiksa manual.
         pesan.retry();
       }

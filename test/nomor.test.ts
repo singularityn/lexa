@@ -60,7 +60,7 @@ describe("kunciSitasi dan samaSitasi", () => {
 });
 
 describe("nomorKanonik (nomor untuk baris baru dari BPK)", () => {
-  it("Tap MPR ditulis seperti pasal.id", () => {
+  it("Tap MPR ditulis seperti baris yang sudah ada (xvi-mpr-1998)", () => {
     expect(nomorKanonik("TAP_MPR", "XVI/MPR/1998")).toBe("xvi-mpr-1998");
     expect(nomorKanonik("TAP_MPR", "xvimpr1998")).toBe("xvi-mpr-1998");
     expect(nomorKanonik("TAP_MPR", "I")).toBe("I");

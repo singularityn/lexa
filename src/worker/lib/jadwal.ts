@@ -3,8 +3,5 @@
  * persis dengan `event.cron`, jadi ejaannya harus sama karakter demi karakter.
  */
 
-/** 02:00 WIB: pemeliharaan harian (lib/pemeliharaan.ts). */
+/** 02:00 WIB: pemeliharaan harian (lib/pemeliharaan.ts). Satu-satunya pemicu terjadwal. */
 export const CRON_HARIAN = "0 19 * * *";
-
-/** Tik per menit (lib/tik.ts). */
-export const CRON_MENIT = "* * * * *";

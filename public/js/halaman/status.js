@@ -2,24 +2,26 @@
 import { h, isi } from "../dom.js";
 import { api, dibatalkan } from "../api.js";
 import { angka, daftarCakupan, judulRingkas, kodeJenis, labelJenis, sitasi, urlPeraturan } from "../format.js";
-import { kerangka, kotakGalat, peringatan } from "../komponen/umum.js";
+import { kerangka, kotakGalat } from "../komponen/umum.js";
 
 const NAMA_PEKERJAAN = /** @type {Record<string, string>} */ ({
-  jadwal_sinkronisasi: "Sinkronisasi terjadwal",
-  antrean_ingest: "Antrean ingest",
-  impor_bpk: "Impor dari BPK",
+  impor_bpk: "Impor metadata BPK",
+  impor_bpk_tautan: "Penautan daftar BPK",
   ekstrak_pdf: "Ekstraksi PDF",
   ringkas: "Ringkasan AI",
-  perbaiki_celah: "Perbaikan pasal bercelah",
   asisten: "Tanya Lexa",
-  isi_peraturan: "Pengambilan isi peraturan",
-  akses_isi: "Akses isi pasal.id",
-  pasal_laju: "Batas laju pasal.id",
   hapus_objek: "Pembersihan data lama",
   pemeliharaan: "Pemeliharaan harian",
+  // Pekerjaan sumber lama (sudah tidak berjalan); catatannya baru hilang setelah masa simpan log habis.
+  jadwal_sinkronisasi: "Sinkronisasi lama",
+  antrean_ingest: "Antrean ingest lama",
+  perbaiki_celah: "Perbaikan pasal bercelah (lama)",
+  isi_peraturan: "Pengambilan isi (sumber lama)",
+  akses_isi: "Akses sumber lama",
+  pasal_laju: "Batas laju sumber lama",
 });
 
-/** Urutan jenis di tabel kelengkapan: sama dengan urutan pengambilan isi. */
+/** Urutan jenis di tabel kelengkapan: dari yang paling dicari. */
 const URUTAN_JENIS = ["UUD", "TAP_MPR", "UU", "PERPPU", "PP"];
 
 /** Waktu ISO (UTC) dalam zona waktu pembaca. @param {string | null | undefined} iso */
@@ -30,60 +32,60 @@ function waktuIso(iso) {
 }
 
 /**
- * Kelengkapan isi: berapa peraturan yang sudah punya pasal, menunggu giliran, atau tanpa isi di sumber, per jenis, dan
- * kendala yang sedang menghambat (pasal.id tidak memberi naskah, atau meminta jeda).
+ * Meter kemajuan dengan keterangan teksnya.
+ * @param {string} judul
+ * @param {number} nilai
+ * @param {number} total
+ * @param {string} label
+ */
+function meterKemajuan(judul, nilai, total, label) {
+  const persen = total ? Math.round((nilai / total) * 100) : 0;
+  return [
+    h("p", { class: "kelengkapan-ringkas" }, h("strong", null, `${angka(nilai)} dari ${angka(total)}`), ` ${judul}`),
+    h(
+      "div",
+      { class: "meter", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(persen), "aria-label": label },
+      h("span", { style: { width: `${persen}%` } }),
+    ),
+  ];
+}
+
+/**
+ * Kelengkapan data: sumber teks Lexa adalah PDF resmi BPK, jadi yang diukur adalah kemajuan panennya per jenis, yaitu
+ * peraturan yang sudah bertaut ke BPK, sudah punya PDF, sudah punya teks pasal, dan yang masih menunggu.
  * @param {import("../api.js").KemajuanIsi} isi
  * @param {string[]} cakupan
  */
 function panelKelengkapan(isi, cakupan) {
   const jenis = [...URUTAN_JENIS.filter((j) => cakupan.includes(j)), ...cakupan.filter((j) => !URUTAN_JENIS.includes(j))];
-  const baris = jenis.map((j) => ({
-    jenis: j,
-    sumber: isi.katalog[j]?.total_sumber ?? null,
-    dukungan: isi.katalog[j]?.dukungan ?? null,
-    ...(isi.per_jenis[j] ?? { total: 0, pasal: 0, berisi: 0, lengkap: 0, menunggu: 0, kosong: 0, gagal: 0 }),
-  }));
-  const total = baris.reduce((n, b) => n + b.total, 0);
-  const berisi = baris.reduce((n, b) => n + b.berisi, 0);
-  const persen = total ? Math.round((berisi / total) * 100) : 0;
-  const hariIni = isi.hari_ini;
-  // Dua pemicu bisa berganti peran (Cron per menit, atau rantai antrean bila Cron itu tak berjalan): yang terbaru yang dipakai.
-  const terakhir = [isi.denyut.antrean, isi.denyut.menit].filter(Boolean).sort().at(-1) ?? null;
+  /** @type {import("../api.js").IsiJenis} */
+  const kosong = { total: 0, pasal: 0, berisi: 0, bertaut_bpk: 0, ber_pdf: 0, perlu_pdf: 0, pdf_belum_terurai: 0, teks_bpk: 0, teks_lama: 0 };
+  const baris = jenis.map((j) => ({ jenis: j, ...(isi.per_jenis[j] ?? kosong) }));
+  const jumlah = (/** @type {keyof import("../api.js").IsiJenis} */ k) => baris.reduce((n, b) => n + b[k], 0);
+  const total = jumlah("total");
+  const berisi = jumlah("berisi");
+  const berPdf = jumlah("ber_pdf");
+  const teksLama = jumlah("teks_lama");
+  const perluPdf = jumlah("perlu_pdf");
+  const belumTerurai = jumlah("pdf_belum_terurai");
 
+  const kolom = ["Jenis", "Peraturan", "Berisi pasal", "PDF BPK", "Bertaut BPK", "Menunggu PDF", "PDF belum terurai"];
   return h(
     "section",
     { class: "bagian", "aria-labelledby": "judul-kelengkapan" },
-    h("h2", { id: "judul-kelengkapan" }, "Kelengkapan isi"),
-    isi.akses
-      ? peringatan(
-          "diubah",
-          h("p", null, h("strong", null, "pasal.id sedang tidak memberi isi peraturan.")),
-          h(
-            "p",
-            null,
-            "Daftar peraturan tetap diperbarui, tetapi pasal.id tidak mengirim teks pasal lewat API-nya, sehingga teks peraturan baru belum bisa diambil. Teks yang sudah tersimpan tidak terpengaruh, dan pengambilan dilanjutkan sendiri begitu pasal.id kembali memberi isi.",
-          ),
-          isi.akses.catatan ? h("p", { class: "redup" }, `Catatan pasal.id: ${isi.akses.catatan}`) : null,
-          h("p", { class: "redup" }, `Terlihat sejak ${waktuIso(isi.akses.sejak)}; diperiksa lagi ${waktuIso(isi.akses.periksa_lagi)}.`),
-        )
-      : null,
-    isi.pasal_dijeda_sampai ? peringatan("info", h("p", null, `pasal.id meminta jeda. Pengambilan data dilanjutkan sekitar ${waktuIso(isi.pasal_dijeda_sampai)}.`)) : null,
+    h("h2", { id: "judul-kelengkapan" }, "Kelengkapan data"),
     h(
       "div",
       { class: "kartu" },
-      h("p", { class: "kelengkapan-ringkas" }, h("strong", null, `${angka(berisi)} dari ${angka(total)}`), " peraturan sudah punya teks pasal"),
+      ...meterKemajuan("peraturan sudah punya teks pasal", berisi, total, "Peraturan yang sudah punya teks pasal"),
+      ...meterKemajuan("peraturan sudah punya PDF resmi dari BPK", berPdf, total, "Peraturan yang sudah punya PDF dari BPK"),
       h(
         "div",
-        { class: "meter", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(persen), "aria-label": "Peraturan yang sudah punya teks pasal" },
-        h("span", { style: { width: `${persen}%` } }),
-      ),
-      h(
-        "div",
-        { class: "tabel-gulir", tabindex: "0", role: "region", "aria-label": "Kelengkapan isi per jenis, dapat digulir" },
+        { class: "tabel-gulir", tabindex: "0", role: "region", "aria-label": "Kelengkapan data per jenis, dapat digulir" },
         h(
           "table",
           { class: "tabel" },
-          h("thead", null, h("tr", null, ["Jenis", "Di sumber", "Tersimpan", "Berisi pasal", "Menunggu", "Tanpa isi", "Gagal"].map((k, i) => h("th", { class: i ? "angka-tabel" : "" }, k)))),
+          h("thead", null, h("tr", null, kolom.map((k, i) => h("th", { class: i ? "angka-tabel" : "" }, k)))),
           h(
             "tbody",
             null,
@@ -92,12 +94,12 @@ function panelKelengkapan(isi, cakupan) {
                 "tr",
                 null,
                 h("td", null, kodeJenis(b.jenis)),
-                h("td", { class: "angka-tabel" }, b.dukungan?.startsWith("tidak") ? "tak ada" : b.sumber === null ? "belum disapu" : angka(b.sumber)),
                 h("td", { class: "angka-tabel" }, angka(b.total)),
                 h("td", { class: "angka-tabel" }, angka(b.berisi)),
-                h("td", { class: "angka-tabel" }, angka(b.menunggu)),
-                h("td", { class: "angka-tabel" }, angka(b.kosong)),
-                h("td", { class: "angka-tabel" }, angka(b.gagal)),
+                h("td", { class: "angka-tabel" }, angka(b.ber_pdf)),
+                h("td", { class: "angka-tabel" }, angka(b.bertaut_bpk)),
+                h("td", { class: "angka-tabel" }, angka(b.perlu_pdf)),
+                h("td", { class: "angka-tabel" }, angka(b.pdf_belum_terurai)),
               ),
             ),
           ),
@@ -106,13 +108,20 @@ function panelKelengkapan(isi, cakupan) {
       h(
         "p",
         { class: "redup kelengkapan-catatan" },
-        "\"Di sumber\" adalah jumlah peraturan jenis itu di daftar pasal.id; \"Menunggu\" sudah tercatat tetapi pasalnya belum diambil (atau teksnya yang tersimpan sebagian sedang diambil ulang). Lexa mengambil isi bertahap, UUD dan Tap MPR lebih dulu, lalu UU, Perppu, dan PP, yang terbaru lebih dulu.",
+        "Teks peraturan hanya bersumber dari naskah resmi di peraturan.bpk.go.id. \"Menunggu PDF\" belum punya PDF maupun teks pasal; \"PDF belum terurai\" sudah punya PDF tetapi pasalnya belum terbaca (biasanya pindaian atau susunan naskah yang belum dikenali). Panen dilakukan lewat peramban pengelola, UUD dan Tap MPR lebih dulu, lalu UU, Perppu, dan PP, yang terbaru lebih dulu.",
       ),
-      h(
-        "p",
-        { class: "redup kelengkapan-catatan" },
-        `Pemroses latar terakhir berjalan ${waktuIso(terakhir)}. Hari ini: ${angka(hariIni.katalog ?? 0)} peraturan didaftar, ${angka(hariIni.lengkap ?? 0)} diisi, ${angka(hariIni.batas_laju ?? 0)} kali kena batas laju.`,
-      ),
+      teksLama
+        ? h(
+            "p",
+            { class: "redup kelengkapan-catatan" },
+            `${angka(teksLama)} peraturan masih memakai teks lama yang tersimpan sebelum panen BPK; teksnya digantikan naskah BPK begitu PDF-nya dipanen dan terbaca utuh.`,
+          )
+        : null,
+      isi.tanpa_berkas
+        ? h("p", { class: "redup kelengkapan-catatan" }, `${angka(isi.tanpa_berkas)} peraturan ditandai tidak memiliki berkas PDF di BPK (hanya metadata), jadi tidak diminta lagi.`)
+        : null,
+      perluPdf + belumTerurai === 0 && total > 0 ? h("p", { class: "redup kelengkapan-catatan" }, "Semua peraturan dalam cakupan sudah punya teks atau PDF.") : null,
+      h("p", { class: "redup kelengkapan-catatan" }, `Pemeliharaan harian terakhir berjalan ${waktuIso(isi.pemeliharaan_terakhir)}.`),
     ),
   );
 }

@@ -1,5 +1,9 @@
 # Analisis lanjutan: UI/UX dan fitur Lexa
 
+> **Catatan 14 Okt 2026:** Lexa tidak lagi memakai API atau layanan pasal.id; satu-satunya sumber data kini naskah resmi BPK
+> (lihat [pipeline-data.md](pipeline-data.md)). Bagian dokumen ini yang menyebut pasal.id adalah riwayat analisis pada
+> waktunya dan tidak lagi menggambarkan cara kerja Lexa.
+
 Dokumen ini melanjutkan [analisis-kelayakan-lexa.md](analisis-kelayakan-lexa.md) setelah situs berjalan di
 Cloudflare. Pemicunya: situs sudah hidup, tetapi tampilannya dinilai buruk, fiturnya masih kurang, dan
 aplikasi harus nyaman di ponsel serta bisa ditambahkan ke layar utama.

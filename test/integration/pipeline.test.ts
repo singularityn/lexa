@@ -479,14 +479,14 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
     const BPK = { origin: "https://peraturan.bpk.go.id" };
     const tanam = async (
       uri: string,
-      o: { jenis?: string; tahun?: number; jumlah?: number; bpkId?: string | null; sumber?: string | null; pdf?: string | null; giliran?: number; pasal?: Array<number | string> } = {},
+      o: { jenis?: string; tahun?: number; jumlah?: number; bpkId?: string | null; sumber?: string | null; pdf?: string | null; pasal?: Array<number | string> } = {},
     ) => {
       await l.db
         .prepare(
-          `INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, jumlah_pasal, bpk_id, sumber_url, r2_pdf_key, isi_status, isi_giliran)
-           VALUES (?,?,?,?,?,?,?,?,?, 'menunggu', ?)`,
+          `INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, jumlah_pasal, bpk_id, sumber_url, r2_pdf_key, isi_status)
+           VALUES (?,?,?,?,?,?,?,?,?, 'menunggu')`,
         )
-        .bind(uri, o.jenis ?? "UU", uri.split("/").at(-1), o.tahun ?? 2000, `Peraturan ${uri}`, o.jumlah ?? o.pasal?.length ?? 0, o.bpkId ?? null, o.sumber ?? null, o.pdf ?? null, o.giliran ?? 1000)
+        .bind(uri, o.jenis ?? "UU", uri.split("/").at(-1), o.tahun ?? 2000, `Peraturan ${uri}`, o.jumlah ?? o.pasal?.length ?? 0, o.bpkId ?? null, o.sumber ?? null, o.pdf ?? null)
         .run();
       for (const n of o.pasal ?? []) {
         await l.db.prepare(`INSERT INTO articles (id, frbr_uri, nomor_pasal, isi, urutan) VALUES (?,?,?,?,?)`).bind(`${uri}#pasal-${n}`, uri, String(n), `Isi ${n}.`, Number(n) || 0).run();
@@ -506,23 +506,23 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
       expect(asing.headers.get("access-control-allow-origin")).toBeNull();
     });
 
-    it("memuat peraturan tanpa teks dan tanpa PDF terunggah: yang berbpk_id lebih dulu, lalu menurut giliran; alamat BPK dari sumber atau bpk_id", async () => {
-      await tanam("/akn/id/act/uu/2000/1", { bpkId: "11", sumber: "https://peraturan.bpk.go.id/Details/11/uu-no-1-tahun-2000", giliran: 500 });
-      await tanam("/akn/id/act/uu/2000/2", { bpkId: "22", sumber: "https://peraturan.go.id/id/uu-no-2-tahun-2000", giliran: 100 });
-      await tanam("/akn/id/act/pp/2001/3", { jenis: "PP", sumber: "https://pasal.id/peraturan/pp/pp-no-3-tahun-2001", giliran: 50 });
-      await tanam("/akn/id/act/pp/2001/4", { jenis: "PP", bpkId: "44", giliran: 900 });
+    it("memuat peraturan tanpa teks dan tanpa PDF terunggah: yang berbpk_id lebih dulu, lalu menurut jenis dan tahun terbaru; alamat BPK dari sumber atau bpk_id", async () => {
+      await tanam("/akn/id/act/uu/2000/1", { bpkId: "11", sumber: "https://peraturan.bpk.go.id/Details/11/uu-no-1-tahun-2000" });
+      await tanam("/akn/id/act/uu/2005/2", { bpkId: "22", sumber: "https://peraturan.go.id/id/uu-no-2-tahun-2005", tahun: 2005 });
+      await tanam("/akn/id/act/pp/2001/3", { jenis: "PP", tahun: 2001, sumber: "https://peraturan.go.id/id/pp-no-3-tahun-2001" });
+      await tanam("/akn/id/act/pp/2001/4", { jenis: "PP", tahun: 2001, bpkId: "44" });
       await tanam("/akn/id/act/uu/2000/5", { pasal: [1, 2, 3] }); // sudah punya teks
       await tanam("/akn/id/act/uu/2000/6", { pdf: "pdf/akn/id/act/uu/2000/6.pdf" }); // PDF sudah diunggah
       await tanam("/akn/id/act/perpres/2000/7", { jenis: "PERPRES", bpkId: "77" }); // di luar cakupan
 
       const b = await daftar();
       expect(b.total).toBe(4);
-      expect(b.tanpa_bpk).toBe(1); // hanya yang bersumber pasal.id dan tanpa bpk_id
+      expect(b.tanpa_bpk).toBe(1); // hanya yang tak punya tautan BPK sama sekali
       expect(b.daftar.map((d) => [d.frbr_uri, d.detail_url])).toEqual([
-        ["/akn/id/act/uu/2000/2", "https://peraturan.bpk.go.id/Details/22"], // sumbernya bukan BPK: pakai bpk_id
+        ["/akn/id/act/uu/2005/2", "https://peraturan.bpk.go.id/Details/22"], // UU yang terbaru; sumbernya bukan BPK, jadi dari bpk_id
         ["/akn/id/act/uu/2000/1", "https://peraturan.bpk.go.id/Details/11/uu-no-1-tahun-2000"], // sumber BPK memuat slug
-        ["/akn/id/act/pp/2001/4", "https://peraturan.bpk.go.id/Details/44"],
-        ["/akn/id/act/pp/2001/3", null],
+        ["/akn/id/act/pp/2001/4", "https://peraturan.bpk.go.id/Details/44"], // PP sesudah UU
+        ["/akn/id/act/pp/2001/3", null], // tanpa tautan BPK paling akhir
       ]);
     });
 
@@ -550,7 +550,7 @@ describe.skipIf(!sqliteAda)("impor BPK -> pengindeksan", () => {
 
     it("sesudah PDF-nya diunggah, peraturan tak muncul lagi (pemanggilan berikutnya mengembalikan yang baru)", async () => {
       await tanam("/akn/id/act/uu/2000/1", { bpkId: "1" });
-      await tanam("/akn/id/act/uu/2000/2", { bpkId: "2", giliran: 2000 });
+      await tanam("/akn/id/act/uu/2000/2", { bpkId: "2" });
       expect((await daftar("?batas=1")).daftar.map((d) => d.frbr_uri)).toEqual(["/akn/id/act/uu/2000/1"]);
       const put = await panggil(l, `/api/impor/pdf?uri=${encodeURIComponent("/akn/id/act/uu/2000/1")}`, { method: "PUT", headers: adm, body: PDF });
       expect(put.status).toBe(200);

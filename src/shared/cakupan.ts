@@ -4,8 +4,8 @@
  * Untuk saat ini Lexa hanya memuat UUD (dan yang setara: Ketetapan MPR), undang-undang termasuk Perppu,
  * dan peraturan pemerintah. Peraturan di bawah PP (Perpres, peraturan menteri, POJK, Perda, dan seterusnya)
  * tidak disinkronkan, diimpor, dicari, maupun ditampilkan, supaya beban aplikasi tetap ringan: ukuran D1 dan
- * indeks FTS, jumlah vektor di Vectorize, pemanggilan Workers AI, dan terutama antrean ingest yang dibatasi
- * laju pasal.id (360 detail per jam).
+ * indeks FTS, jumlah vektor di Vectorize, dan pemanggilan Workers AI (konversi PDF, embedding, ringkasan).
+ * Panen BPK pun hanya menjangkau jenis-jenis ini.
  *
  * Daftar jenisnya ada pada variabel `CAKUPAN_JENIS` di wrangler.jsonc (kode jenis seperti kolom `laws.jenis`,
  * dipisah koma). `CAKUPAN_BAWAAN` di bawah dipakai bila variabelnya tak ada atau tak sah, dan dijaga sama dengan

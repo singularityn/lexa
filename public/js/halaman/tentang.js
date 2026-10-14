@@ -47,8 +47,8 @@ export default function tentang(ctx) {
       h(
         "ul",
         null,
-        h("li", null, "Naskah resmi, metadata, dan relasi antarperaturan: ", luar("https://peraturan.bpk.go.id", "Database Peraturan BPK"), ". Lexa menautkan setiap peraturan ke halaman resminya."),
-        h("li", null, "Struktur pasal untuk sebagian peraturan: ", luar("https://pasal.id", "pasal.id"), "."),
+        h("li", null, "Naskah resmi, metadata, dan relasi antarperaturan: ", luar("https://peraturan.bpk.go.id", "Database Peraturan BPK"), ". Teks pasal diekstrak otomatis dari PDF resminya, dan Lexa menautkan setiap peraturan ke halaman resminya."),
+        h("li", null, "Sebagian peraturan masih memakai teks pasal lama yang tersimpan sebelum panen dari BPK dimulai. Teks itu digantikan naskah BPK secara bertahap; jumlahnya terlihat di halaman ", h("a", { href: "/status" }, "Status data"), "."),
         h("li", null, "Peraturan perundang-undangan bukan objek hak cipta (Pasal 42 UU 28/2014 tentang Hak Cipta), sehingga bebas dibaca dan dikutip."),
       ),
 

@@ -1,5 +1,9 @@
 # Analisis Kelayakan dan Peta Fitur Lexa di Cloudflare
 
+> **Catatan 14 Okt 2026:** Lexa tidak lagi memakai API atau layanan pasal.id; satu-satunya sumber data kini naskah resmi BPK
+> (lihat [pipeline-data.md](pipeline-data.md)). Bagian dokumen ini yang menyebut pasal.id adalah riwayat analisis pada
+> waktunya dan tidak lagi menggambarkan cara kerja Lexa.
+
 Disusun 3 Oktober 2026 untuk repo `singularityn/lexa`.
 
 Sumber analisis: dokumentasi Cloudflare resmi (via tool pencarian dokumentasi), pembacaan **read-only** akun Cloudflare Anda (Worker, D1, R2, KV), serta sumber publik. **Tidak ada resource Cloudflare yang diubah dan tidak ada kode yang ditulis ke repo.**

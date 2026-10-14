@@ -8,8 +8,8 @@ URL pratinjau per branch/PR, dan check run di GitHub). Langkah di dashboard hany
 
 - Kode Worker identik byte-per-byte dengan produksi v0.1 (terverifikasi lewat sourcemap), ditambah perbaikan
   bug yang ditemukan lewat tes (lihat README, "Riwayat perubahan penting").
-- `wrangler.jsonc` sudah lengkap: Vectorize `lexa-index`, antrean `lexa-ingest`, D1/KV/R2/AI, cron per menit dan
-  harian, `vars.TIK_CADANGAN`, dan aset statis dari `./public`. Tidak ada lagi placeholder yang membuat deploy ditolak.
+- `wrangler.jsonc` sudah lengkap: Vectorize `lexa-index`, antrean `lexa-ingest`, D1/KV/R2/AI, satu cron harian
+  (pemeliharaan), dan aset statis dari `./public`. Tidak ada lagi placeholder yang membuat deploy ditolak.
 - Antarmuka (SPA) ada di `public/`. Frontend v0.1 tidak bisa dipulihkan (tidak ikut dalam bundel Worker),
   jadi repo ini membawa antarmuka baru.
 - `npm run check` (typecheck + tes) lolos, `npm run build` (`wrangler deploy --dry-run`) menampilkan 7
@@ -25,9 +25,9 @@ Deploy dari Git **menimpa pengaturan Worker dengan isi `wrangler.jsonc`**. Rinci
 | Kode Worker | diganti dengan kode repo (sama dengan produksi + perbaikan bug) |
 | Antarmuka di URL dasar | **diganti** dengan `public/`. Bila sebelumnya ada UI lama, ia tidak ikut dipertahankan (lihat Rollback) |
 | Binding `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` | ditetapkan sesuai berkas. **Binding lain yang hanya ada di dashboard akan terlepas** (kode tidak memakai yang lain) |
-| Variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `PASAL_API_BASE`, `SEARCH_CACHE_TTL`) | dipertahankan (`keep_vars: true`) |
-| Secret (`ADMIN_TOKEN`, `PASAL_API_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) | tidak tersentuh |
-| Cron | ditetapkan `* * * * *` (tik pipeline) dan `0 19 * * *` (pemeliharaan harian). Deploy **mengganti** seluruh daftar pemicu dengan isi berkas |
+| Variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `SEARCH_CACHE_TTL`) | dipertahankan (`keep_vars: true`). Sisa `PASAL_API_BASE` dan `TIK_CADANGAN` di dashboard tidak dibaca kode lagi; hapus saja |
+| Secret (`ADMIN_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) | tidak tersentuh. `PASAL_API_TOKEN` tidak dibaca kode lagi; hapus dari dashboard |
+| Cron | ditetapkan `0 19 * * *` saja (pemeliharaan harian). Deploy **mengganti** seluruh daftar pemicu dengan isi berkas, jadi pemicu per menit yang lama otomatis hilang |
 | Konsumer antrean (batch, retry, jeda, konkurensi, DLQ) | **tidak tersentuh**: sengaja tidak dideklarasikan |
 | Compatibility date | `2026-08-05` (diperkirakan dari tanggal pembuatan Worker) |
 | Observability, placement, limits, rute/domain khusus | tidak dicantumkan; periksa di dashboard setelah deploy |
@@ -96,13 +96,13 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Versi aktif | Deployments | versi baru bersumber GitHub, aktif |
 | Antarmuka | buka URL dasar | beranda Lexa tampil dengan statistik; `/tentang` dibuka langsung tanpa 404 |
 | Binding | Settings > Bindings | `DB`, `CACHE`, `DOCS`, `AI`, `VECTORIZE`, `INGEST_QUEUE`, `ASSETS` utuh |
-| Variabel | Settings > Variables and secrets | kelima variabel teks dashboard dan keempat secret masih ada, ditambah `CAKUPAN_JENIS` (dari `wrangler.jsonc`) |
-| Cron | Settings > Trigger events | `* * * * *` dan `0 19 * * *`. Pemicu per menit baru terbukti berjalan di produksi sekitar 17:40 UTC pada 11 Okt 2026 (kunci `denyut:* * * * *` di `sync_state`), berjam-jam sesudah ditambahkan; bila suatu saat denyutnya basi, periksa daftarnya di sini. Pipeline tetap berjalan lewat rantai pesan antrean (`TIK_CADANGAN`), yang dimulai oleh satu kunjungan ke situs atau Cron harian dan berhenti sendiri selama Cron per menit segar |
+| Variabel | Settings > Variables and secrets | variabel teks (`EMBEDDING_MODEL`, `SUMMARY_MODEL`, `BPK_BASE`, `SEARCH_CACHE_TTL`) dan secret (`ADMIN_TOKEN`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) masih ada, ditambah `CAKUPAN_JENIS` (dari `wrangler.jsonc`) |
+| Cron | Settings > Trigger events | hanya `0 19 * * *` (pemeliharaan harian). Bila masih ada pemicu `* * * * *`, hapus; kode mengabaikannya |
 | Konsumer antrean | Queues > lexa-ingest | masih terhubung ke `lexa`, DLQ dan retry seperti sebelumnya |
 | API | `/api/stats`, `/api/search?q=pesangon`, `/robots.txt`, `/sitemap.xml` | 200 dengan data |
 | Pencarian kata bertanda hubung | `/cari?q=perundang-undangan&mode=keyword` | ada hasil (bug lama: nihil) |
 | Sitasi nama panjang | `/cari?q=Peraturan Pemerintah Pengganti Undang-Undang Nomor 2 Tahun 2022` | Perppu 2/2022 di urutan pertama berlabel "Sitasi" (bukan UU 2/2022) |
-| Cakupan | `/api/stats` | `cakupan: ["UUD","TAP_MPR","UU","PERPPU","PP"]`; `total_peraturan` hanya yang dalam cakupan (3.870 sesudah penghapusan 11 Okt 2026 dan naik bersama katalog; tak ada lagi PERPRES, POJK, PERMEN) |
+| Cakupan | `/api/stats` | `cakupan: ["UUD","TAP_MPR","UU","PERPPU","PP"]`; `total_peraturan` hanya yang dalam cakupan (7.177 pada 14 Okt 2026; tak ada lagi PERPRES, POJK, PERMEN) |
 | Peraturan di luar cakupan | `/peraturan?uri=/akn/id/act/perpres/2022/1` (Perpres apa pun yang tersimpan) dan `/cari?q=Perpres 22/2015` | halaman "Peraturan ini di luar cakupan Lexa"; hasil pencarian dengan catatan "Lexa belum memuat peraturan jenis PERPRES" |
 | Sitemap | `/sitemap.xml` | hanya URL UU, PP, Perppu, dan Tap MPR |
 | Relasi ke Perppu | `/peraturan?uri=/akn/id/act/uu/1998/10`, tab Relasi | "PERPU No. 2 Tahun 2022" berupa tautan aktif ke halaman Perppu 2/2022 (dulu teks mati) |
@@ -111,21 +111,20 @@ Siapkan Rollback (di bawah) sebelum mulai.
 | Token admin | `GET /api/admin/cek-token` dengan header `x-admin-token` | `secret_terpasang: true`, `cocok: true` |
 | Login Google (bila diaktifkan) | `/akun` > Masuk dengan Google | kembali ke Lexa dalam keadaan masuk; bila Google menampilkan `redirect_uri_mismatch`, lihat [Login Google](#login-google-oauth) |
 | Tab PDF | buka peraturan yang PDF-nya diarsipkan (mis. salah satu UU hasil panen), tab **PDF** | halaman tergambar tanpa galat di konsol; `GET /vendor/pdfjs/pdf.min.mjs` menjawab `text/javascript`; tombol "Lihat di PDF" pada pasal membuka halamannya; tombol "Periksa pasal" menampilkan perbandingan nomor pasal PDF dan Lexa |
-| Pipeline berjalan | D1: `SELECT key, value, updated_at FROM sync_state WHERE key LIKE 'denyut:%' OR key IN ('akses_isi','pasal_tunda_sampai','tik_antre_sampai');` dan `SELECT job, status, detail, created_at FROM sync_log ORDER BY id DESC LIMIT 10;` | `denyut:antrean` (atau `denyut:* * * * *`) segar dalam 5 menit; `/status` memuat panel "Kelengkapan isi" |
-| Akses isi pasal.id | `/status` dan `SELECT value FROM sync_state WHERE key = 'akses_isi';` | tak ada baris `akses_isi` (akses baik). Bila ada, catatan pasal.id dan langkahnya di [pipeline-data.md](pipeline-data.md#akses-isi-pasalid-temuan-11-okt-2026) |
+| Pemeliharaan harian | D1: `SELECT value FROM sync_state WHERE key = 'denyut:0 19 * * *';` dan `SELECT job, status, detail, created_at FROM sync_log ORDER BY id DESC LIMIT 10;` | denyut berumur kurang dari sehari (setelah pukul 02:00 WIB); `/status` memuat panel "Kelengkapan data" |
+| Tanpa pasal.id | `POST /api/admin/sync` dengan token admin | 410 `dihentikan`; tak ada permintaan keluar ke pasal.id dari Worker |
 
-### Pipeline isi: memeriksa dan mengendalikan
+### Pipeline data: memeriksa dan mengendalikan
 
-Pengambilan isi peraturan (katalog, antrean per peraturan, tik per menit, cadangan antrean, arsip respons, daftar hapus,
-pemeliharaan harian) dan temuan akses pasal.id dijelaskan di [pipeline-data.md](pipeline-data.md), lengkap dengan SQL
-pemeriksaan dan `POST /api/admin/sync`. Yang perlu diingat saat men-deploy:
+Data peraturan datang dari panen BPK (skrip di peramban pengelola) lewat `/api/impor/*`; Worker tidak menjemput apa pun.
+Ekstraksi PDF, daftar hapus, dan pemeliharaan harian dijelaskan di [pipeline-data.md](pipeline-data.md), lengkap dengan SQL
+pemeriksaan. Yang perlu diingat saat men-deploy:
 
-- Tik berjalan tiap menit selama ada kerja dan dijeda bila pasal.id minta jeda; kemajuan katalog dan antrean tersimpan di
-  D1 (`sync_state`, kolom `laws.isi_*`), jadi deploy atau rollback tidak mengulang dari awal.
-- Rantai cadangan dimulai oleh satu permintaan HTTP ke situs atau Cron harian sesudah deploy; bila `/status` menunjukkan
-  denyut yang basi, buka situsnya sekali.
-- API pasal.id hanya memberi metadata sejak 11 Okt 2026; memperbarui `PASAL_API_TOKEN` tidak mengembalikan teksnya. Teks
-  baru dipanen dari BPK lewat `scripts/bpk-console-harvest.js` (lihat pipeline-data.md, "Panen BPK").
+- Kemajuan panen tersimpan di D1 (`laws.bpk_id`, `laws.r2_pdf_key`, `laws.jumlah_pasal`, `sync_state` untuk penanda
+  "tanpa berkas"), jadi deploy atau rollback tidak mengulang dari awal. Panen yang sedang berjalan di peramban tidak terputus
+  oleh deploy: ia hanya memanggil API impor, yang kompatibel mundur.
+- Antrean `lexa-ingest` bisa masih memuat pesan sisa alur lama (`peraturan`, `tik`); konsumer membuangnya tanpa dikerjakan.
+- Menempel ulang skrip panen hanya perlu bila `scripts/bpk-console-harvest.js` berubah (lihat riwayat commit).
 
 ### Cakupan peraturan
 
@@ -133,11 +132,10 @@ Lexa hanya memuat UUD dan setara (Tap MPR), undang-undang termasuk Perppu, dan p
 `vars.CAKUPAN_JENIS` pada `wrangler.jsonc` (bawaan di `src/shared/cakupan.ts`, dijaga sama oleh tes). Cara kerjanya ada di
 [README](../README.md#cakupan-peraturan). Dua operasi yang perlu langkah sadar:
 
-**Melebarkan cakupan** (mis. menambah Perpres): tambahkan kodenya di `CAKUPAN_JENIS` **dan** di `JENIS_KATALOG`
-(`src/worker/lib/katalog.ts`), deploy, lalu jalankan `POST /api/admin/sync {"jenis":["PERPRES"]}`. Sapuan hanya bekerja bila
-kode filternya dikenal pasal.id (`UU`, `PERPPU`, `PP`, `PERPRES`, `PERMEN`, `POJK`, `PBI`). Peraturan di luar cakupan
-sudah dihapus dari produksi (lihat berikut), jadi datanya harus diambil lagi dari sumber, dengan batas laju dan akses teks
-pasal.id yang sama. Hasil pencarian lama di KV tidak ikut terpakai karena cakupan menjadi bagian kunci cache.
+**Melebarkan cakupan** (mis. menambah Perpres): tambahkan kodenya di `CAKUPAN_JENIS`, deploy, lalu jalankan penjelajahan dan
+panen BPK untuk jenis itu (opsi `jenis` pada skrip panen). Peraturan di luar cakupan sudah dihapus dari produksi (lihat
+berikut), jadi datanya harus dipanen lagi dari BPK. Hasil pencarian lama di KV tidak ikut terpakai karena cakupan menjadi
+bagian kunci cache.
 
 **Penghapusan data di luar cakupan sudah dilakukan (11 Okt 2026)** atas permintaan pemilik. Urutannya, bila perlu diulang
 untuk jenis lain:
@@ -151,8 +149,8 @@ untuk jenis lain:
    ```
 
 3. Catat dulu objek R2 dan vektor yang akan yatim sebagai batu nisan di `daftar_hapus` (`jenis_objek` `'r2'` dengan kunci
-   dari `r2_text_key`/`r2_pdf_key`, dan `'vektor'` dengan id `frbr_uri`, `frbr_uri#pasal-…`, dan potongan `~n`). Tik
-   mengosongkannya bertahap (500 kunci R2 dan 1.000 id vektor per tik) dan melepas barisnya sesudah objeknya terhapus.
+   dari `r2_text_key`/`r2_pdf_key`, dan `'vektor'` dengan id `frbr_uri`, `frbr_uri#pasal-…`, dan potongan `~n`). Pemeliharaan
+   mengosongkannya bertahap (500 kunci R2 dan 1.000 id vektor per putaran) dan melepas barisnya sesudah objeknya terhapus.
 4. Hapus dari D1, anak lebih dulu, dalam potongan agar tiap pernyataan tidak terlalu berat (pemicu FTS5 ikut menghapus
    entri indeks). Ulangi pasangan pertama sampai `changes` 0, lalu jalankan sisanya:
 
@@ -165,7 +163,7 @@ untuk jenis lain:
    DELETE FROM laws WHERE jenis NOT IN ('UUD','TAP_MPR','UU','PERPPU','PP');
    ```
 
-Hasilnya: 2.131 peraturan dan 15.457 baris pasal terhapus; 6.393 berkas R2 dan 21.128 vektor dikosongkan oleh tik.
+Hasilnya: 2.131 peraturan dan 15.457 baris pasal terhapus; 6.393 berkas R2 dan 21.128 vektor dikosongkan bertahap oleh pemeliharaan.
 
 ### Rollback
 

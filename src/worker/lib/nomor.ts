@@ -1,9 +1,9 @@
 /**
- * Penormalan nomor peraturan untuk membandingkan sitasi lintas sumber (pasal.id, BPK, peraturan.go.id).
+ * Penormalan nomor peraturan untuk membandingkan sitasi lintas sumber (BPK, peraturan.go.id, dan katalog lama yang masih tersimpan).
  *
  * Satu peraturan ditulis berbeda-beda menurut sumbernya, dan D1 produksi menyimpan semuanya apa adanya:
  *   - PP 1/2022 ada dua baris, nomor "01" dan "1";
- *   - Tap MPR XVI/MPR/1998 ada tiga baris, nomor "XVI/MPR/1998" (BPK), "XVI-MPR-1998" dan "xvi-mpr-1998" (pasal.id);
+ *   - Tap MPR XVI/MPR/1998 ada tiga baris, nomor "XVI/MPR/1998" (BPK), "XVI-MPR-1998" dan "xvi-mpr-1998" (katalog lama);
  *   - Tap MPR I/MPR/2003 di BPK hanya bernomor "I" (tahunnya kolom tersendiri).
  * Indeks unik laws(jenis, nomor, tahun) memeriksa teks nomor apa adanya, jadi tak menolak duplikat semacam itu, dan
  * pencocokan sitasi yang membandingkan teks mentah melewatkan peraturan yang sama. Yang dibandingkan di sini adalah
@@ -64,7 +64,7 @@ export function samaSitasi(a: KunciSitasi, b: KunciSitasi): boolean {
 }
 
 /**
- * Nomor untuk baris BARU yang berasal dari BPK, selaras dengan penulisan pasal.id supaya tak menambah ragam:
+ * Nomor untuk baris BARU yang berasal dari BPK, selaras dengan penulisan baris yang sudah ada (konvensi katalog lama) supaya tak menambah ragam:
  * Tap MPR "XVI/MPR/1998" -> "xvi-mpr-1998"; nomor lain dirapikan spasinya dan nol di depannya dibuang.
  */
 export function nomorKanonik(jenis: string, nomor: string): string {

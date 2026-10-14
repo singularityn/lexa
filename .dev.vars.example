@@ -9,8 +9,6 @@
 # Token untuk endpoint /api/impor/* dan /api/admin/* (header x-admin-token).
 ADMIN_TOKEN=ganti-dengan-token-acak-yang-panjang
 
-# Token API pasal.id (sumber metadata, pohon pasal, dan relasi).
-PASAL_API_TOKEN=
 
 # Login Google (OAuth). Bila kosong, aplikasi tetap berjalan dalam mode tamu.
 GOOGLE_CLIENT_ID=

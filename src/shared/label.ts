@@ -10,10 +10,10 @@
 
 const POLA_SLUG_POJK = /^(\d+)-pojk-(\d{2})-(\d{4})$/i;
 
-/** UUD di pasal.id: nomor "1945" untuk naskah asli dan "1945/P4" untuk Perubahan Keempat (tahunnya sama, 1945). */
+/** UUD di data tersimpan: nomor "1945" untuk naskah asli dan "1945/P4" untuk Perubahan Keempat (tahunnya sama, 1945). */
 export const POLA_NOMOR_UUD = /^(\d{4})(?:\/P(\d+))?$/i;
 
-/** Tap MPR bernomor slug di pasal.id: "xvi-mpr-1998", "i-mprs-1960", "mprxxiv-mprs-1966" (penulisan resminya "XVI/MPR/1998"). */
+/** Tap MPR bernomor slug di data tersimpan: "xvi-mpr-1998", "i-mprs-1960", "mprxxiv-mprs-1966" (penulisan resminya "XVI/MPR/1998"). */
 export const POLA_SLUG_TAP_MPR = /^(?:mpr)?([ivxlcdm]+)[-/](mprs?)[-/](\d{4})$/i;
 
 /** "13/2003"; untuk POJK bernomor slug "48/POJK.04/2016"; UUD "1945" dan "1945 Perubahan 4"; Tap MPR "XVI/MPR/1998". */
@@ -34,7 +34,7 @@ export function labelSitasi(l: { jenis: string; nomor: string; tahun: number }):
 /**
  * Nama instansi untuk ditampilkan.
  *
- * Nilai tersimpan bisa "[object Object]" (galat ingest lama; lihat keTeks di lib/pasal.ts), kosong,
+ * Nilai tersimpan bisa "[object Object]" (galat ingest sumber lama), kosong,
  * atau tajuk entri BPK yang berawalan negara: "Indonesia, Pemerintah Pusat". "Indonesia" saja tidak
  * memberi informasi apa pun (semua peraturan nasional), sehingga dianggap kosong.
  */
@@ -79,11 +79,24 @@ export function bersihkanJudul(teks: string): string {
   return tanpaRusak === teks ? teks : tanpaRusak.replace(/\s{2,}/g, " ").trim();
 }
 
+/**
+ * Alamat di situs pasal.id, sumber katalog lama yang tidak dipakai lagi. 204 baris di produksi masih menyimpan
+ * halamannya sebagai `sumber_url`; tautan ke sana tidak disajikan (naskah resminya ada di BPK).
+ */
+const POLA_SUMBER_DIHENTIKAN = /^https?:\/\/(?:[^/@?#]*\.)?pasal\.id(?:[:/?#]|$)/i;
+
 /** Rapikan kolom-kolom `laws` yang bisa berisi sisa data buruk sebelum dikirim ke klien. */
-export function rapikanLaw<T extends { instansi: string | null; judul?: string; tentang?: string | null }>(law: T): T {
+export function rapikanLaw<T extends { instansi: string | null; judul?: string; tentang?: string | null; sumber_url?: string | null }>(law: T): T {
   const instansi = rapikanInstansi(law.instansi);
   const judul = typeof law.judul === "string" ? bersihkanJudul(law.judul) : law.judul;
   const tentang = typeof law.tentang === "string" ? bersihkanJudul(law.tentang) : law.tentang;
-  if (instansi === law.instansi && judul === law.judul && tentang === law.tentang) return law;
-  return { ...law, instansi, ...(judul !== undefined ? { judul } : {}), ...(tentang !== undefined ? { tentang } : {}) };
+  const sumber = typeof law.sumber_url === "string" && POLA_SUMBER_DIHENTIKAN.test(law.sumber_url) ? null : law.sumber_url;
+  if (instansi === law.instansi && judul === law.judul && tentang === law.tentang && sumber === law.sumber_url) return law;
+  return {
+    ...law,
+    instansi,
+    ...(judul !== undefined ? { judul } : {}),
+    ...(tentang !== undefined ? { tentang } : {}),
+    ...(sumber !== undefined ? { sumber_url: sumber } : {}),
+  };
 }

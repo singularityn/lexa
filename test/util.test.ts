@@ -339,6 +339,40 @@ describe("rapikanInstansi / rapikanLaw", () => {
   });
 });
 
+describe("rapikanLaw: tautan sumber ke pasal.id tidak disajikan", () => {
+  it.each([
+    "https://pasal.id/peraturan/uu/uu-no-2-tahun-2024",
+    "http://pasal.id/peraturan/perppu/perppu-no-1-tahun-2002",
+    "https://www.pasal.id/x",
+    "https://PASAL.ID",
+    "https://api.pasal.id:8443/v1",
+  ])("%s -> null", (url) => {
+    const law = { judul: "x", instansi: "Presiden", sumber_url: url };
+    expect(rapikanLaw(law)).toEqual({ judul: "x", instansi: "Presiden", sumber_url: null });
+    expect(law.sumber_url).toBe(url); // tidak mengubah masukan
+  });
+
+  it.each([
+    "https://peraturan.bpk.go.id/Details/149750/uu-no-13-tahun-2003",
+    "https://peraturan.go.id/id/uu-no-5-tahun-2021",
+    "https://bukanpasal.id.contoh.test/x",
+    "https://contoh.test/pasal.id",
+    "https://contoh.test/?u=https://pasal.id/x",
+  ])("%s tetap", (url) => {
+    const law = { judul: "x", instansi: "Presiden", sumber_url: url };
+    expect(rapikanLaw(law)).toBe(law);
+  });
+
+  it("tanpa sumber_url (kosong, null, tak ada) objeknya tidak berubah", () => {
+    for (const sumber_url of ["", null, undefined]) {
+      const law = { judul: "x", instansi: "Presiden", sumber_url };
+      expect(rapikanLaw(law)).toBe(law);
+    }
+    const tanpa = { judul: "x", instansi: "Presiden" };
+    expect(rapikanLaw(tanpa)).toBe(tanpa);
+  });
+});
+
 describe("bersihkanJudul (karakter pengganti dari sumber)", () => {
   it.each([
     // Data produksi: UU 35/1953.

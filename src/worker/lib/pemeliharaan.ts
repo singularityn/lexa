@@ -1,108 +1,97 @@
 /**
- * Pemeliharaan harian (pemicu Cron harian, 02:00 WIB): hal yang perlu terjadi sesekali, bukan tiap menit.
+ * Pemeliharaan harian (pemicu Cron harian, 02:00 WIB): hal yang perlu terjadi sesekali. Satu-satunya pekerjaan
+ * terjadwal Lexa; data peraturan sendiri datang dari panen BPK lewat /api/impor/*, bukan dari Cron.
  *
- *  - Peraturan 'kosong' (sumber menjawab tanpa pasal) dicoba lagi sebulan sekali: pasal.id bisa menambahkan isinya.
- *  - Peraturan 'gagal' (galat berulang) dicoba lagi tiap beberapa hari: gangguannya mungkin sudah lewat.
- *  - Peraturan 'lengkap' yang nomor pasalnya bercelah (ekstraksi lama menghilangkan pasal berayat) diantrekan untuk
- *    diambil ulang, terparah dulu, paling banyak CELAH_PER_HARI sehari dan hanya bila akses isi pasal.id sedang baik.
- *  - Catatan lama dipangkas: sync_log 90 hari, statistik harian 14 hari.
- * Sapuan katalog tidak dijadwalkan di sini: tik sendiri menyapu ulang tiap SIKLUS_HARI hari (lib/katalog.ts).
+ *  - Kosongkan daftar hapus: berkas R2 dan vektor yang sudah tak punya baris di D1 (lib/hapus.ts), dalam batas waktu.
+ *  - Pangkas catatan lama: sync_log sesudah SIMPAN_LOG_HARI hari.
+ *  - Buang sisa keadaan pekerjaan sumber lama (katalog, jeda, akses, tik, statistik harian) dari sync_state; tak ada
+ *    kode yang membacanya lagi.
+ *
+ * Satu baris sync_log ('pemeliharaan') ditulis hanya bila ada yang dikerjakan, supaya hari yang sepi tak menambah log.
  */
 
-import { klausaCakupan } from "../../shared/cakupan";
-import { bacaAkses } from "./akses";
-import { SQL_GILIRAN } from "./isi";
-import type { KonteksIngest } from "./ingest";
+import { CRON_HARIAN } from "./jadwal";
+import { kosongkanDaftarHapus } from "./hapus";
 
-export const ULANG_KOSONG_HARI = 30;
-export const ULANG_GAGAL_HARI = 3;
 export const SIMPAN_LOG_HARI = 90;
-export const SIMPAN_STATISTIK_HARI = 14;
-/** Peraturan bercelah yang diantrekan untuk diambil ulang per hari: separuh dari kuota baca teks lengkap pasal.id (300). */
-export const CELAH_PER_HARI = 150;
-/** Peraturan yang baru dicoba (dan gagal) tak diantrekan lagi sebagai peraturan bercelah sebelum sekian hari. */
-export const ULANG_CELAH_HARI = 14;
-/** Giliran peraturan bercelah: sebelum semua peraturan baru (giliran >= 100 juta), terparah paling depan. */
-const GILIRAN_CELAH = 1_000_000;
+/** Lama paling banyak pengosongan daftar hapus dalam sekali pemeliharaan; sisanya menunggu hari berikutnya. */
+export const BATAS_HAPUS_MS = 8 * 60_000;
+
+export interface KonteksPemeliharaan {
+  db: D1Database;
+  docs: R2Bucket;
+  vectorize: VectorizeIndex;
+}
 
 export interface LaporanPemeliharaan {
-  kosongDiulang: number;
-  gagalDiulang: number;
-  celahDiantrekan: number;
+  hapus: { r2: number; vektor: number; dilepas: number; selesai: boolean };
+  /** Pengosongan daftar hapus berhenti oleh galat R2/Vectorize; kemajuan sebelumnya tetap sah dan dilanjutkan besok. */
+  hapusGalat?: string;
   logDipangkas: number;
+  kunciLamaDibuang: number;
 }
 
 /**
- * Antrekan peraturan 'lengkap' yang nomor pasalnya bercelah (nomor tertinggi dikurangi jumlah nomor berbeda, sedikitnya
- * dua) untuk diambil ulang, terparah dulu. Hanya yang belum pernah diambil oleh pipeline ini (`isi_arsip = 0`: pengambilan
- * yang berhasil mengarsipkan responsnya), jadi yang celahnya ternyata wajar tak diantrekan berulang; peraturan perubahan
- * dilewati (ia mengutip nomor peraturan lain); yang baru dicoba dalam ULANG_CELAH_HARI hari dilewati. Penyimpanan tak
- * pernah mengganti dengan hasil yang lebih sedikit, jadi mengambil ulang tak merugikan. Tidak dilakukan selama akses isi
- * dibatasi: peraturannya cuma menumpuk di antrean.
+ * Kunci sync_state milik pekerjaan sumber lama. Pola GLOB (huruf besar-kecil dibedakan; "_" dan ":" literal). Denyut
+ * Cron harian (`denyut:${CRON_HARIAN}`) dikecualikan: halaman status menampilkannya.
  */
-async function antrekanCelah(ctx: KonteksIngest): Promise<number> {
-  if (await bacaAkses(ctx.db)) return 0;
-  const { results } = await ctx.db
+const POLA_KUNCI_LAMA = [
+  "katalog_*", "diag:*", "diagisi:*", "statistik:*", "log:*", "pinjaman:*", "offset:*", "tik_*", "denyut:*",
+] as const;
+const KUNCI_LAMA = ["akses_isi", "akses_diperiksa", "pasal_tunda_sampai", "jenis_awal"] as const;
+
+async function buangKunciLama(db: D1Database): Promise<number> {
+  const hasil = await db
     .prepare(
-      `SELECT a.frbr_uri AS frbr_uri, MAX(CAST(a.nomor_pasal AS INTEGER)) - COUNT(DISTINCT a.nomor_pasal) AS hilang
-         FROM articles a JOIN laws l ON l.frbr_uri = a.frbr_uri
-        WHERE a.nomor_pasal GLOB '[0-9]*' AND l.isi_status = 'lengkap' AND l.isi_arsip = 0
-          AND ${klausaCakupan(ctx.cakupan, "l.jenis")}
-          AND lower(l.judul) NOT LIKE '%perubahan%'
-          AND (l.isi_dicoba_at IS NULL OR l.isi_dicoba_at < datetime('now', ?))
-        GROUP BY a.frbr_uri
-       HAVING hilang >= 2
-        ORDER BY hilang DESC
-        LIMIT ?`,
+      `DELETE FROM sync_state
+        WHERE (${POLA_KUNCI_LAMA.map(() => "key GLOB ?").join(" OR ")} OR key IN (${KUNCI_LAMA.map(() => "?").join(",")}))
+          AND key <> ?`,
     )
-    .bind(`-${ULANG_CELAH_HARI} days`, CELAH_PER_HARI)
-    .all<{ frbr_uri: string; hilang: number }>();
-  const ubah = results.map((r, i) =>
-    ctx.db
-      .prepare(`UPDATE laws SET isi_status = 'menunggu', isi_percobaan = 0, isi_giliran = ? WHERE frbr_uri = ?`)
-      .bind(GILIRAN_CELAH + i, r.frbr_uri),
-  );
-  for (let i = 0; i < ubah.length; i += 50) await ctx.db.batch(ubah.slice(i, i + 50));
-  return results.length;
+    .bind(...POLA_KUNCI_LAMA, ...KUNCI_LAMA, `denyut:${CRON_HARIAN}`)
+    .run();
+  return hasil.meta?.changes ?? 0;
 }
 
-export async function jalankanPemeliharaan(ctx: KonteksIngest): Promise<LaporanPemeliharaan> {
-  const dalam = klausaCakupan(ctx.cakupan, "jenis");
-  const antrekan = (status: string, hari: number) =>
-    ctx.db
-      .prepare(
-        `UPDATE laws SET isi_status = 'menunggu', isi_percobaan = 0, isi_giliran = ${SQL_GILIRAN}
-          WHERE isi_status = ? AND ${dalam}
-            AND (isi_dicoba_at IS NULL OR isi_dicoba_at < datetime('now', ?))`,
-      )
-      .bind(status, `-${hari} days`)
-      .run();
+export async function jalankanPemeliharaan(ctx: KonteksPemeliharaan): Promise<LaporanPemeliharaan> {
+  const laporan: LaporanPemeliharaan = { hapus: { r2: 0, vektor: 0, dilepas: 0, selesai: true }, logDipangkas: 0, kunciLamaDibuang: 0 };
 
-  const kosong = await antrekan("kosong", ULANG_KOSONG_HARI);
-  const gagal = await antrekan("gagal", ULANG_GAGAL_HARI);
-  const celah = await antrekanCelah(ctx);
+  // Daftar hapus: putaran demi putaran sampai kosong atau waktu habis. Putaran tanpa kemajuan juga menghentikan lingkaran.
+  const mulai = Date.now();
+  try {
+    while (Date.now() - mulai < BATAS_HAPUS_MS) {
+      const putaran = await kosongkanDaftarHapus(ctx.db, ctx.docs, ctx.vectorize);
+      laporan.hapus.r2 += putaran.r2;
+      laporan.hapus.vektor += putaran.vektor;
+      laporan.hapus.dilepas += putaran.dilepas;
+      laporan.hapus.selesai = putaran.selesai;
+      if (putaran.selesai || putaran.r2 + putaran.vektor + putaran.dilepas === 0) break;
+    }
+  } catch (e) {
+    laporan.hapus.selesai = false;
+    laporan.hapusGalat = String(e).slice(0, 200);
+    console.error("Lexa: pengosongan daftar hapus gagal", e);
+  }
+
   const log = await ctx.db
     .prepare(`DELETE FROM sync_log WHERE created_at < datetime('now', ?)`)
     .bind(`-${SIMPAN_LOG_HARI} days`)
     .run();
-  await ctx.db
-    .prepare(`DELETE FROM sync_state WHERE key LIKE 'statistik:%' AND key < ?`)
-    .bind(`statistik:${new Date(Date.now() - SIMPAN_STATISTIK_HARI * 86_400_000).toISOString().slice(0, 10)}`)
-    .run();
+  laporan.logDipangkas = log.meta?.changes ?? 0;
+  laporan.kunciLamaDibuang = await buangKunciLama(ctx.db);
 
-  const laporan = {
-    kosongDiulang: kosong.meta?.changes ?? 0,
-    gagalDiulang: gagal.meta?.changes ?? 0,
-    celahDiantrekan: celah,
-    logDipangkas: log.meta?.changes ?? 0,
-  };
-  await ctx.db
-    .prepare(`INSERT INTO sync_log (job, status, detail, jumlah) VALUES ('pemeliharaan', 'sukses', ?, ?)`)
-    .bind(
-      `diantrekan ulang: ${laporan.kosongDiulang} kosong, ${laporan.gagalDiulang} gagal, ${laporan.celahDiantrekan} bercelah; log dipangkas ${laporan.logDipangkas}`,
-      laporan.kosongDiulang + laporan.gagalDiulang + laporan.celahDiantrekan,
-    )
-    .run()
-    .catch(() => {});
+  const objek = laporan.hapus.r2 + laporan.hapus.vektor + laporan.hapus.dilepas;
+  if (objek + laporan.logDipangkas + laporan.kunciLamaDibuang > 0 || laporan.hapusGalat) {
+    const rincian = [
+      `R2 ${laporan.hapus.r2}, vektor ${laporan.hapus.vektor}${laporan.hapus.dilepas ? `, dilepas ${laporan.hapus.dilepas}` : ""}${laporan.hapus.selesai ? "" : " (belum selesai)"}`,
+      `log dipangkas ${laporan.logDipangkas}`,
+      laporan.kunciLamaDibuang ? `keadaan lama dibuang ${laporan.kunciLamaDibuang}` : null,
+      laporan.hapusGalat ? `galat: ${laporan.hapusGalat}` : null,
+    ].filter(Boolean).join("; ");
+    await ctx.db
+      .prepare(`INSERT INTO sync_log (job, status, detail, jumlah) VALUES ('pemeliharaan', ?, ?, ?)`)
+      .bind(laporan.hapusGalat ? "gagal" : "sukses", rincian, objek)
+      .run()
+      .catch(() => {});
+  }
   return laporan;
 }

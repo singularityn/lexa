@@ -222,12 +222,12 @@ describe.skipIf(!sqliteAda)("POST /api/impor/tautan", () => {
   });
 
   describe("membuat baris untuk peraturan yang belum ada (buat: true)", () => {
-    it("PP dalam cakupan dibuat dengan judul sementara dari teks tautan, antre pengambilan isi, dan langsung masuk daftar kerja panen", async () => {
+    it("PP dalam cakupan dibuat dengan judul sementara dari teks tautan, belum berisi, dan langsung masuk daftar kerja panen", async () => {
       const b = await tautan([{ url: `${BPK}/Details/5/pp-no-24-tahun-2026`, teks: "PP No. 24 Tahun 2026 tentang Tata Kelola Ekspor" }], true);
       expect(b.hasil[0]).toEqual({ bpk_id: "5", status: "dibuat", uri: "/akn/id/act/pp/2026/24", uris: ["/akn/id/act/pp/2026/24"], sitasi: "PP 24/2026" });
-      expect(await l.db.prepare(`SELECT jenis, nomor, tahun, judul, status, bpk_id, sumber_url, jumlah_pasal, isi_status, isi_giliran FROM laws`).first()).toEqual({
+      expect(await l.db.prepare(`SELECT jenis, nomor, tahun, judul, status, bpk_id, sumber_url, jumlah_pasal, isi_status FROM laws`).first()).toEqual({
         jenis: "PP", nomor: "24", tahun: 2026, judul: "PP No. 24 Tahun 2026 tentang Tata Kelola Ekspor", status: "berlaku", bpk_id: "5",
-        sumber_url: `${BPK}/Details/5/pp-no-24-tahun-2026`, jumlah_pasal: 0, isi_status: "menunggu", isi_giliran: 200_000_000 + 4 * 10_000_000 + (9999 - 2026) * 1000,
+        sumber_url: `${BPK}/Details/5/pp-no-24-tahun-2026`, jumlah_pasal: 0, isi_status: "menunggu",
       });
       const kerja = await json<{ daftar: Array<{ frbr_uri: string; detail_url: string }> }>(await panggil(l, "/api/impor/butuh-teks", { headers: adm }));
       expect(kerja.daftar).toEqual([expect.objectContaining({ frbr_uri: "/akn/id/act/pp/2026/24", detail_url: `${BPK}/Details/5/pp-no-24-tahun-2026` })]);
@@ -238,7 +238,7 @@ describe.skipIf(!sqliteAda)("POST /api/impor/tautan", () => {
       expect((await l.db.prepare(`SELECT judul FROM laws`).first<{ judul: string }>())?.judul).toBe("Peraturan Pemerintah Nomor 24 Tahun 2026");
     });
 
-    it("Tap MPR baru ditulis seperti pasal.id: URI dan nomor 'xvi-mpr-1998'", async () => {
+    it("Tap MPR baru ditulis seperti baris yang sudah ada: URI dan nomor 'xvi-mpr-1998'", async () => {
       await tautan([{ url: "/Details/210109/tap-mpr-no-xvimpr1998" }], true);
       expect(await l.db.prepare(`SELECT frbr_uri, nomor, tahun FROM laws`).first()).toEqual({ frbr_uri: "/akn/id/act/tap-mpr/1998/xvi-mpr-1998", nomor: "xvi-mpr-1998", tahun: 1998 });
     });
@@ -277,7 +277,6 @@ describe.skipIf(!sqliteAda)("POST /api/impor/tautan", () => {
   describe("hubungan dengan daftar kerja dan catatan", () => {
     it("peraturan yang baru tertaut muncul di daftar kerja dengan alamat berslug; yang bertaut didahulukan", async () => {
       await sisipkan(l, [pp("5"), pp("6")]);
-      await l.db.prepare(`UPDATE laws SET isi_giliran = 1 WHERE frbr_uri = '/akn/id/act/pp/2021/5'`).run(); // PP 5 lebih dulu menurut giliran
       let kerja = await json<{ daftar: Array<{ frbr_uri: string; detail_url: string | null }>; tanpa_bpk: number }>(await panggil(l, "/api/impor/butuh-teks", { headers: adm }));
       expect(kerja.tanpa_bpk).toBe(2);
       expect(kerja.daftar.map((d) => d.detail_url)).toEqual([null, null]);

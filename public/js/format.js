@@ -64,9 +64,9 @@ export function sitasi(l) {
 }
 
 const POLA_SLUG_POJK = /^(\d+)-pojk-(\d{2})-(\d{4})$/i;
-/** UUD di pasal.id: nomor "1945" (naskah asli) dan "1945/P4" (Perubahan Keempat). Salinan POLA_NOMOR_UUD di src/shared/label.ts. */
+/** UUD di data tersimpan: nomor "1945" (naskah asli) dan "1945/P4" (Perubahan Keempat). Salinan POLA_NOMOR_UUD di src/shared/label.ts. */
 const POLA_NOMOR_UUD = /^(\d{4})(?:\/P(\d+))?$/i;
-/** Tap MPR bernomor slug di pasal.id ("xvi-mpr-1998"); penulisan resminya "XVI/MPR/1998". Salinan POLA_SLUG_TAP_MPR di src/shared/label.ts. */
+/** Tap MPR bernomor slug di data tersimpan ("xvi-mpr-1998"); penulisan resminya "XVI/MPR/1998". Salinan POLA_SLUG_TAP_MPR di src/shared/label.ts. */
 const POLA_SLUG_TAP_MPR = /^(?:mpr)?([ivxlcdm]+)[-/](mprs?)[-/](\d{4})$/i;
 
 /**

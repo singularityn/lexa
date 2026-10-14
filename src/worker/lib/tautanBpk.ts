@@ -18,7 +18,6 @@
 import { dalamCakupan, type Cakupan } from "../../shared/cakupan";
 import { frbrDari, sitasiDariTeks } from "./bpk";
 import { batchBerkelompok, pilihBanyak } from "./d1";
-import { hitungGiliran } from "./isi";
 import { kunciSitasi, nomorKanonik, samaSitasi, uraiNomorTapMpr } from "./nomor";
 import type { Sitasi } from "./sitasi";
 
@@ -431,10 +430,10 @@ export async function tautkanBpk(
       pernyataan: [
         db
           .prepare(
-            `INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, status, bpk_id, sumber_url, jumlah_pasal, isi_status, isi_giliran, updated_at)
-             VALUES (?,?,?,?,?,'berlaku',?,?,0,'menunggu',?, datetime('now'))`,
+            `INSERT INTO laws (frbr_uri, jenis, nomor, tahun, judul, status, bpk_id, sumber_url, jumlah_pasal, isi_status, updated_at)
+             VALUES (?,?,?,?,?,'berlaku',?,?,0,'menunggu', datetime('now'))`,
           )
-          .bind(uri, s.jenis, nomor, s.tahun, judulSementara(s, masuk.teks), dok.bpk_id, alamat, hitungGiliran(s.jenis, s.tahun, null)),
+          .bind(uri, s.jenis, nomor, s.tahun, judulSementara(s, masuk.teks), dok.bpk_id, alamat),
       ],
     });
     hasil.push({ bpk_id: dok.bpk_id, status: "dibuat", uri, uris: [uri], sitasi: labelUntuk(s) });

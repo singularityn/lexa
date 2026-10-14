@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   bacaCakupan, CAKUPAN_BAWAAN, dalamCakupan, jenisDariUri, klausaCakupan, uriJelasDiLuarCakupan,
 } from "../src/shared/cakupan";
-import { CRON_HARIAN, CRON_MENIT } from "../src/worker/lib/jadwal";
+import { CRON_HARIAN } from "../src/worker/lib/jadwal";
 
 describe("bacaCakupan", () => {
   it("tanpa variabel: daftar bawaan (UUD, Tap MPR, UU, Perppu, PP)", () => {
@@ -126,17 +126,20 @@ describe("klausaCakupan", () => {
   });
 });
 
-describe("jadwal Cron dan cadangan tik di wrangler.jsonc", () => {
+describe("jadwal Cron di wrangler.jsonc", () => {
   const berkas = readFileSync("wrangler.jsonc", "utf8");
 
-  it("pemicu di wrangler.jsonc sama persis dengan konstanta di kode (event.cron dibandingkan karakter demi karakter)", () => {
+  it("satu-satunya pemicu adalah pemeliharaan harian, sama persis dengan konstanta di kode (event.cron dibandingkan karakter demi karakter)", () => {
     const crons = /"crons"\s*:\s*\[([^\]]*)\]/.exec(berkas)?.[1];
     expect(crons, "wrangler.jsonc harus menyetel triggers.crons").toBeTruthy();
     const daftar = [...(crons ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(daftar).toEqual([CRON_MENIT, CRON_HARIAN]);
+    expect(daftar).toEqual([CRON_HARIAN]);
   });
 
-  it("vars.TIK_CADANGAN diaktifkan di produksi dengan nilai yang dikenal kode", () => {
-    expect(/^\s*"TIK_CADANGAN"\s*:\s*"antrean"/m.test(berkas)).toBe(true);
+  it("tidak ada lagi sisa konfigurasi sumber lama: variabel PASAL_API_BASE, TIK_CADANGAN, atau Cron per menit", () => {
+    // Komentar boleh menyebutnya (menjelaskan riwayat); yang diperiksa adalah kunci konfigurasinya.
+    const tanpaKomentar = berkas.replace(/\/\/.*$/gm, "");
+    expect(tanpaKomentar).not.toMatch(/"(?:PASAL_API_BASE|PASAL_API_TOKEN|TIK_CADANGAN)"/);
+    expect(tanpaKomentar).not.toContain("* * * * *");
   });
 });

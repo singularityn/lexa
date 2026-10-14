@@ -1,7 +1,7 @@
 /**
  * Ejaan alternatif FRBR URI untuk peraturan yang sama.
  *
- * pasal.id menulis PERPPU dengan dua ejaan segmen, "perpu" dan "perppu", dan kadang berbeda
+ * Data yang tersimpan (awalnya dari katalog sumber lama) menulis PERPPU dengan dua ejaan segmen, "perpu" dan "perppu", dan kadang berbeda
  * antara peraturan itu sendiri (`/akn/id/act/perpu/2022/2`) dan relasi yang menunjuk
  * kepadanya (`/akn/id/act/perppu/2022/2`). Di produksi 117 dari 124 relasi ke PERPPU menunjuk
  * ke ejaan yang tidak ada di tabel `laws`, sehingga tautannya mati dan relasi masuk di halaman

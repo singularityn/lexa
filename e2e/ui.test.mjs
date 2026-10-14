@@ -904,36 +904,40 @@ describe("cakupan peraturan (UUD, Tap MPR, UU, Perppu, PP)", () => {
   });
 });
 
-describe("status: kelengkapan isi", () => {
-  it("menampilkan kemajuan isi per jenis dalam urutan pengambilan, tanpa peringatan bila akses baik", async () => {
+describe("status: kelengkapan data (sumber BPK)", () => {
+  it("menampilkan kemajuan per jenis dalam urutan prioritas, dengan meter teks pasal dan PDF BPK", async () => {
     await page.goto(BASE + "/status", { waitUntil: "networkidle" });
     await page.waitForSelector("#judul-kelengkapan");
-    const jenis = await page.locator("section[aria-labelledby=judul-kelengkapan] tbody tr td:first-child").allTextContents();
+    const panel = page.locator("section[aria-labelledby=judul-kelengkapan]");
+    const jenis = await panel.locator("tbody tr td:first-child").allTextContents();
     expect(jenis).toEqual(["UUD", "TAP MPR", "UU", "PERPPU", "PP"]);
-    const meter = page.locator("section[aria-labelledby=judul-kelengkapan] [role=progressbar]");
-    expect(Number(await meter.getAttribute("aria-valuenow"))).toBeGreaterThanOrEqual(0);
-    expect(await page.textContent("section[aria-labelledby=judul-kelengkapan]")).toMatch(/\d+ dari \d+\s*peraturan sudah punya teks pasal/);
-    expect(await page.locator("section[aria-labelledby=judul-kelengkapan] .peringatan").count()).toBe(0);
+    expect(await panel.locator("thead th").allTextContents()).toEqual(["Jenis", "Peraturan", "Berisi pasal", "PDF BPK", "Bertaut BPK", "Menunggu PDF", "PDF belum terurai"]);
+    const meter = panel.locator("[role=progressbar]");
+    expect(await meter.count()).toBe(2);
+    expect(Number(await meter.first().getAttribute("aria-valuenow"))).toBeGreaterThanOrEqual(0);
+    const teks = await panel.textContent();
+    expect(teks).toMatch(/\d+ dari \d+\s*peraturan sudah punya teks pasal/);
+    expect(teks).toMatch(/\d+ dari \d+\s*peraturan sudah punya PDF resmi dari BPK/);
+    expect(await panel.locator(".peringatan").count()).toBe(0);
   });
 
-  it("memperingatkan terus terang bila pasal.id tidak memberi isi, dengan catatan sumber dan kapan diperiksa lagi", async () => {
+  it("menjelaskan teks lama, peraturan tanpa berkas, dan PDF yang belum terurai; tidak menyebut sumber lama", async () => {
     const nyata = await (await fetch(`${BASE}/api/stats`)).json();
-    nyata.isi.akses = {
-      sejak: "2026-10-11T16:18:00.000Z",
-      terakhir: "2026-10-11T17:20:00.000Z",
-      periksa_lagi: "2026-10-11T17:50:00.000Z",
-      catatan: "not_available_via_api — Teks lengkap hanya untuk pemakai yang masuk.",
-    };
-    nyata.isi.pasal_dijeda_sampai = "2026-10-11T18:00:00.000Z";
+    nyata.isi.per_jenis.PP = { total: 10, pasal: 120, berisi: 4, bertaut_bpk: 6, ber_pdf: 5, perlu_pdf: 5, pdf_belum_terurai: 1, teks_bpk: 2, teks_lama: 2 };
+    nyata.isi.tanpa_berkas = 3;
+    nyata.isi.pemeliharaan_terakhir = "2026-10-14T19:00:00.000Z";
     await page.route((url) => url.pathname === "/api/stats", (route) => route.fulfill({ json: nyata }));
     await page.goto(BASE + "/status", { waitUntil: "networkidle" });
     await page.waitForSelector("#judul-kelengkapan");
     const panel = page.locator("section[aria-labelledby=judul-kelengkapan]");
-    expect(await panel.locator("[role=alert]").textContent()).toContain("pasal.id sedang tidak memberi isi peraturan.");
+    const pp = (await panel.locator("tbody tr").nth(4).locator("td").allTextContents()).map((t) => t.trim());
+    expect(pp).toEqual(["PP", "10", "4", "5", "6", "5", "1"]);
     const teks = await panel.textContent();
-    expect(teks).toContain("Catatan pasal.id: not_available_via_api — Teks lengkap hanya untuk pemakai yang masuk.");
-    expect(teks).toContain("diperiksa lagi");
-    expect(teks).toContain("pasal.id meminta jeda");
+    expect(teks).toMatch(/\d+ peraturan masih memakai teks lama yang tersimpan sebelum panen BPK/);
+    expect(teks).toContain("3 peraturan ditandai tidak memiliki berkas PDF di BPK");
+    expect(teks).toContain("Pemeliharaan harian terakhir berjalan");
+    expect(teks).not.toMatch(/pasal\.id/i);
+    expect(await page.textContent("main")).not.toMatch(/pasal\.id/i);
   });
 });
 

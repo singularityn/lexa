@@ -18,24 +18,22 @@
   "upload_source_maps": true,
 
   // Pertahankan variabel teks yang diset lewat dashboard (EMBEDDING_MODEL,
-  // SUMMARY_MODEL, BPK_BASE, PASAL_API_BASE, SEARCH_CACHE_TTL). Tanpa ini, deploy
+  // SUMMARY_MODEL, BPK_BASE, SEARCH_CACHE_TTL). Tanpa ini, deploy
   // dari Git akan MENGHAPUS variabel yang tidak tercantum di "vars". Nilainya
   // sengaja belum disalin ke sini karena tidak terbaca dari luar dashboard; setelah
   // Anda memindahkannya ke "vars", baris ini boleh dihapus. Secret (ADMIN_TOKEN,
-  // PASAL_API_TOKEN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) tidak pernah tersentuh
-  // oleh deploy.
+  // GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) tidak pernah tersentuh oleh deploy.
+  // Sisa pengaturan sumber lama di dashboard (variabel PASAL_API_BASE dan TIK_CADANGAN, secret
+  // PASAL_API_TOKEN) tidak dibaca kode lagi dan boleh dihapus dari sana.
   "keep_vars": true,
 
   // Cakupan peraturan (src/shared/cakupan.ts): kode jenis seperti kolom laws.jenis, dipisah koma.
   // Untuk saat ini hanya UUD dan setara (Tap MPR), UU termasuk Perppu, dan PP, supaya beban aplikasi tetap
-  // ringan. Jenis lain tidak disinkronkan, diimpor, dicari, maupun ditampilkan; barisnya yang sudah ada hanya
-  // disembunyikan, bukan dihapus. Melebarkan cakupan: tambahkan kodenya di sini (mis. "...,PP,PERPRES"), sebarkan,
-  // lalu jalankan sinkronisasi. Nilai kosong atau tak sah dibaca sebagai daftar bawaan di kode.
+  // ringan. Jenis lain tidak diimpor, dicari, maupun ditampilkan; barisnya yang sudah ada hanya disembunyikan,
+  // bukan dihapus. Melebarkan cakupan: tambahkan kodenya di sini (mis. "...,PP,PERPRES"), sebarkan, lalu jalankan
+  // penjelajahan dan panen BPK untuk jenis itu. Nilai kosong atau tak sah dibaca sebagai daftar bawaan di kode.
   "vars": {
-    "CAKUPAN_JENIS": "UUD,TAP_MPR,UU,PERPPU,PP",
-    // Cadangan tik lewat antrean bila Cron per menit tak berjalan (src/worker/lib/cadangan.ts). Mengalah sendiri
-    // begitu Cron per menit terlihat sehat (denyutnya di sync_state).
-    "TIK_CADANGAN": "antrean"
+    "CAKUPAN_JENIS": "UUD,TAP_MPR,UU,PERPPU,PP"
   },
 
   // --- Resource yang sudah ada di akun Cloudflare ---
@@ -70,11 +68,11 @@
     "producers": [{ "binding": "INGEST_QUEUE", "queue": "lexa-ingest" }]
   },
 
-  // Dua pemicu Cron. Harian pukul 19:00 UTC (02:00 WIB): pemeliharaan (src/worker/lib/pemeliharaan.ts; log produksi
-  // menunjukkan eksekusi pada jam itu setiap hari). Per menit: "tik" (src/worker/lib/tik.ts), pekerjaan kecil yang
-  // maju selangkah dan berhenti begitu pasal.id minta jeda; tik yang tak punya pekerjaan tidak menulis ke D1.
+  // Satu pemicu Cron: harian pukul 19:00 UTC (02:00 WIB), pemeliharaan (src/worker/lib/pemeliharaan.ts): mengosongkan
+  // daftar hapus (berkas R2 dan vektor yatim) dan memangkas catatan lama. Data peraturan tidak dijemput Cron: ia masuk
+  // dari panen BPK yang dijalankan di peramban pengelola (scripts/bpk-console-harvest.js) lewat /api/impor/*.
   // Nilainya dijaga sama dengan src/worker/lib/jadwal.ts oleh test/cakupan.test.ts.
-  "triggers": { "crons": ["* * * * *", "0 19 * * *"] },
+  "triggers": { "crons": ["0 19 * * *"] },
 
   // Antarmuka (SPA) ada di ./public dan tidak memerlukan langkah build. Rute yang
   // diselesaikan Worker lebih dulu: seluruh API, robots.txt, sitemap.xml, dan /peraturan

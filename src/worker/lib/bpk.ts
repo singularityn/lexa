@@ -65,7 +65,7 @@ const PETA_BENTUK: Record<string, string> = {
   PERWALI: "PERWALI",
 };
 
-/** Segmen jenis di dalam FRBR URI, disamakan dengan konvensi pasal.id. */
+/** Segmen jenis di dalam FRBR URI, disamakan dengan konvensi yang dipakai baris-baris yang sudah ada di D1. */
 const SEGMEN_FRBR: Record<string, string> = {
   UUD: "uud",
   TAP_MPR: "tap-mpr",
@@ -99,15 +99,21 @@ function metaAmbil(meta: Record<string, string>, ...label: string[]): string | n
 }
 
 /**
- * Bangun FRBR URI yang sama bentuknya dengan milik pasal.id, supaya dokumen
- * hasil panen BPK menyatu dengan hasil ingest pasal.id alih-alih menggandakan.
+ * Bangun FRBR URI dengan konvensi yang sudah dipakai baris-baris di D1 (awalnya dari katalog pasal.id, sumber lama
+ * yang kini tidak dipakai lagi), supaya dokumen hasil panen BPK menyatu dengan baris yang ada alih-alih menggandakan.
+ * Konvensi ini jangan diubah: URI adalah kunci utama, dan tautan, koleksi, serta vektor merujuknya.
  */
 export function frbrDari(jenis: string, nomor: string, tahun: number): string {
   const segmen = SEGMEN_FRBR[jenis] ?? jenis.toLowerCase().replace(/_/g, "-");
   // Garis miring di dalam nomor ("XVI/MPR/1998") menambah segmen pada alamat dan membuatnya tak bisa dibuka lewat
-  // /api/peraturan/<uri>; pasal.id menuliskannya "xvi-mpr-1998".
+  // /api/peraturan/<uri>; baris yang ada menuliskannya "xvi-mpr-1998".
   const bagian = nomor.trim().replace(/[\s/\\]+/g, "-");
   return `/akn/id/act/${segmen}/${tahun}/${jenis === "TAP_MPR" ? bagian.toLowerCase() : bagian}`;
+}
+
+/** Alamat halaman rincian sebuah dokumen di situs BPK; situsnya hanya ditautkan, tak pernah diambil oleh Worker. */
+export function urlBpk(base: string, bpkId: string | null): string | null {
+  return bpkId ? `${base.replace(/\/$/, "")}/Details/${bpkId}` : null;
 }
 
 /** BPK menulis tanggal sebagai "25 Maret 2003". */
@@ -184,7 +190,7 @@ export function petakanDokumen(doc: DokumenBpk): {
   const tahun = Number(tahunTeks) || tebakTahunDariJudul(judul) || 0;
 
   if (!nomorMentah || !tahun) return null;
-  // Baris baru dari BPK ditulis seperti pasal.id ("xvi-mpr-1998", "1" untuk "01"), supaya tak menambah ragam penulisan.
+  // Baris baru dari BPK ditulis seperti baris yang sudah ada ("xvi-mpr-1998", "1" untuk "01"), supaya tak menambah ragam penulisan.
   const nomor = nomorKanonik(jenis, nomorMentah);
 
   const frbr = frbrDari(jenis, nomor, tahun);
@@ -634,7 +640,7 @@ function pecahAyat(teks: string): Array<{ ayat: string | null; isi: string }> {
     .filter((s) => s.isi.length > 0);
 }
 
-/** Bentuk id pasal yang stabil, sejajar dengan yang dipakai jalur pasal.id. */
+/** Bentuk id pasal yang stabil, `<frbr_uri>#pasal-<nomor>[-ayat-<n>]`, sama dengan id baris yang sudah ada di D1. */
 export function idPasal(frbrUri: string, nomorPasal: string, ayat: string | null): string {
   return `${frbrUri}#pasal-${nomorPasal}${ayat ? `-ayat-${ayat}` : ""}`;
 }

@@ -1,14 +1,14 @@
 /**
  * Penyajian berkas dokumen dari R2.
  *
- * Tidak semua peraturan punya PDF: hanya yang dipanen dari BPK yang membawa
- * berkasnya. Peraturan dari pasal.id sama sekali tidak punya. Karena itu setiap
- * endpoint di sini membedakan "tidak ada berkas" dari "gagal mengambil", supaya
- * antarmuka bisa menawarkan tautan ke naskah resmi alih-alih menampilkan error.
+ * Tidak semua peraturan punya PDF: hanya yang sudah dipanen dari BPK yang membawa
+ * berkasnya. Karena itu setiap endpoint di sini membedakan "tidak ada berkas" dari
+ * "gagal mengambil", supaya antarmuka bisa menawarkan tautan ke naskah resmi
+ * alih-alih menampilkan error.
  */
 
 import { Hono } from "hono";
-import { urlBpk } from "../lib/pasal";
+import { urlBpk } from "../lib/bpk";
 import { bacaCakupan, klausaCakupan, type Cakupan } from "../../shared/cakupan";
 
 type Bindings = Env;

@@ -12,6 +12,7 @@
  *   PUT  /pdf            berkas PDF sebuah peraturan; diantrekan untuk diekstrak menjadi pasal
  *   POST /tanpa-berkas   tandai peraturan yang di BPK memang tak berkas PDF (tak diminta lagi)
  *   POST /ekstrak-ulang  antrekan ulang ekstraksi PDF yang sudah tersimpan tetapi belum menghasilkan pasal
+ *   POST /ringkas        antrekan ringkasan AI untuk peraturan yang sudah berteks tetapi belum beringkasan
  */
 
 import { Hono } from "hono";
@@ -23,6 +24,7 @@ import { headerCors as corsUntuk } from "../lib/cors";
 import type { PesanIngest } from "../lib/ingest";
 import { kunciSitasi, samaSitasi } from "../lib/nomor";
 import { cariSitasi, pilihUtama, tautkanBpk, type TautanMasuk } from "../lib/tautanBpk";
+import { sqlPrioritas } from "../lib/prioritas";
 import { bacaCakupan, dalamCakupan, klausaCakupan } from "../../shared/cakupan";
 
 type Bindings = Env;
@@ -68,8 +70,8 @@ async function hitungTanpaBerkas(db: D1Database): Promise<number> {
 // ---------------------------------------------------------------------------
 // GET /api/impor/butuh-teks — peraturan yang masih perlu teksnya, untuk skrip panen BPK
 //
-// pasal.id tak lagi memberi teks pasal lewat API-nya (lib/akses.ts), jadi teks UUD, Tap MPR, UU, Perppu, dan PP yang
-// belum ada hanya bisa datang dari PDF resmi BPK. Skrip panen (scripts/bpk-console-harvest.js) bertanya di sini peraturan
+// Satu-satunya sumber teks peraturan adalah PDF resmi BPK, jadi teks UUD, Tap MPR, UU, Perppu, dan PP yang belum ada
+// datang dari sana. Skrip panen (scripts/bpk-console-harvest.js) bertanya di sini peraturan
 // mana yang perlu PDF-nya, mengambilnya dari sesi peramban pemiliknya di situs BPK, lalu mengunggahnya lewat PUT /pdf.
 //   ?jenis=UU,PP   saring jenis (bawaan: seluruh cakupan)
 //   ?batas=50      paling banyak berapa (1-200, bawaan 50)
@@ -101,7 +103,7 @@ impor.get("/butuh-teks", async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT l.frbr_uri, l.jenis, l.nomor, l.tahun, l.judul, l.bpk_id, l.sumber_url, l.jumlah_pasal, l.isi_status
        ${dasar}
-      ORDER BY (CASE WHEN l.bpk_id IS NOT NULL AND l.bpk_id <> '' THEN 0 ELSE 1 END), l.isi_giliran
+      ORDER BY (CASE WHEN l.bpk_id IS NOT NULL AND l.bpk_id <> '' THEN 0 ELSE 1 END), ${sqlPrioritas("l.")}, l.frbr_uri
       LIMIT ?`,
   ).bind(batas).all<{
     frbr_uri: string; jenis: string; nomor: string; tahun: number; judul: string; bpk_id: string | null;
@@ -182,7 +184,7 @@ impor.post("/tautan", async (c) => {
 // POST /api/impor/manifest — metadata + relasi hasil panen
 //
 // Dokumen dicocokkan dengan baris yang sudah ada menurut SITASI (jenis, nomor, tahun yang dinormalkan), bukan menurut
-// frbr_uri turunan: pasal.id menulis "perpu" dan "perppu", "01" dan "1", "xvi-mpr-1998" bagi Tap MPR XVI/MPR/1998, dan
+// frbr_uri turunan: baris yang sudah ada menulis "perpu" dan "perppu", "01" dan "1", "xvi-mpr-1998" bagi Tap MPR XVI/MPR/1998, dan
 // indeks unik laws(jenis, nomor, tahun) membuat INSERT dengan URI turunan yang berbeda menggagalkan SELURUH kiriman.
 // Dokumen yang sitasinya sudah ada memperbarui barisnya; yang belum ada dibuat baru. Dokumen yang menyimpan gagal
 // dilaporkan di `ditolak`, tidak menjatuhkan yang lain.
@@ -448,6 +450,32 @@ impor.post("/tanpa-berkas", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/impor/ringkas — { batas?: number }
+//
+// Mengantrekan ringkasan AI untuk peraturan yang sudah punya teks tetapi belum punya ringkasan, yang terbaru dulu
+// (paling banyak `batas`, 1-500, bawaan 100). Ringkasan disusun Workers AI di konsumer antrean.
+// ---------------------------------------------------------------------------
+impor.post("/ringkas", async (c) => {
+  const body = await c.req.json<{ batas?: unknown }>().catch(() => null);
+  const diminta = typeof body?.batas === "number" && Number.isFinite(body.batas) ? body.batas : 100;
+  const batas = Math.min(Math.max(diminta, 1), 500);
+  const cakupan = bacaCakupan(c.env.CAKUPAN_JENIS);
+  const { results } = await c.env.DB.prepare(
+    `SELECT frbr_uri FROM laws
+      WHERE (ringkasan IS NULL OR TRIM(ringkasan) = '')
+        AND (r2_text_key IS NOT NULL OR jumlah_pasal > 0)
+        AND ${klausaCakupan(cakupan, "jenis")}
+      ORDER BY tahun DESC, frbr_uri LIMIT ?`,
+  ).bind(batas).all<{ frbr_uri: string }>();
+
+  const pesan = results.map((r) => ({ body: { tipe: "ringkas", frbr_uri: r.frbr_uri } satisfies PesanIngest }));
+  for (let i = 0; i < pesan.length; i += 100) await c.env.INGEST_QUEUE.sendBatch(pesan.slice(i, i + 100));
+  await c.env.DB.prepare(`INSERT INTO sync_log (job, status, detail, jumlah) VALUES ('ringkas','sukses',?,?)`)
+    .bind("diantrekan untuk diringkas", results.length).run().catch(() => {});
+  return c.json({ status: "diantrekan", peraturan: results.length }, 200, headerCors(c));
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/impor/ekstrak-ulang — { uri?: string, batas?: number, jenis?: string[], dariTeks?: boolean }
 //
 // Mengantrekan ulang ekstraksi PDF yang sudah tersimpan di R2 tetapi belum menghasilkan pasal (mis. setelah pengurai
@@ -478,7 +506,7 @@ impor.post("/ekstrak-ulang", async (c) => {
     : await c.env.DB.prepare(
         `SELECT l.frbr_uri, l.r2_pdf_key FROM laws l LEFT JOIN ekstraksi_log e ON e.frbr_uri = l.frbr_uri
           WHERE ${dalam} AND l.r2_pdf_key IS NOT NULL AND l.jumlah_pasal = 0
-          ORDER BY (e.created_at IS NOT NULL), e.created_at, l.isi_giliran
+          ORDER BY (e.created_at IS NOT NULL), e.created_at, ${sqlPrioritas("l.")}, l.frbr_uri
           LIMIT ?`,
       ).bind(batas).all<{ frbr_uri: string; r2_pdf_key: string }>();
 

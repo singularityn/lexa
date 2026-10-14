@@ -42,6 +42,45 @@ describe.skipIf(!sqliteAda)("endpoint baca", () => {
       const b = await json<{ terindeks_vektor: number }>(await panggil(l, "/api/stats"));
       expect(b.terindeks_vektor).toBe(0);
     });
+
+    describe("kelengkapan data diukur dari sisi panen BPK (isi.per_jenis)", () => {
+      type Isi = { per_jenis: Record<string, Record<string, number>>; tanpa_berkas: number; pemeliharaan_terakhir: string | null };
+      const isi = async () => (await json<{ isi: Isi }>(await panggil(l, "/api/stats"))).isi;
+      const UU13 = "/akn/id/act/uu/2003/13";
+
+      it("membedakan teks hasil konversi PDF BPK (.md) dari teks lama, dan menghitung yang menunggu PDF", async () => {
+        await sisipkan(l, [
+          { uri: "/akn/id/act/uu/2024/99", jenis: "UU", nomor: "99", tahun: 2024, judul: "Belum dipanen", bpkId: "5" },
+          { uri: "/akn/id/act/pp/2022/77", jenis: "PP", nomor: "77", tahun: 2022, judul: "PDF tersimpan, pasal belum terbaca" },
+        ]);
+        await l.db.prepare(`UPDATE laws SET r2_pdf_key = 'pdf/a.pdf', r2_text_key = 'teks/a.md' WHERE frbr_uri = ?`).bind(UU13).run();
+        await l.db.prepare(`UPDATE laws SET r2_text_key = 'teks/b.txt' WHERE frbr_uri = '/akn/id/act/uu/2020/11'`).run();
+        await l.db.prepare(`UPDATE laws SET r2_pdf_key = 'pdf/c.pdf', r2_text_key = 'teks/c.md' WHERE frbr_uri = '/akn/id/act/pp/2022/77'`).run();
+
+        const { per_jenis } = await isi();
+        // UU: 13/2003 (BPK, ber-PDF), 11/2020 (teks lama), 6/2023 (tanpa arsip teks: lama), 99/2024 (menunggu PDF, bertaut BPK).
+        expect(per_jenis.UU).toEqual({
+          total: 4, pasal: 4, berisi: 3, bertaut_bpk: 4, ber_pdf: 1, perlu_pdf: 1, pdf_belum_terurai: 0, teks_bpk: 1, teks_lama: 2,
+        });
+        expect(per_jenis.PP).toEqual({
+          total: 2, pasal: 1, berisi: 1, bertaut_bpk: 0, ber_pdf: 1, perlu_pdf: 0, pdf_belum_terurai: 1, teks_bpk: 0, teks_lama: 1,
+        });
+      });
+
+      it("tidak memuat sisa pengukuran sumber lama", async () => {
+        const b = await json<{ isi: Record<string, unknown> }>(await panggil(l, "/api/stats"));
+        expect(Object.keys(b.isi).sort()).toEqual(["pemeliharaan_terakhir", "per_jenis", "tanpa_berkas"]);
+        expect(JSON.stringify(b)).not.toMatch(/pasal\.id|katalog|denyut|akses/i);
+      });
+
+      it("menghitung peraturan yang ditandai tanpa berkas di BPK, dan membaca jejak pemeliharaan harian", async () => {
+        expect(await isi()).toMatchObject({ tanpa_berkas: 0, pemeliharaan_terakhir: null });
+        await l.db.prepare(
+          `INSERT INTO sync_state (key, value) VALUES ('bpk_tanpa_berkas:/akn/id/act/uu/1946/1', 'x'), ('bpk_tanpa_berkas:/akn/id/act/uu/1946/2', 'y'), ('bpk_tanpa_berkasX', 'z'), ('denyut:0 19 * * *', '2026-10-14T19:00:00.000Z')`,
+        ).run();
+        expect(await isi()).toMatchObject({ tanpa_berkas: 2, pemeliharaan_terakhir: "2026-10-14T19:00:00.000Z" });
+      });
+    });
   });
 
   describe("GET /api/laws", () => {

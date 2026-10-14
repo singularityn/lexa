@@ -11,7 +11,19 @@ import {
   statusDari,
   tanggalIndonesia,
   uraikanPasal,
+  urlBpk,
 } from "../src/worker/lib/bpk";
+
+describe("urlBpk", () => {
+  it("membangun tautan ke halaman rincian BPK", () => {
+    expect(urlBpk("https://peraturan.bpk.go.id/", "149750")).toBe("https://peraturan.bpk.go.id/Details/149750");
+  });
+
+  it("mengembalikan null bila ID BPK tidak diketahui", () => {
+    expect(urlBpk("https://peraturan.bpk.go.id", null)).toBeNull();
+    expect(urlBpk("https://peraturan.bpk.go.id", "")).toBeNull();
+  });
+});
 
 describe("tanggalIndonesia", () => {
   it("memahami berbagai format tanggal BPK", () => {
@@ -64,7 +76,7 @@ describe("frbrDari", () => {
     expect(frbrDari("TAP_MPR", "1", 1998)).toBe("/akn/id/act/tap-mpr/1998/1");
   });
 
-  it("garis miring dan spasi di dalam nomor tidak menambah segmen alamat; Tap MPR ditulis seperti pasal.id", () => {
+  it("garis miring dan spasi di dalam nomor tidak menambah segmen alamat; Tap MPR ditulis seperti baris yang sudah ada (xvi-mpr-1998)", () => {
     expect(frbrDari("TAP_MPR", "XVI/MPR/1998", 1998)).toBe("/akn/id/act/tap-mpr/1998/xvi-mpr-1998");
     expect(frbrDari("UUD", "1945/P4", 1945)).toBe("/akn/id/act/uud/1945/1945-P4");
     expect(frbrDari("UU", " 5 A ", 2020)).toBe("/akn/id/act/uu/2020/5-A");
@@ -347,7 +359,7 @@ describe("petakanDokumen (manifest hasil panen BPK -> Law + relasi)", () => {
     ]);
   });
 
-  it("nomor Tap MPR dan nomor bernol di depan ditulis seperti pasal.id; baris baru tak menambah ragam penulisan", () => {
+  it("nomor Tap MPR dan nomor bernol di depan ditulis seperti baris yang sudah ada; baris baru tak menambah ragam penulisan", () => {
     const tap = petakanDokumen({ bpk_id: "210109", meta: { Judul: "Ketetapan MPR Nomor XVI/MPR/1998 tentang Politik Ekonomi", "Bentuk Singkat": "TAP MPR", Nomor: "XVI/MPR/1998", Tahun: "1998" } });
     expect(tap?.law).toMatchObject({ jenis: "TAP_MPR", nomor: "xvi-mpr-1998", frbr_uri: "/akn/id/act/tap-mpr/1998/xvi-mpr-1998" });
     const nol = petakanDokumen({ bpk_id: "1", meta: { Judul: "PP 1/2022", "Bentuk Singkat": "PP", Nomor: "01", Tahun: "2022" } });

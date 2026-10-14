@@ -15,10 +15,8 @@
  * @typedef {{ jenis: string, n: number }} JumlahJenis
  * @typedef {{ frbr_uri: string, jenis: string, nomor: string, tahun: number, judul: string }} RingkasPeraturan
  * @typedef {{ job: string, status: string, jumlah: number, detail: string | null, created_at: string }} CatatanSinkron
- * @typedef {{ total: number, pasal: number, berisi: number, lengkap: number, menunggu: number, kosong: number, gagal: number }} IsiJenis
- * @typedef {{ total_sumber: number | null, selesai: string | null, dukungan: string | null }} KatalogJenis
- * @typedef {{ sejak: string, terakhir: string, periksa_lagi: string, catatan: string }} AksesIsi
- * @typedef {{ per_jenis: Record<string, IsiJenis>, katalog: Record<string, KatalogJenis>, pasal_dijeda_sampai: string | null, akses: AksesIsi | null, hari_ini: Record<string, number>, denyut: { menit: string | null, harian: string | null, antrean: string | null } }} KemajuanIsi
+ * @typedef {{ total: number, pasal: number, berisi: number, bertaut_bpk: number, ber_pdf: number, perlu_pdf: number, pdf_belum_terurai: number, teks_bpk: number, teks_lama: number }} IsiJenis
+ * @typedef {{ per_jenis: Record<string, IsiJenis>, tanpa_berkas: number, pemeliharaan_terakhir: string | null }} KemajuanIsi
  * @typedef {{ cakupan: string[], total_peraturan: number, total_pasal: number, terindeks_vektor: number, per_jenis: JumlahJenis[], terbaru: RingkasPeraturan[], sinkronisasi_terakhir: CatatanSinkron[], isi?: KemajuanIsi }} Statistik
  * @typedef {{ nama: string, jumlah: number, berlaku: number, tahun_terbaru: number }} Bidang
  * @typedef {{ tipe: "peraturan" | "kueri", teks: string, uri: string | null }} Saran

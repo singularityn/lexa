@@ -45,7 +45,7 @@ describe("pelabelan", () => {
     expect(sitasi({ jenis: "PP", nomor: "1-pojk-03-2019", tahun: 2019 })).toBe("PP 1-pojk-03-2019/2019");
   });
 
-  it("UUD dari pasal.id (nomor 1945 dan 1945/P4) ditulis sebagai UUD 1945 dan perubahannya", () => {
+  it("UUD dari data tersimpan (nomor 1945 dan 1945/P4) ditulis sebagai UUD 1945 dan perubahannya", () => {
     const asli = { jenis: "UUD", nomor: "1945", tahun: 1945 };
     const p4 = { jenis: "UUD", nomor: "1945/P4", tahun: 1945 };
     expect(sitasi(asli)).toBe("UUD 1945");
@@ -59,7 +59,7 @@ describe("pelabelan", () => {
     expect(namaLengkap({ jenis: "UU", nomor: "1945/P4", tahun: 1945 })).toBe("Undang-Undang Nomor 1945/P4 Tahun 1945");
   });
 
-  it("Tap MPR bernomor slug dari pasal.id ditulis dengan penomoran resminya", () => {
+  it("Tap MPR bernomor slug dari data tersimpan ditulis dengan penomoran resminya", () => {
     expect(sitasi({ jenis: "TAP_MPR", nomor: "xvi-mpr-1998", tahun: 1998 })).toBe("TAP MPR XVI/MPR/1998");
     expect(sitasi({ jenis: "TAP_MPR", nomor: "II-MPR-1983", tahun: 1983 })).toBe("TAP MPR II/MPR/1983");
     expect(sitasi({ jenis: "TAP_MPR", nomor: "i-mprs-1960", tahun: 1960 })).toBe("TAP MPR I/MPRS/1960");

@@ -56,7 +56,7 @@ describe.skipIf(!sqliteAda)("panen BPK (sisi server)", () => {
       expect(baris.find((r) => r.bpk_id === "210109")?.frbr_uri).toBe("/akn/id/act/tap-mpr/1998/xvi-mpr-1998");
     });
 
-    it("Tap MPR yang belum ada dibuat dengan URI dan nomor ala pasal.id, bukan URI bergaris miring", async () => {
+    it("Tap MPR yang belum ada dibuat dengan URI dan nomor ala baris yang sudah ada, bukan URI bergaris miring", async () => {
       await manifest([dokumen("210109", { Judul: "Ketetapan MPR Nomor XVI/MPR/1998 tentang Politik Ekonomi", "Bentuk Singkat": "TAP MPR", Nomor: "XVI/MPR/1998", Tahun: "1998" })]);
       expect(await semuaLaws()).toEqual([expect.objectContaining({ frbr_uri: "/akn/id/act/tap-mpr/1998/xvi-mpr-1998", nomor: "xvi-mpr-1998", jenis: "TAP_MPR" })]);
     });
@@ -166,6 +166,36 @@ describe.skipIf(!sqliteAda)("panen BPK (sisi server)", () => {
       expect(b.diterima).toBe(2);
       expect(b.ditolak).toEqual([{ bpk_id: "2", alasan: expect.stringContaining("gagal disimpan") }]);
       expect((await semuaLaws()).map((r) => r.bpk_id)).toEqual(["1", null, "3"]);
+    });
+  });
+
+  describe("urutan daftar kerja", () => {
+    const hukum = (jenis: string, nomor: string, tahun: number, ubah: Partial<PeraturanUji> = {}): PeraturanUji => ({
+      uri: `/akn/id/act/${jenis === "TAP_MPR" ? "tap-mpr" : jenis.toLowerCase()}/${tahun}/${nomor}`, jenis, nomor, tahun, judul: `${jenis} ${nomor}/${tahun}`, ...ubah,
+    });
+    const urutan = async (q = "") => (await json<{ daftar: Array<{ frbr_uri: string }> }>(await panggil(l, `/api/impor/butuh-teks${q}`, { headers: adm }))).daftar.map((d) => d.frbr_uri);
+
+    it("yang bertaut ke BPK dahulu; lalu menurut jenis (UUD, Tap MPR, UU, Perppu, PP); di dalam jenis yang terbaru; sisanya menurut URI", async () => {
+      await sisipkan(l, [
+        hukum("PP", "1", 2020), hukum("PP", "2", 2023), hukum("PERPPU", "1", 2022), hukum("UU", "7", 1999), hukum("UU", "9", 2021),
+        hukum("TAP_MPR", "I", 1998), hukum("UUD", "1945", 1945), hukum("PP", "3", 2023, { bpkId: "77" }), hukum("UU", "8", 2021),
+      ]);
+      expect(await urutan()).toEqual([
+        "/akn/id/act/pp/2023/3", // bertaut ke BPK
+        "/akn/id/act/uud/1945/1945",
+        "/akn/id/act/tap-mpr/1998/I",
+        "/akn/id/act/uu/2021/8", // tahun sama: menurut URI
+        "/akn/id/act/uu/2021/9",
+        "/akn/id/act/uu/1999/7",
+        "/akn/id/act/perppu/2022/1",
+        "/akn/id/act/pp/2023/2",
+        "/akn/id/act/pp/2020/1",
+      ]);
+    });
+
+    it("tahun yang tak diketahui (0) paling akhir di dalam jenisnya, tetapi jenis tetap didahulukan", async () => {
+      await sisipkan(l, [hukum("PP", "1", 2024), hukum("UU", "1", 0), hukum("UU", "2", 2024)]);
+      expect(await urutan()).toEqual(["/akn/id/act/uu/2024/2", "/akn/id/act/uu/0/1", "/akn/id/act/pp/2024/1"]);
     });
   });
 

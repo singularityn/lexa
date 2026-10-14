@@ -1,29 +1,23 @@
 /**
- * Pipeline ingest: pasal.id -> D1 -> Vectorize/R2.
+ * Pipeline ingest di sisi Worker: PDF hasil panen BPK -> pasal di D1 -> vektor di Vectorize dan ringkasan AI.
  *
- * Bagian yang bergantung pada laju pasal.id (daftar peraturan dan detail) kini dikerjakan tik (lib/tik.ts,
- * lib/katalog.ts, lib/isi.ts) dengan status per peraturan di D1 dan jeda yang dipatuhi. Yang tersisa di sini
- * dikerjakan konsumer antrean Cloudflare Queues, karena tak menyentuh pasal.id dan aman diulang:
+ * Worker tidak pernah menghubungi sumber data mana pun. PDF diunggah dari sesi peramban pengelola
+ * (scripts/bpk-console-harvest.js, lewat PUT /api/impor/pdf), lalu pekerjaan di bawah dikerjakan konsumer antrean
+ * Cloudflare Queues; semuanya aman diulang:
+ *   - `ekstrak_pdf`   : PDF dari impor BPK -> teks (Workers AI toMarkdown) -> pasal terstruktur;
  *   - `indeks_vektor` : embedding semua pasal sebuah peraturan lalu upsert ke Vectorize (Workers AI);
- *   - `ringkas`       : ringkasan AI sebuah peraturan;
- *   - `ekstrak_pdf`   : PDF dari impor BPK -> pasal terstruktur.
- * Pesan `peraturan` dari alur lama (daftar yang mengantrekan tiap peraturan) tidak lagi dibuat; sisa yang masih di
- * antrean dibuang tanpa menyentuh pasal.id, karena katalog menemukan ulang semuanya.
+ *   - `ringkas`       : ringkasan AI sebuah peraturan.
+ * Pesan jenis lain (sisa antrean dari alur sumber lama: `peraturan`, `tik`) dibuang tanpa dikerjakan.
  */
 
 import { labelSitasi } from "../../shared/label";
 import { dalamCakupan, uriJelasDiLuarCakupan, type Cakupan } from "../../shared/cakupan";
-import type { PasalClient } from "./pasal";
 import { uraikanPasal, idPasalUnik, nilaiKualitasEkstraksi, periksaKecocokanNaskah, type LaporanKualitas } from "./bpk";
 
 export type PesanIngest =
-  /** Alur lama (tidak lagi dibuat); sisa di antrean dibuang. Lihat komentar di atas. */
-  | { tipe: "peraturan"; frbr_uri: string; alasan?: string; pasal_id?: number; jenis?: string }
   | { tipe: "indeks_vektor"; frbr_uri: string }
   | { tipe: "ekstrak_pdf"; frbr_uri: string; r2_key: string; dari_teks?: boolean }
-  | { tipe: "ringkas"; frbr_uri: string }
-  /** Satu tik pekerjaan latar; rantai cadangan bila Cron per menit tak berjalan (lib/cadangan.ts). */
-  | { tipe: "tik"; g?: number };
+  | { tipe: "ringkas"; frbr_uri: string };
 
 /** Ukuran potongan teks untuk embedding. bge-m3 kuat di teks pendek-menengah. */
 const MAKS_KARAKTER_CHUNK = 1200;
@@ -34,10 +28,9 @@ export interface KonteksIngest {
   ai: Ai;
   docs: R2Bucket;
   queue: Queue<PesanIngest>;
-  pasal: PasalClient;
   embeddingModel: string;
   summaryModel: string;
-  /** Jenis peraturan yang boleh masuk (shared/cakupan.ts). Yang lain tidak disinkronkan maupun disimpan. */
+  /** Jenis peraturan yang boleh masuk (shared/cakupan.ts). Yang lain tidak diimpor, diekstrak, maupun diindeks. */
   cakupan: Cakupan;
 }
 
@@ -149,14 +142,6 @@ export async function indeksVektor(ctx: KonteksIngest, frbrUri: string): Promise
   return jumlah;
 }
 
-/**
- * Ubah PDF di R2 menjadi pasal terstruktur.
- *
- * Dipakai untuk dokumen yang datang dari panen BPK, yang hanya berisi metadata
- * + berkas PDF — berbeda dari jalur pasal.id yang sudah memberi pasal terurai.
- * `env.AI.toMarkdown()` menangani ekstraksi teksnya, lalu `uraikanPasal`
- * memecahnya menjadi pasal dan ayat.
- */
 /** Simpan hasil pengukuran mutu ekstraksi untuk satu dokumen. */
 async function catatEkstraksi(
   db: D1Database,
@@ -197,6 +182,12 @@ async function catatEkstraksi(
     .catch(() => {});
 }
 
+/**
+ * Ubah PDF di R2 menjadi pasal terstruktur.
+ *
+ * Dokumen datang dari panen BPK: metadata + berkas PDF. `env.AI.toMarkdown()` menangani ekstraksi teksnya, lalu
+ * `uraikanPasal` memecahnya menjadi pasal dan ayat.
+ */
 export async function ekstrakPdf(
   ctx: KonteksIngest,
   frbrUri: string,
@@ -446,16 +437,11 @@ export async function buatRingkasan(ctx: KonteksIngest, frbrUri: string): Promis
   return true;
 }
 
-/** Konsumer antrean untuk pesan yang tak menyentuh pasal.id. Pesan `tik` ditangani index.ts. */
-export async function prosesPesanIngest(
-  ctx: KonteksIngest,
-  pesan: Exclude<PesanIngest, { tipe: "tik" }>,
-): Promise<void> {
-  // Pesan lama `peraturan` (alur sebelum katalog) dibuang: mengerjakannya berarti menarik detail dari pasal.id di luar
-  // jeda dan giliran yang kini dikelola tik, dan katalog menemukan ulang peraturannya. Sengaja tidak dicatat ke
-  // sync_log: ribuan baris "dilewati" menutupi catatan sinkronisasi yang berarti.
-  if (pesan.tipe === "peraturan") {
-    console.log("Lexa: pesan peraturan dari alur lama dibuang:", pesan.frbr_uri);
+/** Konsumer antrean. Pesan yang jenisnya tak dikenal (sisa alur sumber lama) dibuang: melempar hanya akan mengulangnya sia-sia. */
+export async function prosesPesanIngest(ctx: KonteksIngest, pesan: PesanIngest): Promise<void> {
+  const tipe = (pesan as { tipe?: unknown } | null)?.tipe;
+  if (tipe !== "indeks_vektor" && tipe !== "ringkas" && tipe !== "ekstrak_pdf") {
+    console.log("Lexa: pesan antrean dibuang, jenisnya tak dikenal:", String(tipe));
     return;
   }
 
