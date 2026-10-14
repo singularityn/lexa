@@ -12,11 +12,15 @@ Worker). Cara menjalankannya ada di bagian [Cara memakai](#cara-memakai).
 1. **Layak, tetapi nilainya bukan di "merapikan semua teks".** Pengukur mutu Lexa menilai 72% peraturan yang sudah dipanen
    `bersih`; yang rusak bukan kerapiannya melainkan **ada-tidaknya teks**. Menulis ulang teks yang sudah baik dengan model bahasa
    menambah biaya dan, pada naskah hukum, risiko perubahan yang tak terlihat, tanpa memperbaiki apa pun.
-2. **Yang terbukti perlu: membaca PDF pindaian.** Dari 2.630 peraturan yang sudah dipanen, **487 (18%)** tidak punya pasal yang
-   layak (442 `tanpa_pasal`, 37 `berat`, 8 `gagal`). Penyebab utamanya PDF **tanpa lapisan teks**: konversi bawaan (Workers AI
-   `toMarkdown`) hanya membaca lapisan teks, jadi pindaian menghasilkan nyaris kosong. Contoh nyata: **UU 24/2019 (Ekonomi
-   Kreatif)** dan **UU 33/2014 (Jaminan Produk Halal)** kini tidak punya satu pasal pun di Lexa (927 dan 1.347 karakter dari PDF 191
-   dan 322 KB). Pengurai yang sehebat apa pun tak bisa memulihkan teks yang tak ada. Gemini membaca halaman sebagai gambar.
+2. **Yang terbukti perlu: membaca halaman sebagai gambar.** Dari 2.630 peraturan yang sudah dipanen, **487 (18%)** tidak punya
+   pasal yang layak (442 `tanpa_pasal`, 37 `berat`, 8 `gagal`). Penyebabnya tiga.
+   (a) **42 pindaian modern** (2010 ke atas): PDF ratusan KB tetapi lapisan teksnya nyaris kosong (rata-rata 1,6 ribu karakter),
+   karena konversi bawaan (Workers AI `toMarkdown`) hanya membaca lapisan teks. Contoh nyata: **UU 24/2019 (Ekonomi Kreatif)** dan
+   **UU 33/2014 (Jaminan Produk Halal)** kini tidak punya satu pasal pun di Lexa (927 dan 1.347 karakter dari PDF 191 dan 322 KB).
+   (b) **37 `berat`** (33 dari 2020-an): lapisan teks ada (rata-rata 51 ribu karakter) tetapi rusak.
+   (c) **402 ketikan lama (1946-1979)**: teks ada tetapi bentuknya tak dikenali pengurai. Sebagian pulih lewat uraian ulang `usang`
+   (tanpa biaya); 161 di antaranya hampir tanpa teks (di bawah 1.500 karakter, termasuk 3 `gagal`) sehingga hanya bisa dibaca dari
+   gambar. Pengurai yang sehebat apa pun tak bisa memulihkan teks yang tak ada atau rusak; Gemini membaca gambar halamannya.
 3. **Dibangun: pembaca PDF cadangan yang opt-in dan berpagar**, bukan perapi teks. Gemini hanya menggantikan langkah "PDF menjadi
    teks"; pengurai, pengukur mutu, dan aturan penggantian yang sudah teruji tetap menjadi hakim. Hasil yang meragukan ditolak dan
    tak mengubah apa pun.
@@ -53,8 +57,10 @@ Tiga kelompok dengan nilai berbeda:
 
 * **Pindaian modern (±42 peraturan, 2010-an dan 2020-an)** adalah yang paling terasa bagi pengguna: peraturan yang masih berlaku
   tampil tanpa pasal. Ditambah **37 `berat`** (33 dari 2020-an) yang berlapisan teks rusak.
-* **Ketikan lama (±360 peraturan, 1946-1979)** sebagian ditangani perbaikan pengurai (judul pasal gaya lama "Pasal 1." yang dulu
-  dibuang sebagai catchword; menunggu uraian ulang `usang`), sisanya perlu dibaca ulang. Nilainya terutama historis.
+* **Ketikan lama (402 peraturan, 1946-1979; 399 `tanpa_pasal` dan 3 `gagal`)** sebagian ditangani perbaikan pengurai (judul pasal
+  gaya lama "Pasal 1." yang dulu dibuang sebagai catchword; menunggu uraian ulang `usang`, jadi berapa yang pulih baru diketahui
+  sesudahnya). Sisanya, termasuk 161 yang teksnya di bawah 1.500 karakter, perlu dibaca ulang dari gambar. Nilainya terutama
+  historis.
 * **PDF besar yang gagal dikonversi (8)**, 4 di antaranya 10 MB: masih muat dikirim sebaris (batas 14 MB).
 
 ## Pilihan rancangan
@@ -181,6 +187,10 @@ produksi. Variabel opsional: `GEMINI_MODEL`, `GEMINI_BATAS_HARIAN`, `GEMINI_BASE
 
 Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bpk-console-harvest.js`:
 
+0. **Uraikan ulang yang usang lebih dulu** (`window.LEXA_PANEN = { usang: true }`, sekali). Pengurai sudah diperbaiki sejak data
+   produksi ini diekstrak: sebagian `tanpa_pasal` (ketikan 1946-1969 bergaya "Pasal 1.") pulih hanya dengan menguraikan ulang
+   arsip teksnya, tanpa biaya. Jangan membayar Gemini untuk yang bisa diperbaiki secara deterministik; yang masih `tanpa_pasal`,
+   `berat`, atau `gagal` sesudahnya barulah calonnya.
 1. **Cek sambungan.** `window.LEXA_PANEN = { geminiCek: true }`. Hasil yang baik mencetak model, versi model, dan anggaran. Galat
    menyebut penyebabnya (kunci salah, model tak ada, kuota).
 2. **Uji kering pada beberapa peraturan** (tak menulis pasal): `window.LEXA_PANEN = { geminiUji: ["/akn/id/act/uu/2019/24",
@@ -202,6 +212,10 @@ Hentikan dan periksa bila: banyak `ditolak` dengan sebab yang sama (perintah per
 
 ## Yang sengaja belum dibangun
 
+* **Audit mutu `bersih`.** Pengukur menilai kerusakan karakter dan struktur; salah baca halus yang lolos darinya tak terlihat.
+  `geminiUji` pada sekitar 20 peraturan `bersih` yang dipilih acak, dengan melihat `kesesuaian_dengan_teks_lama`, mengukur
+  seberapa sering bacaan gambar dan lapisan teks berselisih: bukti yang diperlukan sebelum memutuskan apakah merapikan `ringan`
+  atau `bersih` layak dibiayai.
 * **Merapikan teks `ringan` dan `bersih`.** Pembersih halaman dan pengurai deterministik menangani artefak struktural dengan bukti
   data (lihat [tinjauan-analisis-eksternal.md](tinjauan-analisis-eksternal.md)); yang tersisa adalah salah baca OCR, yang hanya
   bisa diperbaiki dengan membaca gambar lagi (opsi C dengan `geminiVonis: "ringan"`), dan itu perlu bukti mutu dari tahap uji.
