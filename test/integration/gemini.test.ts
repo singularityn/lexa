@@ -478,6 +478,24 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
       expect(await pasalTersimpan()).toEqual([]);
     });
 
+    it("PDF yang ditunjuk laws tetapi tak ada di R2: dicatat gagal (bukan berputar sampai DLQ), tanpa menyentuh jaringan; pembacaan biasa tetap melempar", async () => {
+      await tanamLama({ vonis: "tanpa_pasal" });
+      l.r2.objek.delete(KUNCI_PDF);
+      const panggilan = pasangGemini([]);
+      expect(await jalan()).toEqual({ diakui: 1, diulang: [] });
+      expect(panggilan).toHaveLength(0);
+      expect(await pembacaan()).toMatchObject({ hasil: "gagal", catatan: `Berkas ${KUNCI_PDF} tidak ada di R2` });
+      // Jalur biasa (bukan Gemini) tak berubah: galat dilempar dan antrean mengulang.
+      expect(await jalankanAntrean(l, [{ tipe: "ekstrak_pdf", frbr_uri: URI, r2_key: KUNCI_PDF }])).toEqual({ diakui: 0, diulang: [{ penundaanDetik: undefined }] });
+    });
+
+    it("percobaan kering dari antrean untuk PDF yang hilang dari R2: dicatat gagal dan diakui", async () => {
+      await tanamLama({ vonis: "tanpa_pasal" });
+      l.r2.objek.delete(KUNCI_PDF);
+      expect(await jalan({ uji: true })).toEqual({ diakui: 1, diulang: [] });
+      expect(await pembacaan()).toMatchObject({ hasil: "gagal", catatan: expect.stringContaining("tidak ada di R2") });
+    });
+
     it("PDF terlalu besar untuk dikirim sebaris dicatat 'gagal' tanpa menyentuh jaringan", async () => {
       await tanamLama({ vonis: "tanpa_pasal" });
       l.r2.objek.set(KUNCI_PDF, { bytes: new Uint8Array(15 * 1024 * 1024) });

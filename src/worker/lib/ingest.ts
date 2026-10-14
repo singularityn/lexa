@@ -615,6 +615,14 @@ export function kesesuaianTeks(a: string, b: string): { aDiB: number; bDiA: numb
   return { aDiB: bagian(ga, gb), bDiA: bagian(gb, ga) };
 }
 
+/** Berkas PDF yang ditunjuk `laws.r2_pdf_key` tak ada di R2: tak akan ada saat diulang, jadi pesan Gemini mencatatnya `gagal`, bukan berputar sampai DLQ. */
+export class PdfHilangDariR2 extends Error {
+  constructor(readonly kunci: string) {
+    super(`Berkas ${kunci} tidak ada di R2`);
+    this.name = "PdfHilangDariR2";
+  }
+}
+
 export interface LaporanUjiGemini {
   uri: string;
   model: string;
@@ -644,7 +652,7 @@ export interface LaporanUjiGemini {
 export async function ujiGemini(ctx: KonteksIngest, frbrUri: string, r2Key: string, o: { tenggat?: number } = {}): Promise<LaporanUjiGemini> {
   const mulai = Date.now();
   const objek = await ctx.docs.get(r2Key);
-  if (!objek) throw new Error(`Berkas ${r2Key} tidak ada di R2`);
+  if (!objek) throw new PdfHilangDariR2(r2Key);
   const { baca, masalah } = await bacaNaskahGemini(ctx, await objek.arrayBuffer(), { frbrUri, ...(o.tenggat !== undefined ? { tenggat: o.tenggat } : {}) });
   const arsip = kunciTeksAi(frbrUri);
   await ctx.docs.put(arsip, baca.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } }).catch(() => {});
@@ -773,7 +781,16 @@ export async function ekstrakPdf(
 
   if (!kunciArsip) {
     const objek = await ctx.docs.get(r2Key);
-    if (!objek) throw new Error(`Berkas ${r2Key} tidak ada di R2`);
+    if (!objek) {
+      if (denganAi) {
+        // Pembacaan Gemini berbayar dan dipilih otomatis: PDF yang hilang dicatat, supaya tak dipilih dan diulang terus.
+        const galat = new PdfHilangDariR2(r2Key);
+        await catatPembacaanAi(ctx.db, frbrUri, { hasil: "gagal", catatan: galat.message, durasiMs: Date.now() - mulai });
+        await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: ${galat.message}`.slice(0, 300));
+        return 0;
+      }
+      throw new PdfHilangDariR2(r2Key);
+    }
 
     const bytes = await objek.arrayBuffer();
     ukuranPdf = bytes.byteLength;
@@ -1088,6 +1105,11 @@ async function ujiGeminiDariAntrean(ctx: KonteksIngest, frbrUri: string, r2Key: 
   try {
     await ujiGemini(ctx, frbrUri, r2Key, { tenggat: mulai + TENGGAT_PESAN_MS });
   } catch (e) {
+    if (e instanceof PdfHilangDariR2) {
+      await catatPembacaanAi(ctx.db, frbrUri, { hasil: "gagal", catatan: `uji: ${e.message}`, durasiMs: Date.now() - mulai });
+      await catatLog(ctx.db, "ekstrak_pdf", "gagal", `${frbrUri}: uji gemini: ${e.message}`.slice(0, 300));
+      return;
+    }
     if (!(e instanceof GalatGemini) || e.sementara) throw e;
     if (e.jenis !== "anggaran" && e.jenis !== "kunci" && e.jenis !== "model") {
       await catatPembacaanAi(ctx.db, frbrUri, { hasil: "gagal", catatan: `uji: ${e.jenis}: ${e.message}`, durasiMs: Date.now() - mulai });
