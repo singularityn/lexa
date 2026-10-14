@@ -37,10 +37,11 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
   pasal yang tersimpan: yang ada di PDF tetapi tak ada di Lexa kemungkinan terlewat oleh ekstraksi, dan tiap nomor membuka
   halamannya. PDF hanya ada untuk peraturan yang dipanen dari BPK; selebihnya tab ini menjelaskan itu. PDF.js dimuat
   hanya saat tab dibuka (`public/vendor/pdfjs`).
-- **Membaca di ponsel**: halaman peraturan dengan daftar isi dan lompat ke pasal, lima ukuran huruf, Penjelasan
-  yang dipisahkan dari batang tubuh, rujukan antarpasal yang bisa diketuk ("Pasal 156 ayat (2)"), lanjutkan
-  membaca dari posisi terakhir, bagikan, cetak atau simpan PDF, penanda per pasal ke Koleksi, dan simpan untuk
-  dibaca luring.
+- **Membaca di ponsel**: halaman peraturan dengan daftar isi dan lompat ke pasal, lima ukuran huruf, **Penjelasan resmi di
+  bawah pasal yang dijelaskannya** (lipatan tertutup; "Penjelasan: cukup jelas" bila hanya itu; Penjelasan Umum di awal;
+  ikut dicari), rujukan antarpasal yang bisa diketuk ("Pasal 156 ayat (2)"), lanjutkan membaca dari posisi terakhir,
+  bagikan, **salin kutipan lengkap** ("Pasal 156 Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan", teks pasal, dan
+  tautan) atau pasal beserta penjelasannya, cetak atau simpan PDF, penanda per pasal ke Koleksi, dan simpan untuk dibaca luring.
 - **Tanya Lexa**: jawaban AI yang hanya boleh bersumber dari kutipan pasal yang ditemukan, wajib
   menyebut sumbernya, dan menandai peraturan yang sudah dicabut atau diubah.
 - **Akun opsional**: login Google, koleksi pribadi dengan catatan (tamu menyimpannya di perangkat; saat
@@ -48,9 +49,11 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
 - **Ingest dari BPK**: Worker tidak pernah menghubungi BPK (situsnya di balik Cloudflare managed challenge). Skrip
   `scripts/bpk-console-harvest.js` dijalankan pengelola di konsol peramban pada peraturan.bpk.go.id: ia menjelajahi daftar
   BPK per jenis, menautkan tiap entri ke peraturan Lexa (`bpk_id`), mengunduh PDF-nya, dan mengunggahnya ke API impor
-  (token admin). Worker mengekstrak PDF menjadi pasal (Workers AI `toMarkdown` + pengurai `uraikanPasal`) dengan penilaian
-  kualitas, dan hasilnya diindeks ke FTS5 dan Vectorize. Data yang sudah ada tak pernah diganti dengan hasil yang jelas
-  lebih buruk. Lihat [docs/pipeline-data.md](docs/pipeline-data.md).
+  (token admin). Worker mengekstrak PDF menjadi pasal (Workers AI `toMarkdown`, pembersih artefak halaman, pengurai
+  `uraikanPasal`) dan Penjelasannya (`uraikanPenjelasan`, tabel `penjelasan`) dengan penilaian kualitas, dan hasilnya
+  diindeks ke FTS5 dan Vectorize. Data yang sudah ada tak pernah diganti dengan hasil yang jelas lebih buruk. Perbaikan
+  pengurai diterapkan ke yang sudah tersimpan lewat uraian ulang arsip teks (`usang`), tanpa mengunduh ulang dari BPK.
+  Lihat [docs/pipeline-data.md](docs/pipeline-data.md).
 
 ## Arsitektur
 
@@ -139,13 +142,15 @@ navigasi utama ada di bilah bawah, dan area aman (takik, bilah gestur) dihormati
 src/worker/index.ts      titik masuk: fetch + scheduled + queue
 src/worker/routes/       api, fitur, dokumen, auth, tanya, koleksi, impor
 src/worker/lib/          query (stemmer, parser kueri), search (hybrid + RRF), judul (tingkat judul), bpk (parser manifest
-                         dan pengurai PDF), tautanBpk (penautan daftar BPK), prioritas (urutan panen), ingest (konsumer antrean,
-                         PDF, vektor), pratinjau (pratinjau tautan), sesi, auth, cors, bidang, d1; hapus, pemeliharaan,
-                         keadaan, jadwal (pekerjaan harian)
+                         dan pengurai pasal), halaman (pembersih artefak halaman PDF), penjelasan (pengurai Penjelasan),
+                         tautanBpk (penautan daftar BPK), prioritas (urutan panen), ingest (konsumer antrean, PDF, vektor,
+                         aturan penggantian), pratinjau (pratinjau tautan), sesi, auth, cors, bidang, d1; hapus,
+                         pemeliharaan, keadaan, jadwal (pekerjaan harian)
 src/worker/env.d.ts      tipe global Env (binding, variabel, secret)
 src/shared/types.ts      tipe bersama
 public/                  antarmuka (index.html, css/, js/, _headers, favicon, ikon/, og/, vendor/pdfjs: salinan PDF.js, lihat README-nya)
-migrations/              migrasi D1: 0000-0004 direkonstruksi dari skema produksi, 0005-0006 kolom isi_* (kini tak dipakai) dan daftar hapus
+migrations/              migrasi D1: 0000-0004 direkonstruksi dari skema produksi, 0005-0006 kolom isi_* (kini tak dipakai) dan daftar hapus,
+                         0007 tabel penjelasan dan ekstraksi_log.versi_parser
 test/                    tes unit; test/integration: Worker asli di atas SQLite sungguhan
 e2e/                     tes antarmuka di Chromium
 scripts/                 pratinjau lokal (dev-node.ts), data contoh, pembuat ikon dan gambar pratinjau, pembaruan sw.js
@@ -217,8 +222,16 @@ Ringkasannya (rincian, perintah, dan SQL pemeriksaan ada di [docs/pipeline-data.
   teks (Workers AI), pasal dan ayat, lalu mencatat mutu hasilnya (`ekstraksi_log`). Teks konversi diarsipkan di R2 (`teks/…md`)
   sehingga perbaikan pengurai cukup menguraikan ulang arsip (`POST /api/impor/ekstrak-ulang` dengan `dariTeks: true`), tanpa
   mengunduh ulang dari BPK dan tanpa konversi ulang.
+- **Pembersihan dan Penjelasan**: artefak halaman PDF (penanda, kepala, kaki, catchword) dibuang sebelum diurai; batang tubuh
+  berhenti di judul PENJELASAN dan di rumus penutup (pengesahan dan lampiran bukan isi pasal); Penjelasan disimpan di tabel
+  `penjelasan`, bukan sebagai pasal kembar.
 - **Pengaman**: PDF yang judul resminya milik peraturan lain tidak menghasilkan pasal; hasil yang jelas lebih buruk tidak
-  menggantikan teks yang sudah ada; naskah lama yang di BPK tak berkas ditandai (`POST /api/impor/tanpa-berkas`).
+  menggantikan teks yang sudah ada (dihitung dengan nomor pasal berbeda); naskah lama yang di BPK tak berkas ditandai
+  (`POST /api/impor/tanpa-berkas`).
+- **Pengurai diperbarui**: `ekstraksi_log.versi_parser` mencatat versi yang menghasilkan pasal tersimpan;
+  `POST /api/impor/ekstrak-ulang {"usang": true}` (atau opsi skrip `usang: true`) menguraikan ulang yang berversi lama dari
+  arsip teksnya. `butuh-teks?lama=1` (opsi `lama`) menyertakan peraturan yang masih bertumpu pada teks lama supaya naskah
+  BPK menggantikannya.
 - **Pemeliharaan harian** (Cron 02:00 WIB): daftar hapus dikosongkan, log lebih tua dari 90 hari dipangkas, sisa keadaan
   sumber lama dibuang.
 
@@ -259,7 +272,9 @@ kosong atau tak sah dibaca sebagai bawaan, bukan sebagai "semua" maupun "tidak a
 Berkas di `migrations/` diberi nomor berurutan. **Jangan mengubah berkas yang sudah diterapkan**: nama berkasnya sama
 dengan yang tercatat di tabel `d1_migrations` produksi, sehingga dianggap sudah diterapkan di sana (0005 dan 0006
 diterapkan pada 11 Okt 2026: kolom `isi_*` dan penanda arsip pada `laws`, indeks antrean parsial, pemicu FTS yang hanya
-menyala untuk kolom yang diindeks, dan tabel `daftar_hapus`; kolom `isi_*` kini tak dipakai lagi tetapi dibiarkan). Perubahan
+menyala untuk kolom yang diindeks, dan tabel `daftar_hapus`; kolom `isi_*` kini tak dipakai lagi tetapi dibiarkan; 0007
+menambah tabel `penjelasan` dan kolom `ekstraksi_log.versi_parser`, kompatibel mundur: kode menahan galatnya bila belum
+diterapkan). Perubahan
 skema baru = berkas baru, lalu terapkan secara sengaja **sebelum** men-deploy kode yang membutuhkannya:
 
 ```bash
@@ -330,10 +345,12 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
 - **Ekstraksi pasal sebagian.** Teks lama banyak yang tersimpan sebagian (UU 17/2023: 59 dari 458 pasal; UU 27/2009: Pasal 1
   dan 400-408 dari 408; KUHAP 39 dari 286), polanya pasal yang punya ayat lenyap; halaman baca memberi tahu pembaca bila
   penomoran bercelah. `GET /api/impor/butuh-teks?celah=1` menyertakannya dalam daftar panen BPK.
-- Teks hasil ekstraksi versi lama masih memuat sisa: baris pasal ber-id `~n` (umumnya bagian Penjelasan yang memakai ulang nomor
-  pasal) dan teks "PENJELASAN" di dalam baris pasalnya. Parser saat ini berhenti di judul "PENJELASAN"; antarmuka memisahkan
-  keduanya dan merapikan penanda halaman PDF ("### Page 97 PRESIDEN REPUBLIK INDONESIA- 18 -") saat dibaca, tetapi datanya baru
-  bersih setelah peraturan diekstrak ulang.
+- **Teks hasil ekstraksi versi lama masih memuat sisa** sampai diuraikan ulang: 19.000 baris pasal (1.666 peraturan) bertanda
+  halaman ("### Page 97 PRESIDEN REPUBLIK INDONESIA- 18 -"), 701 peraturan menyimpan Penjelasan di pasal terakhir atau sebagai
+  pasal kembar `~n`, dan hampir semua menyimpan pengesahan di pasal terakhir. Pengurai saat ini sudah memperbaiki ketiganya;
+  data yang tersimpan baru bersih setelah `ekstrak-ulang` mode `usang` dijalankan sekali
+  ([docs/pipeline-data.md](docs/pipeline-data.md#memperbarui-pengurai-uraikan-ulang-yang-usang)). Antarmuka merapikannya
+  saat dibaca selama itu.
 - PDF hasil pindai (mis. KUHP, UU 1/2023) diekstrak dengan salah baca OCR (kata menempel, nomor pasal bergeser);
   angka nol yang terbaca huruf O ("Pasal 1O") dirapikan saat dibaca dan saat ingest, selebihnya hanya ekstraksi
   ulang dengan sumber yang lebih baik yang memperbaikinya.

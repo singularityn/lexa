@@ -17,7 +17,8 @@ peramban pengelola di peraturan.bpk.go.id (sesi yang lolos tantangan Cloudflare)
                                                                                       │ antrean lexa-ingest
                                                                                       ▼
                                        ekstrak_pdf: Workers AI toMarkdown  ──►  teks/<uri>.md di R2
-                                         ──►  uraikanPasal  ──►  articles di D1  ──►  indeks_vektor + ringkas (antrean)
+                                         ──►  bersihkanHalaman  ──►  uraikanPasal  ──►  articles di D1  ──►  indeks_vektor + ringkas (antrean)
+                                                              └──►  uraikanPenjelasan  ──►  penjelasan di D1
 ```
 
 Worker tidak pernah menghubungi BPK: situsnya di balik Cloudflare managed challenge dan menolak alamat pusat data, jadi
@@ -33,11 +34,29 @@ lalu menurut jenis (UUD, Tap MPR, UU, Perppu, PP; urutan `CAKUPAN_BAWAAN`), lalu
 di SQL dari `jenis` dan `tahun`; kolom `laws.isi_giliran` (urutan antrean sumber lama) tidak dipakai lagi.
 
 **Ekstraksi** (`lib/ingest.ts`, `ekstrakPdf`). PDF dikonversi Workers AI `toMarkdown`, teks konversi diarsipkan di R2
-(`teks/<uri>.md`), `periksaKecocokanNaskah` menolak PDF yang judul resminya milik peraturan lain, `uraikanPasal` memecahnya
-menjadi pasal dan ayat, `nilaiKualitasEkstraksi` menilai mutunya (`ekstraksi_log`: bersih, ringan, berat, tanpa_pasal, gagal),
-dan hasilnya disimpan atomik. **Penyimpanan tidak pernah mengganti pasal yang tersimpan dengan hasil yang lebih sedikit atau
-kosong** (pindaian yang terbaca buruk tak boleh menimpa naskah yang lebih utuh). Sesudahnya pengindeksan vektor dan
-ringkasan AI diantrekan.
+(`teks/<uri>.md`), `periksaKecocokanNaskah` menolak PDF yang judul resminya milik peraturan lain, lalu teks diurai:
+
+- **`bersihkanHalaman`** (`lib/halaman.ts`) membuang artefak halaman PDF sebelum apa pun diurai: penanda `### Page N`, kepala
+  bernomor halaman (`PRESIDEN⏎REPUBLIK INDONESIA- 20 -`, tahan salah baca OCR) dan yang tanpa nomor menempel pada judul, kaki
+  (`SK No 004269 A`, `www.peraturan.go.id`), catchword (kata pertama halaman berikutnya diulang di ujung halaman ini),
+  baris berulang di tepi halaman, dan bingkai tabel markdown. Hanya tepi halaman yang disentuh; hasilnya idempoten.
+- **`uraikanPasal`** (`lib/bpk.ts`) memecah batang tubuh menjadi pasal dan ayat. Ia berhenti di judul PENJELASAN (juga yang
+  menempel pada kepala halaman) dan di **rumus penutup** ("Agar setiap orang mengetahuinya, memerintahkan pengundangan ...");
+  pengesahan, tanda tangan, dan lampiran sesudahnya bukan isi pasal.
+- **`uraikanPenjelasan`** (`lib/penjelasan.ts`) mengurai Penjelasan Umum dan penjelasan tiap pasal ke tabel `penjelasan`
+  (migrasi 0007; `nomor_pasal` seperti `articles`, `Umum` untuk Penjelasan Umum). Penjelasan tidak masuk indeks pencarian,
+  vektor, maupun hitungan pasal; `GET /api/laws/detail` menyajikannya dan antarmuka menampilkannya di bawah pasalnya.
+- **`nilaiKualitasEkstraksi`** menilai mutu teks bersih (`ekstraksi_log`: bersih, ringan, berat, tanpa_pasal, gagal).
+
+Hasilnya disimpan atomik. **Keputusan menimpa pasal yang tersimpan** (`putuskanPenggantian`) dihitung dengan *nomor pasal
+berbeda*, bukan baris: naskah lama yang menyimpan Penjelasan sebagai pasal kembar punya jauh lebih banyak baris daripada nomor.
+Belum ada pasal: simpan. Hasil PDF baru: tidak menggantikan bila teks PDF rusak berat (vonis `berat`) atau nomornya lebih
+sedikit (pindaian yang terbaca buruk tak boleh menimpa naskah yang lebih utuh), selain itu menggantikan, termasuk teks lama
+sumber yang sudah dihentikan. Uraian ulang arsip BPK yang sama menggantikan, kecuali nomornya menyusut lebih dari separuh pada
+naskah dengan sepuluh nomor atau lebih (lebih mungkin kerusakan pengurai daripada perbaikan). Pasal yang hasilnya persis sama
+tidak ditulis ulang dan tidak diindeks ulang. Vektor pasal yang lenyap atau memendek, dan arsip teks lama (`.txt`) yang
+digantikan, dicatat di `daftar_hapus`. Setiap hasil penguraian mencatat `ekstraksi_log.versi_parser` (`VERSI_PARSER` di
+`lib/bpk.ts`). Sesudahnya pengindeksan vektor dan, untuk naskah baru, ringkasan AI diantrekan.
 
 **Daftar hapus** (`lib/hapus.ts`, tabel `daftar_hapus`). Objek R2 dan vektor Vectorize yang yatim dicatat sebagai batu nisan
 dan dikosongkan oleh pemeliharaan harian: 500 kunci R2 dan 1.000 id vektor per putaran, putaran demi putaran sampai kosong
@@ -88,13 +107,13 @@ Jadi tanpa tahap pertama, skrip tak tahu ke mana harus pergi untuk hampir semua 
 
 | Endpoint | Kegunaan |
 |---|---|
-| `GET /api/impor/butuh-teks?batas=50&jenis=UU,PP&celah=1&semua=1` | daftar kerja: peraturan tanpa teks dan tanpa PDF; yang bertaut BPK didahulukan, lalu menurut jenis dan tahun terbaru (`lib/prioritas.ts`). Menjawab `total`, `tanpa_bpk`, `tanpa_berkas`. `celah=1` menyertakan teks yang baru sebagian; `semua=1` menyertakan yang ditandai tanpa berkas |
+| `GET /api/impor/butuh-teks?batas=50&jenis=UU,PP&celah=1&lama=1&semua=1` | daftar kerja: peraturan tanpa teks dan tanpa PDF; yang bertaut BPK didahulukan, lalu menurut jenis dan tahun terbaru (`lib/prioritas.ts`). Menjawab `total`, `tanpa_bpk`, `tanpa_berkas`. `celah=1` menyertakan teks yang baru sebagian; `lama=1` menyertakan peraturan berpasal dari teks lama sumber yang sudah dihentikan (didahulukan yang belum berteks sama sekali); `semua=1` menyertakan yang ditandai tanpa berkas |
 | `GET /api/impor/ringkasan` | per jenis: `total`, `bertaut_bpk`, `ber_pdf`, `berpasal`, `pdf_belum_berpasal`, `perlu_pdf`; plus `tanpa_berkas` |
 | `POST /api/impor/tautan` | `{ tautan: [{ url, teks, slug?, konteks?, uri? }], buat? }` (maks 200). Jawabannya memuat status tiap entri: `ditautkan`, `sudah`, `dibuat`, `tidak_ada`, `luar_cakupan`, `tidak_dikenali`, `ambigu`, `bentrok`, `gagal`. `uri` memetakan manual ke peraturan Lexa (mis. UUD 1945 ke `/akn/id/act/uud/1945/original`) |
 | `POST /api/impor/manifest` | metadata + relasi halaman rincian. Dicocokkan menurut sitasi, bukan URI turunan; `lexa_uri` mengikat dokumen ke satu peraturan (hanya memperbarui; ditolak bila sitasinya tak cocok) |
 | `PUT /api/impor/pdf?uri=` | berkas PDF; ke R2 `pdf/…`, lalu diantrekan `ekstrak_pdf` |
 | `POST /api/impor/tanpa-berkas` | `{ uris: [...] }`: peraturan yang di BPK tak punya berkas (naskah lama hanya metadata); tak muncul lagi di daftar kerja |
-| `POST /api/impor/ekstrak-ulang` | `{ uri?, batas?, jenis?, dariTeks? }`: antrekan ulang ekstraksi PDF yang tersimpan tetapi belum berpasal (mis. setelah pengurai diperbaiki). `dariTeks: true` menguraikan arsip teks hasil konversi yang sudah ada (tanpa membaca PDF dan tanpa Workers AI); peraturan tanpa arsip tetap dikonversi dari PDF-nya |
+| `POST /api/impor/ekstrak-ulang` | `{ uri?, batas?, jenis?, dariTeks?, usang?, setelah? }`: antrekan ulang ekstraksi PDF yang tersimpan tetapi belum berpasal (mis. setelah pengurai diperbaiki). `dariTeks: true` menguraikan arsip teks hasil konversi yang sudah ada (tanpa membaca PDF dan tanpa Workers AI), arsip BPK (`teks/<uri>.md`) didahulukan; peraturan tanpa arsip tetap dikonversi dari PDF-nya. `usang: true` menguraikan ulang (selalu dari arsip teks) peraturan yang terakhir diurai dengan versi pengurai lebih lama; lihat [bagian di bawah](#memperbarui-pengurai-uraikan-ulang-yang-usang) |
 | `POST /api/impor/ringkas` | `{ batas? }`: antrekan ringkasan AI untuk peraturan yang sudah berteks tetapi belum beringkasan |
 
 Beberapa hal yang dijaga di sisi server karena data produksi menuntutnya:
@@ -145,6 +164,8 @@ Opsi lengkap (semuanya opsional):
 | `buat` | `false`: jangan membuat baris untuk peraturan BPK yang belum ada di Lexa (bawaan: dibuat, hanya bila sitasinya tak meragukan) |
 | `batas`, `terus` | peraturan per putaran panen (50, maks 200); ulangi putaran sampai selesai |
 | `jenis`, `celah` | saring jenis `"UU,PP"`; sertakan teks yang baru sebagian |
+| `lama` | sertakan juga peraturan berpasal dari teks lama (bukan BPK) supaya naskah BPK menggantikannya; jalankan sesudah yang tanpa teks habis |
+| `usang`, `jedaUsang` | tidak memanen apa pun dari BPK: uraikan ulang arsip teks yang diurai dengan versi pengurai lama, per `batas` (maks 100) dengan kursor, sampai habis; jeda antarputaran (8000 ms) |
 | `jeda` | jeda minimum antarpermintaan ke BPK, ms (4000; minimum 2000, jangan dikecilkan) |
 | `kering` | tidak menulis apa pun ke Lexa |
 | `rincian` | buka halaman rincian walau tautan PDF langsung dari daftar diketahui (metadata ikut diperbarui; dua kali lipat permintaan) |
@@ -277,6 +298,51 @@ SELECT l.jenis, e.vonis, COUNT(*) FROM laws l LEFT JOIN ekstraksi_log e ON e.frb
 Sisa yang tetap `tanpa_pasal` kini punya arsip teks (`r2_text_key`), jadi bentuk kegagalannya bisa dibaca lewat
 `GET /api/dokumen/teks?uri=` dan pengurainya diperbaiki dengan bukti, bukan dugaan.
 
+## Memperbarui pengurai: uraikan ulang yang usang
+
+Memperbaiki `halaman.ts`, `penjelasan.ts`, atau `uraikanPasal` tidak mengubah apa pun yang sudah tersimpan. Karena arsip teks
+konversi (`teks/<uri>.md`) ada di R2, peraturan yang sudah dipanen cukup **diuraikan ulang dari arsipnya**, tanpa mengunduh
+ulang dari BPK dan tanpa konversi PDF (Workers AI). Setiap perubahan yang mengubah hasil menaikkan `VERSI_PARSER`
+(`lib/bpk.ts`); `ekstraksi_log.versi_parser` mencatat versi yang menghasilkan pasal tersimpan (baris yang ada sebelum
+migrasi 0007 bernilai 0), dan mode `usang` menawarkan yang versinya lebih rendah.
+
+Urutannya (satu kali per versi):
+
+1. Terapkan migrasi 0007 (`npm run d1:migrate:remote`) dan deploy rilis yang memuat pengurai baru.
+2. Jalankan uraian ulang, salah satunya:
+   - di konsol peramban (tab situs BPK atau Lexa): `window.LEXA_PANEN = { usang: true }`, tempel
+     `scripts/bpk-console-harvest.js`, isi alamat Lexa dan token; atau
+   - dari terminal (token dibaca tanpa gema):
+
+   ```bash
+   read -rs -p 'ADMIN_TOKEN: ' T; echo
+   LEXA=https://lexa.<akun>.workers.dev; SETELAH=""
+   while :; do
+     R=$(curl -sS -X POST "$LEXA/api/impor/ekstrak-ulang" -H "x-admin-token: $T" -H 'content-type: application/json' \
+          -d "{\"usang\":true,\"batas\":100,\"setelah\":\"$SETELAH\"}")
+     echo "$R" | head -c 300; echo
+     N=$(echo "$R" | sed -n 's/.*"diantrekan":\([0-9]*\).*/\1/p'); [ "${N:-0}" = 0 ] && break
+     SETELAH=$(echo "$R" | sed -n 's/.*"terakhir":"\([^"]*\)".*/\1/p'); sleep 10
+   done
+   unset T
+   ```
+3. Pantau: `usang_tersisa` pada jawaban menyusut seiring antrean dikerjakan; di D1:
+
+   ```sql
+   SELECT versi_parser, vonis, COUNT(*) FROM ekstraksi_log GROUP BY 1, 2;
+   SELECT jenis_objek, COUNT(*) FROM daftar_hapus GROUP BY 1;   -- vektor dan arsip lama yang menunggu dibersihkan (02:00 WIB)
+   SELECT COUNT(*) FROM penjelasan;
+   ```
+
+Biayanya: tanpa konversi PDF dan tanpa unduhan BPK; tiap peraturan membaca satu objek R2, menulis ulang pasalnya (bila
+berubah), dan mengantrekan pengindeksan vektor (embedding Workers AI untuk pasal yang berubah). Ringkasan AI tidak disusun
+ulang untuk naskah yang sama. Pesan yang gagal diulang antrean; peraturan yang gagal tetap berversi lama dan muncul lagi pada
+putaran berikutnya. Hasil ekstraksi `gagal` tidak ditawarkan (tak ada arsip teks untuk diurai).
+
+Angka produksi sebelum uraian ulang pertama (14 Okt 2026): 2.635 baris `ekstraksi_log` (bersih 1.892, tanpa_pasal 442,
+ringan 251, berat 37, gagal 8); 701 peraturan menyimpan Penjelasan di batang tubuh; 442 `tanpa_pasal` ikut dicoba lagi dan
+sebagian mungkin kini terurai.
+
 ## Mengendalikan pipeline
 
 Semua lewat `/api/impor/*` dengan header `x-admin-token` (tabel di bagian Panen BPK). Tambahan:
@@ -284,7 +350,8 @@ Semua lewat `/api/impor/*` dengan header `x-admin-token` (tabel di bagian Panen 
 | Permintaan | Efek |
 |---|---|
 | `POST /api/impor/ringkas` `{"batas":100}` | antrekan ringkasan AI untuk peraturan yang sudah berteks tetapi belum beringkasan (terbaru dulu, 1-500) |
-| `POST /api/impor/ekstrak-ulang` `{"dariTeks":true,"batas":100}` | uraikan ulang arsip teks yang sudah ada (tanpa Workers AI), mis. setelah pengurai diperbaiki |
+| `POST /api/impor/ekstrak-ulang` `{"dariTeks":true,"batas":100}` | uraikan ulang arsip teks yang belum berpasal (tanpa Workers AI) |
+| `POST /api/impor/ekstrak-ulang` `{"usang":true,"batas":100,"setelah":"<uri>"}` | uraikan ulang peraturan yang diurai dengan versi pengurai lama, per 100 dengan kursor `terakhir`; 503 bila migrasi 0007 belum diterapkan |
 | `POST /api/admin/sync` | **dihentikan**: menjawab 410 dan menunjuk endpoint di atas |
 
 ## Memeriksa produksi
@@ -337,6 +404,14 @@ Atas permintaan pemilik (cakupan UUD, Tap MPR, UU, Perppu, PP; data di luar caku
   relasinya. Objek yatim dicatat di `daftar_hapus` (6.393 berkas R2 dan 21.128 vektor) dan dikosongkan bertahap.
 
 ## Ekstraksi pasal: yang diketahui dan yang belum
+
+Diukur pada produksi 14 Okt 2026 (hasil pengurai sebelum `VERSI_PARSER` 1): 19.000 dari 90.317 baris pasal (1.666 peraturan) memuat
+penanda halaman; 8.699 memuat kepala "PRESIDEN REPUBLIK INDONESIA"; 701 peraturan menyimpan Penjelasan di pasal terakhir atau
+sebagai pasal kembar `~2`; hampir semua menyimpan pengesahan di pasal terakhir. Itu dijawab oleh `bersihkanHalaman`, batas
+Penjelasan yang menempel, tabel `penjelasan`, dan penutup di atas, dan data lama diperbaiki lewat uraian ulang `usang`.
+Yang tetap tidak bisa diperbaiki pengurai: pindaian dengan kata menempel dan salah baca OCR ("denganpotensidan kekayaan alam",
+"UU 10/2020" dengan "FRESIDENREFUELIK"); Penjelasannya tetap dicoba diurai, tetapi hasilnya sebaik teks sumbernya, dan PDF
+asli di tab PDF adalah pembandingnya.
 
 Teks yang berasal dari sumber lama banyak yang tersimpan sebagian (pola: pasal yang punya ayat lenyap; UU 17/2023 hanya 59 dari
 458 pasal, UU 27/2009 hanya Pasal 1 dan 400-408, KUHAP 39 dari 286). Halaman baca memberi tahu pembaca bila penomoran pasal

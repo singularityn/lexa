@@ -182,6 +182,9 @@ Jangan menjalankan migrasi dari build. Terapkan secara sengaja sebelum men-deplo
 rollback kode tetap aman. Sebelum migrasi besar, catat bookmark D1 Time Travel. Pipeline isi memerlukan migrasi
 `0005_antrean_isi_dan_daftar_hapus.sql` dan `0006_arsip_respons.sql`; keduanya sudah diterapkan di produksi (11 Okt 2026)
 sebelum kodenya di-deploy, dan hanya menambah (kolom, indeks, tabel), jadi rollback kode tetap aman.
+`0007_penjelasan.sql` (tabel `penjelasan` dan kolom `ekstraksi_log.versi_parser`) juga hanya menambah; kodenya menahan galat
+bila migrasi belum diterapkan, jadi urutan deploy dan migrasi tidak kritis, tetapi Penjelasan baru tersimpan dan uraian ulang
+`usang` baru berjalan sesudah migrasi diterapkan.
 
 ## Rahasia
 
