@@ -55,11 +55,12 @@ produksi) bekerja per halaman dan hanya menyentuh tepi halaman atau bentuk yang 
 - kepala tanpa nomor yang menempel pada judul (`PRESIDEN⏎REPUBLIK INDONESIAPENJELASAN`) dibuang;
 - kaki tetap dibuang, juga yang menempel pada kata terakhir halaman;
 - catchword dibuang hanya bila halaman berikutnya memang diawali kata yang sama (titik-titiknya boleh hilang dibaca OCR,
-  spasinya boleh berbeda);
+  spasinya boleh berbeda); bila penanda halaman tak terletak di antaranya ("1996.Agar…Agar setiap orang", UU 8/1995), titik-titik
+  yang langsung disusul pengulangan persis (paling banyak lima kata) dibuang di mana pun letaknya;
 - baris yang sama di tepi sedikitnya 30% halaman dibuang (`DISTRIBUSI II`);
 - bingkai tabel markdown (`| Pasal 1 |`) dibuka supaya judul dan catchword di dalam sel tetap terbaca.
 
-Isi di tengah halaman tidak pernah dihapus, dan membersihkan teks yang sudah bersih tidak mengubahnya.
+Isi di tengah halaman tidak dihapus selain catchword yang langsung diulang itu, dan membersihkan teks yang sudah bersih tidak mengubahnya.
 
 ### Penjelasan yang tersimpan di tempat yang salah (3.2c)
 

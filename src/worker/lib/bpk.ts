@@ -349,8 +349,9 @@ export function periksaKecocokanNaskah(
  * rendah ditawarkan ke ekstrak-ulang mode `usang`, yang menguraikan ulang arsip teksnya tanpa konversi PDF.
  *
  * 1: pembersih halaman, batas Penjelasan yang menempel, dan Penjelasan per pasal (14 Okt 2026).
+ * 2: catchword yang tak terpisah penanda halaman ("Agar…Agar setiap orang") dibuang, sehingga penutup tetap dikenali.
  */
-export const VERSI_PARSER = 1;
+export const VERSI_PARSER = 2;
 
 export interface PasalTerurai {
   nomor_pasal: string;

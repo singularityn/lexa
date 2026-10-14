@@ -39,7 +39,10 @@ di SQL dari `jenis` dan `tahun`; kolom `laws.isi_giliran` (urutan antrean sumber
 - **`bersihkanHalaman`** (`lib/halaman.ts`) membuang artefak halaman PDF sebelum apa pun diurai: penanda `### Page N`, kepala
   bernomor halaman (`PRESIDEN⏎REPUBLIK INDONESIA- 20 -`, tahan salah baca OCR) dan yang tanpa nomor menempel pada judul, kaki
   (`SK No 004269 A`, `www.peraturan.go.id`), catchword (kata pertama halaman berikutnya diulang di ujung halaman ini),
-  baris berulang di tepi halaman, dan bingkai tabel markdown. Hanya tepi halaman yang disentuh; hasilnya idempoten.
+  baris berulang di tepi halaman, dan bingkai tabel markdown. Hanya tepi halaman yang disentuh, kecuali satu hal: konversi
+  kadang tak menaruh penanda halaman di antara catchword dan pengulangannya ("... 1 Januari 1996.Agar…Agar setiap orang
+  mengetahuinya"); catchword semacam itu dibuang di mana pun ia berada, tetapi hanya bila titik-titiknya langsung disusul kata-kata
+  yang sama persis (paling banyak lima kata). Hasilnya idempoten.
 - **`uraikanPasal`** (`lib/bpk.ts`) memecah batang tubuh menjadi pasal dan ayat. Ia berhenti di judul PENJELASAN (juga yang
   menempel pada kepala halaman) dan di **rumus penutup** ("Agar setiap orang mengetahuinya, memerintahkan pengundangan ...");
   pengesahan, tanda tangan, dan lampiran sesudahnya bukan isi pasal.

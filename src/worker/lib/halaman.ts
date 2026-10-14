@@ -262,6 +262,20 @@ function buangCatchword(halaman: Halaman[]): void {
   }
 }
 
+/**
+ * Catchword yang tak terpisah penanda halaman: kata-kata pertama halaman berikutnya dan titik-titik, langsung disusul
+ * kata-kata itu sendiri ("... 1 Januari 1996.Agar…Agar setiap orang mengetahuinya"). Konversi tidak selalu menaruh penanda
+ * halaman di batas yang benar, jadi pencocokan per halaman di atas tak menjangkaunya. Dibuang hanya bila tepat diikuti
+ * pengulangannya (paling banyak lima kata), jadi "dan seterusnya…" yang disusul kata lain tak tersentuh.
+ */
+const RE_CATCHWORD_LANGSUNG =
+  /([\p{L}\p{N}(][\p{L}\p{N}.,()'’-]*(?:[ \t]+[\p{L}\p{N}(][\p{L}\p{N}.,()'’-]*){0,4})[ \t]*(?:…|(?:\.[ \t]?){3,})[ \t]*(?=\1(?![\p{L}\p{N}]))/giu;
+const ADA_ELIPSIS = /…|\.[ \t]?\.[ \t]?\./;
+
+function buangCatchwordLangsung(teks: string): string {
+  return ADA_ELIPSIS.test(teks) ? teks.replace(RE_CATCHWORD_LANGSUNG, "") : teks;
+}
+
 /** Kaki tetap yang khas, di mana pun ia ada. "SK No ..." menandai batas halaman, jadi diganti baris baru; situs menempel pada kata terakhir. */
 function bersihkanKaki(teks: string): string {
   return teks.replace(RE_SK, "\n").replace(RE_SITUS, "");
@@ -276,9 +290,11 @@ export function bersihkanHalaman(naskah: string): string {
     buangBarisBerulang(halaman);
     buangCatchword(halaman);
   }
-  return halaman
-    .map((h) => h.teks.replace(/^\s*\n/, "").replace(/\s+$/, ""))
-    .filter((teks) => teks.trim())
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n");
+  return buangCatchwordLangsung(
+    halaman
+      .map((h) => h.teks.replace(/^\s*\n/, "").replace(/\s+$/, ""))
+      .filter((teks) => teks.trim())
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n"),
+  );
 }

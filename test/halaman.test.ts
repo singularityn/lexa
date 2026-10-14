@@ -300,6 +300,41 @@ describe("bersihkanHalaman: bentuk dari bagian Penjelasan (produksi, 14 Okt 2026
   });
 });
 
+describe("bersihkanHalaman: catchword tanpa penanda halaman di antaranya (UU 8/1995)", () => {
+  it("'Agar…Agar setiap orang ...' menempel pada kalimat sebelumnya: catchword dibuang, rumusnya tetap", () => {
+    const naskah = "Undang-undang ini mulai berlaku pada tanggal 1\nJanuari 1996.Agar…Agar setiap orang mengetahuinya, memerintahkan\npengundangan Undang-undang ini.";
+    expect(bersihkanHalaman(naskah)).toBe("Undang-undang ini mulai berlaku pada tanggal 1\nJanuari 1996.Agar setiap orang mengetahuinya, memerintahkan\npengundangan Undang-undang ini.");
+  });
+
+  it("beberapa kata, titik-titik berspasi, dan huruf besar-kecil berbeda sama saja; penanda butir ikut dalam kata", () => {
+    expect(bersihkanHalaman("pada akhir tahun. Ketentuan…Ketentuan yang mengatur kegiatan itu")).toBe("pada akhir tahun. Ketentuan yang mengatur kegiatan itu");
+    expect(bersihkanHalaman("diatur lebih lanjut. Pemantau . . .Pemantau asing wajib hadir")).toBe("diatur lebih lanjut. Pemantau asing wajib hadir");
+    expect(bersihkanHalaman("Dalam hal itu ...dalam hal itu pengusaha wajib")).toBe("dalam hal itu pengusaha wajib");
+    expect(bersihkanHalaman("(2) Ayat (2)...Ayat (2) Cukup jelas.")).toBe("(2) Ayat (2) Cukup jelas.");
+    expect(bersihkanHalaman("pada akhir tahun. Ketentuan… Ketentuan yang mengatur")).toBe("pada akhir tahun. Ketentuan yang mengatur");
+    expect(bersihkanHalaman("berlaku pada tanggal 1 Januari…1 Januari 1996")).toBe("berlaku pada tanggal 1 Januari 1996");
+    expect(bersihkanHalaman("(2) Pemantau…(2) Pemantau wajib hadir")).toBe("(2) Pemantau wajib hadir");
+  });
+
+  it("setiap catchword dibuang, bukan hanya yang pertama", () => {
+    expect(bersihkanHalaman("Satu dua…Satu dua tiga. Empat lima... Empat lima enam.")).toBe("Satu dua tiga. Empat lima enam.");
+  });
+
+  it("titik-titik yang tidak diikuti pengulangannya, atau disusul kata lain, dibiarkan", () => {
+    for (const teks of [
+      "dan seterusnya… sebagainya",
+      "Jumlahnya 1, 2, 3, ... dan seterusnya.",
+      "Agar…setiap orang",
+      "Isi kalimat yang belum selesai...",
+      "Tarif sebesar Rp . . . juta per bulan",
+      "Ketentuan…Ketentuanlain tidak sama kata",
+      "Ketentuan..Ketentuan dengan dua titik saja, sedangkan ini baru... titik tiga",
+    ]) {
+      expect(bersihkanHalaman(teks), teks).toBe(teks);
+    }
+  });
+});
+
 describe("bersihkanHalaman: sifat umum", () => {
   const CONTOH = [
     `(2) Pemantau dapat berasal dari perorangan.\nPemantau . . .www.peraturan.go.id${P(48)}2021, No.15-48-(3) Pemantau asing harus\nmemenuhi prosedur.SK No 004269 A(4) Satu.`,

@@ -291,6 +291,14 @@ describe("uraikanPasal: rumus penutup bukan bagian pasal terakhir", () => {
     expect(halaman.map((p) => p.isi)).toEqual(["Peraturan ini mulai berlaku."]);
   });
 
+  it("catchword 'Agar…Agar setiap orang' yang menempel di ujung kalimat terakhir dibuang dulu, sehingga penutup tetap dikenali (UU 8/1995)", () => {
+    const naskah = `Pasal 115\nDengan berlakunya Undang-undang ini, yang lama dinyatakan tidak berlaku lagi.Pasal 116Undang-undang ini mulai berlaku pada tanggal 1\nJanuari 1996.Agar…Agar setiap orang mengetahuinya, memerintahkan\npengundangan Undang-undang ini dengan\npenempatannya dalam Lembaran Negara Republik\nIndonesia.${P(62)}PRESIDEN\nREPUBLIK INDONESIA- 62 -Disahkan di Jakarta\npada tanggal 10 Nopember 1995\nPRESIDEN REPUBLIK INDONESIA,\nttd\nSOEHARTO\nLEMBARAN NEGARA REPUBLIK INDONESIA TAHUN 1995 NOMOR 64`;
+    expect(uraikanPasal(naskah).map((p) => [p.nomor_pasal, p.isi])).toEqual([
+      ["115", "Dengan berlakunya Undang-undang ini, yang lama dinyatakan tidak berlaku lagi."],
+      ["116", "Undang-undang ini mulai berlaku pada tanggal 1\nJanuari 1996."],
+    ]);
+  });
+
   it("lampiran sesudah penutup (naskah perjanjian, tabel) tidak menjadi isi pasal dan 'Pasal N'-nya tidak dikira pasal", () => {
     const naskah = `Pasal 1\nMengesahkan perjanjian.\nPasal 2\nUndang-undang ini mulai berlaku.\nAgar setiap orang mengetahuinya, memerintahkan pengundangan Undang-undang ini dengan penempatannya dalam Lembaran Negara Republik Indonesia.\n${PENGESAHAN}\nLAMPIRAN\nARTICLE 1\nPasal 3 Konvensi ini berlaku bagi semua pihak.\nPasal 4\nTabel tarif.\nPENJELASAN\nATAS\nUNDANG-UNDANG\nPasal 1\nCukup jelas.`;
     const pasal = uraikanPasal(naskah);
