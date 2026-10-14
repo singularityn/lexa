@@ -23,8 +23,8 @@
 
 import { bukaPdf, type PemecahPdf } from "./pdfBagi";
 
-export const MODEL_BAWAAN = "gemini-flash-latest";
-export const BASE_URL_BAWAAN = "https://generativelanguage.googleapis.com/v1beta";
+export const MODEL_BAWAAN = "diffusiongemma-26b-a4b-it";
+export const BASE_URL_BAWAAN = "https://integrate.api.nvidia.com/v1/chat/completions";
 /** Token (masuk + keluar) per hari UTC yang boleh dipakai semua pembacaan sekaligus. Bisa diubah lewat GEMINI_BATAS_HARIAN. */
 export const ANGGARAN_HARIAN_BAWAAN = 5_000_000;
 /** PDF dikirim sebaris: base64 menambah sepertiga dan satu permintaan dibatasi 20 MB. Yang lebih besar perlu Files API (belum didukung). */
