@@ -362,8 +362,9 @@ sebagian mungkin kini terurai.
 Pertimbangan, data, biaya, dan risikonya ada di [analisis-gemini.md](analisis-gemini.md); yang di bawah ini cara kerja pipeline-nya.
 
 **Mengapa.** `toMarkdown` hanya membaca lapisan teks PDF. Pada 14 Okt 2026, 487 dari 2.630 peraturan yang dipanen (442
-`tanpa_pasal`, 37 `berat`, 8 `gagal`) tak punya pasal yang layak, sebagian besar karena PDF-nya pindaian. Gemini membaca halaman
-sebagai gambar.
+`tanpa_pasal`, 37 `berat`, 8 `gagal`) tak punya pasal yang layak: 42 pindaian modern yang nyaris tanpa lapisan teks, 37 yang
+lapisan teksnya rusak, dan 402 ketikan lama (1946-1979) yang bentuknya tak dikenali pengurai (sebagian pulih lewat mode
+`usang`, 161 hampir tanpa teks). Gemini membaca halaman sebagai gambar.
 
 **Alur** (`lib/gemini.ts`, `ekstrakPdf` dengan `pembaca: "gemini"`):
 
