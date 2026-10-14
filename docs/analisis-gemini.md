@@ -18,11 +18,13 @@ Worker). Cara menjalankannya ada di bagian [Cara memakai](#cara-memakai).
 ## Kesimpulan
 
 1. **Layak, dan lebih luas daripada dugaan pertama.** Pengukur lama menilai 72% peraturan yang dipanen `bersih`, tetapi ia buta
-   terhadap pasal yang hilang: dari 802 peraturan berpasal 10 atau lebih yang ia nilai `bersih`, **227 (28%) kehilangan seperempat
-   nomor pasalnya atau lebih**, dan 178 dari 934 tak punya Pasal 1 (angka D1 produksi, sebelum Penjelasan yang tertukar dengan pasal
-   dipisahkan, yang masih menutupi celahnya). Jadi yang rusak adalah **ada-tidaknya teks dan kelengkapan pasalnya**, bukan sekadar
-   kerapiannya. Yang tak dipilih tetap sama: menyuruh model menulis ulang teks yang sudah lengkap menambah biaya dan, pada naskah
-   hukum, risiko perubahan yang tak terlihat.
+   terhadap pasal yang hilang. Pada data sebelum uraian ulang (versi pengurai 0), dari 802 peraturan berpasal 10 atau lebih yang ia
+   nilai `bersih`, **227 (28%) kehilangan seperempat nomor pasalnya atau lebih**. Pemilik lalu menjalankan `usang` (versi 3), yang
+   memulihkan sebagian besar secara deterministik (UU 12/1967 dari 23 menjadi 58 dari 58 pasal), tetapi **sisanya tetap hilang**:
+   dari 976 peraturan berpasal ≥ 10 yang masih `bersih`, 115 (11,8%) kehilangan seperempat nomornya atau lebih, 45 (4,6%) 10-25%,
+   dan 80 tak punya Pasal 1 (simulasi pengukur versi 4 pada D1 produksi, 14 Oktober sore). Jadi yang rusak adalah **ada-tidaknya teks
+   dan kelengkapan pasalnya**, bukan sekadar kerapiannya. Yang tak dipilih tetap sama: menyuruh model menulis ulang teks yang sudah
+   lengkap menambah biaya dan, pada naskah hukum, risiko perubahan yang tak terlihat.
 2. **Yang terbukti perlu: membaca halaman sebagai gambar.** Dari 2.630 peraturan yang sudah dipanen, **487 (18%)** tidak punya
    pasal yang layak (442 `tanpa_pasal`, 37 `berat`, 8 `gagal`). Penyebabnya tiga.
    (a) **42 pindaian modern** (2010 ke atas): PDF ratusan KB tetapi lapisan teksnya nyaris kosong (rata-rata 1,6 ribu karakter),
@@ -162,8 +164,11 @@ Gejala dan penyebabnya:
 
 Yang gagal menangkapnya: **pengukur mutu**. Ia mencatat `celah_pasal` (33) tetapi tak memakainya, dan menilai hanya kerusakan karakter,
 yang tak cukup untuk melewati ambang, jadi `bersih`. Itu yang membuat angka "72% bersih" menyesatkan, dan yang membuat Gemini tak pernah
-menjadi calon bagi peraturan seperti ini. Survei D1 (hanya peraturan dengan sedikitnya 10 nomor pasal, sebelum uraian ulang `usang`):
-dari 802 yang `bersih`, 227 kehilangan seperempat nomornya atau lebih, 36 kehilangan 10-25%, dan 530 utuh; dari 165 `ringan`, 46 dan 33.
+menjadi calon bagi peraturan seperti ini. Survei D1, hanya peraturan dengan sedikitnya 10 nomor pasal. Sebelum `usang` (versi 0): dari 802 yang `bersih`, 227 kehilangan
+seperempat nomornya atau lebih, 36 kehilangan 10-25%, dan 530 utuh. Sesudah `usang` versi 3 (pemilik, 14 Oktober sore): dari 976 yang
+`bersih`, 115 dan 45; dari 72 `ringan`, 33 dan 15; dari 20 `berat`, 6 dan 2. Uraian ulang yang diperbaiki sudah memulihkan separuhnya
+(mis. UU 12/1967: lengkap 58 dari 58, UU 3/1958 dan UU 6/1966 lengkap), jadi **sisanya adalah yang memang tak bisa dipulihkan dari lapisan
+teks**: pasal yang tak ada di lapisan teks, atau judulnya rusak OCR.
 
 Yang diperbaiki:
 
@@ -197,6 +202,47 @@ Permintaan pemilik: bila ada cara agar Gemini berjalan sendiri di Cloudflare, it
 * **Terlihat dari D1 saja**: `SELECT frbr_uri, vonis_baru, pasal_baru, catatan FROM pembacaan_ai WHERE hasil = 'uji'`. Itu juga yang
   memungkinkan hasilnya dinilai tanpa membuka R2 atau konsol.
 
+## Pengukuran nyata pertama (14 Oktober 2026)
+
+Pemilik menjalankan uji kering `geminiUji` atas **PP 3/1961** (satu dari empat contoh di langkah 2) lewat secret `GEMINI_API` milik
+Worker pukul 12:06 UTC. Itu satu-satunya pembacaan nyata sampai sekarang; barisnya di `pembacaan_ai`:
+
+| Ukuran | Nilai | Per halaman |
+|---|---:|---:|
+| model yang menjawab (alias `gemini-flash-latest`) | `gemini-3.8-flash` | |
+| halaman terbaca / putaran | 9 / 1 | |
+| token masuk | 5.304 | **589** |
+| token keluar | 3.305 | 367 |
+| token berpikir | **4.443** | 494 |
+| total | 13.052 | **1.450** |
+| durasi | **337,8 detik** | 37,5 detik |
+| hasil | `akan dipakai`, vonis `bersih`, **25 nomor pasal** | |
+
+Sebelumnya peraturan ini `tanpa_pasal` (549 karakter dari PDF). Jadi sambungan, kunci, model, dan alamat bawaan bekerja, dan satu
+ketikan 1961 yang tak punya teks kini terbaca menjadi 25 pasal bernomor.
+
+Yang diajarkannya, dan yang diubah:
+
+1. **Satu panggilan untuk satu PDF tak muat untuk yang panjang.** 337,8 detik untuk 9 halaman (mungkin termasuk satu percobaan ulang
+   atas 5xx, tetapi tak bisa dipastikan). UU 32/2014 punya ±50 halaman, dan satu pemanggilan konsumer antrean dibatasi 15 menit; batas
+   waktu satu panggilan kami 4 menit. Dibangun: **pembacaan per potongan halaman** (`lib/pdfBagi.ts`, pdf-lib): PDF dipecah per 4 halaman
+   (`GEMINI_HALAMAN`), dibaca tiga sekaligus (`GEMINI_PARALEL`), potongan yang lewat batas waktu 3 menit, terpotong batas panjang
+   jawaban, atau penandanya tak cocok dipecah dua sampai satu halaman, potongan yang selesai disimpan di R2 (`teks-ai-bagian/`) supaya
+   kuota atau tenggat tak membuat yang sudah dibayar dibaca ulang, dan satu pesan antrean berhenti memulai panggilan baru sesudah 7
+   menit (galat sementara `tertunda`, dilanjutkan percobaan berikutnya). PDF terenkripsi atau rusak yang tak bisa dipecah dibaca
+   utuh bila paling banyak 30 halaman, selain itu ditolak (`terlalu_panjang`) tanpa memanggil Gemini.
+2. **Token berpikir lebih banyak daripada token keluaran** (4.443 dari 7.748 yang dihasilkan), padahal transkripsi tak butuh bernalar.
+   Dibangun: variabel `GEMINI_BERPIKIR` (angka = `thinkingBudget`, kata = `thinkingLevel`), tanpa bawaan karena bentuknya berbeda per seri
+   model. `geminiCek` mengirim pengaturan yang sama, jadi nilai yang ditolak model muncul sebagai galat 400 dengan pesan Google sebelum
+   satu pun PDF dibaca. Mengecilkannya mestinya memangkas hampir separuh token yang dihasilkan; efek sebenarnya perlu diukur.
+3. **Token masuk per halaman 589**, bukan 258 (teks) atau 800-1.100 (anggapan pindaian). Biayanya di bagian berikut diperbarui.
+4. **Waktu 37 detik per halaman** (bila tak ada percobaan ulang di dalamnya) menentukan apakah calon selesai dalam hari atau minggu:
+   dengan anggaran harian bawaan ±170 peraturan 20 halaman sehari, jadi ±420 calon selesai dalam tiga hari, dan waktunya terbatas
+   kuota Google dan paralelnya (tiga potongan sekaligus), bukan Worker.
+
+Belum diketahui dari satu sampel: apakah 25 pasal itu semuanya benar dan lengkap. Teksnya ada di R2 `teks-ai/akn/id/act/pp/1961/3.md`
+(bandingkan beberapa pasal dengan PDF-nya), dan `kesesuaian_dengan_teks_lama` tak berguna untuk peraturan yang lapisan teksnya nyaris kosong.
+
 ## Pengujian
 
 * Klien, pagar, dan anggaran: `test/gemini.test.ts` (51 tes, tanpa jaringan: `fetch` diganti jawaban palsu, jeda ulang diganti pencatat).
@@ -220,35 +266,47 @@ diblokir), jadi yang di bawah berasal dari hasil pencarian dan blog pihak ketiga
 | Hal | Yang diketahui | Konsekuensi di rancangan |
 |---|---|---|
 | Daftar model berganti cepat | alias `gemini-flash-latest` menunjuk Gemini 3.5 Flash sejak 19 Mei 2026 (catatan rilis), kini ada 3.6, 3.7, 3.8; 2.5 Flash-Lite dijadwalkan pensiun 16 Okt 2026; 3.7 Flash pensiun 28 Jan 2027 | model = variabel; versi yang menjawab dicatat per peraturan; tak ada bawaan yang bergantung pada satu versi |
-| Parameter berpikir | pada seri 3, `thinking_budget` angka tak lagi didukung (diganti `thinking_level` dengan nilai yang berbeda per model; `MINIMAL` ditolak di 3.8 Flash) | tak mengirim `thinkingConfig`; menanggung token berpikir bawaan |
+| Parameter berpikir | pada seri 3, `thinking_budget` angka tak lagi didukung (diganti `thinking_level` dengan nilai yang berbeda per model; `MINIMAL` ditolak di 3.8 Flash) | tanpa bawaan; `GEMINI_BERPIKIR` mengirim `thinkingBudget` (angka) atau `thinkingLevel` (kata) bila diisi, dan `geminiCek` menguji nilainya. **Terukur: 4.443 token berpikir dari 7.748 yang dihasilkan** |
 | Suhu | untuk seri 3 Google menganjurkan suhu bawaan (di bawah 1,0 dapat menimbulkan perulangan) | tak mengirim suhu |
-| PDF | sebaris bila seluruh permintaan < 20 MB, selain itu File API; ±258 token per halaman (rata-rata; pindaian bisa jauh lebih); batas 1.000 halaman dan 50 MB (blog) | batas 14 MB sebaris (base64 +33%); File API ditunda; token pindaian diukur nyata |
+| PDF | sebaris bila seluruh permintaan < 20 MB, selain itu File API; ±258 token per halaman (rata-rata; pindaian bisa jauh lebih); batas 1.000 halaman dan 50 MB (blog) | batas 14 MB sebaris (base64 +33%); File API ditunda. **Terukur: 589 token masuk per halaman pindaian** |
+| Terverifikasi dari satu pembacaan nyata | kunci di header `x-goog-api-key`, alamat `generativelanguage.googleapis.com/v1beta`, alias `gemini-flash-latest` (dijawab `gemini-3.8-flash`), PDF sebaris, `systemInstruction`, dan `safetySettings` diterima; `usageMetadata` memuat token masuk, keluar, dan berpikir | tak ada yang perlu diubah di klien |
+| Kecepatan | **337,8 detik untuk 9 halaman** (satu sampel, mungkin termasuk percobaan ulang) | PDF dipecah per 4 halaman dan dibaca paralel |
 | Keluaran terstruktur | `responseJsonSchema` (camelCase di REST) di seri 3 | tidak dipakai: keluaran teks biasa + pengurai Lexa, jadi tak ada kontrak skema yang bisa berubah |
 | Harga | sumber saling bertentangan (Flash-Lite 2.5: $0,10/$0,40; 3.1 Flash-Lite: $0,25/$1,50; 2.5 Flash: $0,30/$2,50; 3 Flash: $0,50/$3,00; 3.5 Flash: $1,50/$9,00 per juta token masuk/keluar) | **tak dijadikan fakta**; perkiraan di bawah memakai tiga tingkat harga sebagai rentang |
 | Tier gratis | batas laju kecil dan berbeda-beda menurut sumber; isi yang dikirim pada tier gratis dapat dipakai Google untuk memperbaiki produknya | peraturan adalah teks publik, tetapi untuk kuota yang layak gunakan akun berbayar |
 
 ## Perkiraan biaya
 
-Rumus: `token masuk ≈ halaman × token per halaman` (258 untuk teks, ±800-1.100 untuk pindaian: belum terukur) dan `token keluar ≈
-karakter / 3,5` ditambah token berpikir. Untuk 487 peraturan dengan anggapan rata-rata 20 halaman dan 20.000 karakter:
-±7,8 juta token masuk dan ±2,9 juta token keluar.
+Dasarnya kini satu pengukuran nyata (bagian di atas): **1.450 token per halaman** (589 masuk, 367 keluar, 494 berpikir). Harga model
+yang menjawab (`gemini-3.8-flash`) tidak diketahui, jadi tiga tingkat harga dipakai sebagai rentang (sumber pencarian web saling
+bertentangan, lihat bagian fakta). Biaya per halaman:
 
-| Tingkat harga (per juta token masuk / keluar) | Perkiraan total |
-|---|---:|
-| $0,25 / $1,50 (kelas Flash-Lite) | ±$6 |
-| $0,50 / $3,00 (kelas Flash) | ±$13 |
-| $1,50 / $9,00 (kelas Flash generasi terbaru) | ±$38 |
+| Tingkat harga (per juta token masuk / keluar) | Per halaman | Per peraturan 20 halaman |
+|---|---:|---:|
+| $0,25 / $1,50 (kelas Flash-Lite) | $0,0014 | ±$0,03 |
+| $0,50 / $3,00 (kelas Flash) | $0,0029 | ±$0,06 |
+| $1,50 / $9,00 (kelas Flash generasi terbaru) | $0,0086 | ±$0,17 |
 
-Angka ini selisihnya besar karena dua hal yang belum diketahui: jumlah halaman rata-rata, dan token berpikir. Yang pasti adalah
-batasnya: anggaran harian menahan pemakaian di `GEMINI_BATAS_HARIAN` token per hari, apa pun yang terjadi.
+Keluaran dan berpikir ditagih sebagai keluaran, jadi berpikirlah yang mahal: bila `GEMINI_BERPIKIR` menghilangkan token berpikir, tingkat
+terakhir menjadi ±$0,0042 per halaman (±$0,08 per peraturan 20 halaman). Jumlah calon yang pasti baru diketahui setelah uraian ulang
+`usang` dengan pengukur versi 4 (`calon_belum_dicoba` di `/api/impor/ringkasan`). Simulasi pada D1 produksi (14 Oktober sore, sesudah
+`usang` versi 3 oleh pemilik) memberi ±420 dari 2.630 (16%): 216 `tanpa_pasal` + 16 `gagal` + ±187 `berat` (35 lama, ±152 baru karena
+pasal hilang). Sisa ±4.550 peraturan yang belum dipanen menambah ±730 bila proporsinya sama. Dengan anggapan 20 halaman rata-rata:
 
-**Langit-langit per hari.** Anggaran bawaan 5.000.000 token per hari UTC menghitung token masuk, keluar, dan berpikir sekaligus.
-Sisa anggaran diperiksa sebelum tiap pembacaan dan sesudah tiap putarannya. Dengan perbandingan masuk:keluar seperti perkiraan di atas
-(±73% : 27%), satu hari yang menghabiskan seluruh anggaran bernilai ±$3 (kelas Flash-Lite), ±$6 (Flash), atau ±$18 (Flash
-generasi terbaru). Itu hitungan turunan dari tiga tingkat harga di atas, bukan angka tagihan. Pengamannya lunak: pembacaan yang
-melampaui sisa anggaran dihentikan pada putaran itu juga (token putaran itu tetap dibayar), dan KV tak atomik, jadi kelebihan
-sebesar satu pembacaan mungkin terjadi. Untuk batas yang lebih ketat, turunkan `GEMINI_BATAS_HARIAN` di dashboard tanpa deploy.
-Menulis ulang seluruh korpus (opsi A) akan puluhan kali lebih mahal, itu salah satu alasan tidak dipilih.
+| Calon | $0,25 / $1,50 | $0,50 / $3,00 | $1,50 / $9,00 |
+|---:|---:|---:|---:|
+| 420 (yang sudah dipanen) | ±$12 | ±$24 | ±$73 |
+| 1.150 (dengan yang belum dipanen) | ±$33 | ±$66 | ±$199 |
+
+Perkiraan awal dokumen ini (±$6 / $13 / $38 untuk 487 peraturan) terlalu rendah sekitar dua kali: ia menganggap 800-1.100 token masuk
+per halaman tetapi keluaran dari panjang teks saja, dan melupakan bahwa berpikir ditagih sebagai keluaran.
+
+**Langit-langit per hari.** Anggaran bawaan 5.000.000 token per hari UTC (`GEMINI_BATAS_HARIAN`) menghitung masuk, keluar, dan berpikir
+sekaligus: ±3.450 halaman sehari, ±170 peraturan 20 halaman, bernilai ±$5, ±$10, atau ±$30 sehari pada tiga tingkat harga di atas.
+Itu hitungan turunan, bukan angka tagihan. Sisa anggaran diperiksa sebelum tiap potongan dan sesudahnya; pengamannya lunak (KV tak
+atomik, dan tiga potongan berjalan bersamaan), jadi kelebihan sebesar beberapa potongan mungkin terjadi. Untuk batas yang lebih
+ketat, turunkan `GEMINI_BATAS_HARIAN` di dashboard tanpa deploy. Menulis ulang seluruh korpus (opsi A) akan puluhan kali lebih mahal,
+itu salah satu alasan tidak dipilih.
 
 ## Risiko dan penjagaannya
 

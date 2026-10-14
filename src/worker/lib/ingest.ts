@@ -18,7 +18,7 @@ import {
 } from "./bpk";
 import {
   bacaKonfigGemini, bacaPdfDenganGemini, catatPemakaian, GalatGemini, pemakaianHariIni, periksaTranskripsi, tokenKosong,
-  type HasilBacaPdf, type KonfigGemini, type OpsiPanggilan, type PemakaianToken,
+  type HasilBacaPdf, type KonfigGemini, type OpsiBaca, type PemakaianToken,
 } from "./gemini";
 import { bersihkanHalaman } from "./halaman";
 import { barisPenjelasan, uraikanPenjelasan } from "./penjelasan";
@@ -51,8 +51,8 @@ export interface KonteksIngest {
   gemini?: KonfigGemini | null;
   /** KV untuk hitungan anggaran token Gemini harian. */
   kv?: KVNamespace;
-  /** Pengganti fetch dan jeda untuk uji; Worker tidak mengisinya. */
-  opsiGemini?: OpsiPanggilan;
+  /** Pengganti fetch, jeda, pembuka PDF, dan ukuran potongan untuk uji; Worker tidak mengisinya. */
+  opsiGemini?: OpsiBaca;
 }
 
 /** Konteks ingest dari binding Worker: dipakai konsumer antrean (index.ts) dan route impor yang menjalankan pembacaan langsung. */
@@ -379,6 +379,17 @@ async function konversiBawaan(
 // Pembacaan PDF oleh Gemini (lib/gemini.ts)
 // ---------------------------------------------------------------------------
 
+/** Percobaan kering membawa cuplikan transkripsi di `catatan`, supaya hasilnya dapat dinilai dari D1 saja (tanpa membuka R2). */
+const CATATAN_UJI_MAKS = 2000;
+
+/** Awal naskah dan satu bagian dari tengahnya, untuk dinilai dari D1. */
+export function cuplikanNaskah(teks: string): string {
+  const t = teks.replace(/\n{3,}/g, "\n\n").trim();
+  if (t.length <= 1200) return t;
+  const tengah = Math.floor(t.length / 2);
+  return `${t.slice(0, 600)}\n[...]\n${t.slice(tengah, tengah + 600)}`;
+}
+
 export interface RekamAi {
   hasil: "dipakai" | "dipertahankan" | "ditolak" | "gagal" | "uji";
   model?: string | null;
@@ -410,7 +421,7 @@ export async function catatPembacaanAi(db: D1Database, frbrUri: string, r: Rekam
        WHERE excluded.hasil <> 'uji' OR pembacaan_ai.hasil = 'uji'`,
     )
     .bind(
-      frbrUri, r.hasil, r.model ?? null, r.catatan ? r.catatan.slice(0, 400) : null, r.halaman ?? 0, r.putaran ?? 0,
+      frbrUri, r.hasil, r.model ?? null, r.catatan ? r.catatan.slice(0, r.hasil === "uji" ? CATATAN_UJI_MAKS : 400) : null, r.halaman ?? 0, r.putaran ?? 0,
       t.masuk, t.keluar, t.pikir, r.durasiMs ?? null, r.vonisBaru ?? null, r.pasalBaru ?? 0,
     )
     .run()
@@ -446,21 +457,58 @@ export interface NaskahGemini {
 }
 
 /**
- * Baca PDF dengan Gemini di bawah anggaran token harian: token yang terpakai dicatat walau pembacaan gagal di tengah jalan.
- * Melempar GalatGemini: "kunci" bila secret belum dipasang, "anggaran" bila anggaran hari ini habis.
+ * Pembacaan satu pesan Gemini tak boleh melewati ini sejak pesannya mulai diproses: sesudahnya tak ada panggilan baru, dan yang sudah
+ * dibaca tersimpan untuk dilanjutkan percobaan berikutnya. Satu pemanggilan konsumer antrean dibatasi 15 menit oleh Cloudflare, dan
+ * panggilan yang sedang berjalan masih bisa memakan sampai batas waktunya (3 menit) sesudah tenggat ini.
  */
-export async function bacaNaskahGemini(ctx: KonteksIngest, bytes: ArrayBuffer): Promise<NaskahGemini> {
+export const TENGGAT_PESAN_MS = 7 * 60_000;
+
+/** Awalan kunci R2 untuk potongan PDF yang sudah dibaca; ukuran PDF ikut supaya PDF yang diganti tak memakai potongan yang lama. */
+const awalanBagianAi = (frbrUri: string, ukuranPdf: number) => `teks-ai-bagian/${frbrUri.replace(/^\//, "")}/${ukuranPdf}/`;
+
+async function hapusBagianAi(docs: R2Bucket, awalan: string) {
+  try {
+    const { objects } = await docs.list({ prefix: awalan, limit: 1000 });
+    if (objects.length) await docs.delete(objects.map((o) => o.key));
+  } catch {
+    /* potongan yatim kecil: tak boleh menggagalkan pembacaan yang sudah berbayar */
+  }
+}
+
+/**
+ * Baca PDF dengan Gemini di bawah anggaran token harian: token yang terpakai dicatat walau pembacaan gagal di tengah jalan.
+ * Melempar GalatGemini: "kunci" bila secret belum dipasang, "anggaran" bila anggaran hari ini habis. Dengan `frbrUri`, potongan yang
+ * sudah dibaca disimpan di R2 (teks-ai-bagian/) dan dimuat kembali oleh percobaan berikutnya; dihapus setelah pembacaan selesai atau
+ * gagal tetap. `tenggat` (ms sejak epoch) membatasi panggilan baru: sesudahnya galat sementara "tertunda".
+ */
+export async function bacaNaskahGemini(ctx: KonteksIngest, bytes: ArrayBuffer, o: { frbrUri?: string; tenggat?: number } = {}): Promise<NaskahGemini> {
   if (!ctx.gemini || !ctx.kv) throw new GalatGemini("kunci", "Secret GEMINI_API belum dipasang");
   const sisa = ctx.gemini.anggaranHarian - (await pemakaianHariIni(ctx.kv));
   if (sisa <= 0) throw new GalatGemini("anggaran", `Anggaran token harian Gemini (${ctx.gemini.anggaranHarian}) sudah habis`);
+  const awalan = o.frbrUri ? awalanBagianAi(o.frbrUri, bytes.byteLength) : null;
+  const kunciBagian = (mulai: number, akhir: number) => `${awalan}${mulai}-${akhir}.md`;
   let dipakai = 0;
   try {
     const baca = await bacaPdfDenganGemini(ctx.gemini, new Uint8Array(bytes), {
       ...ctx.opsiGemini,
       maksToken: sisa,
       pakai: (t) => void (dipakai += t.total),
+      ...(o.tenggat !== undefined ? { tenggat: o.tenggat } : {}),
+      ...(awalan
+        ? {
+            muatBagian: async (mulai: number, akhir: number) => (await ctx.docs.get(kunciBagian(mulai, akhir)))?.text() ?? null,
+            simpanBagian: async (mulai: number, akhir: number, markdown: string) => {
+              await ctx.docs.put(kunciBagian(mulai, akhir), markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
+            },
+          }
+        : {}),
     });
+    if (awalan) await hapusBagianAi(ctx.docs, awalan);
     return { baca, masalah: periksaTranskripsi(baca.markdown, baca.halamanPdf) };
+  } catch (e) {
+    // Galat sementara (kuota, tenggat) melanjutkan dari potongan yang tersimpan; selebihnya tak akan dilanjutkan siapa pun.
+    if (awalan && !(e instanceof GalatGemini && e.sementara)) await hapusBagianAi(ctx.docs, awalan);
+    throw e;
   } finally {
     await catatPemakaian(ctx.kv, dipakai);
   }
@@ -525,7 +573,7 @@ interface BacaanAi extends NaskahGemini {
  */
 async function bacaGeminiUntukEkstraksi(ctx: KonteksIngest, frbrUri: string, bytes: ArrayBuffer, mulai: number): Promise<BacaanAi | null> {
   try {
-    const hasil = await bacaNaskahGemini(ctx, bytes);
+    const hasil = await bacaNaskahGemini(ctx, bytes, { frbrUri, tenggat: mulai + TENGGAT_PESAN_MS });
     // Teks Gemini diarsipkan terpisah dari teks bawaan (teks/): hanya yang dipakai yang dipromosikan ke sana.
     await ctx.docs
       .put(kunciTeksAi(frbrUri), hasil.baca.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } })
@@ -593,11 +641,11 @@ export interface LaporanUjiGemini {
  * Percobaan kering: baca PDF dengan Gemini dan laporkan apa yang AKAN terjadi, tanpa menulis pasal atau menyentuh log
  * ekstraksi. Teksnya diarsipkan di `teks-ai/` untuk diperiksa, dan percobaannya dicatat sebagai `uji` di `pembacaan_ai`.
  */
-export async function ujiGemini(ctx: KonteksIngest, frbrUri: string, r2Key: string): Promise<LaporanUjiGemini> {
+export async function ujiGemini(ctx: KonteksIngest, frbrUri: string, r2Key: string, o: { tenggat?: number } = {}): Promise<LaporanUjiGemini> {
   const mulai = Date.now();
   const objek = await ctx.docs.get(r2Key);
   if (!objek) throw new Error(`Berkas ${r2Key} tidak ada di R2`);
-  const { baca, masalah } = await bacaNaskahGemini(ctx, await objek.arrayBuffer());
+  const { baca, masalah } = await bacaNaskahGemini(ctx, await objek.arrayBuffer(), { frbrUri, ...(o.tenggat !== undefined ? { tenggat: o.tenggat } : {}) });
   const arsip = kunciTeksAi(frbrUri);
   await ctx.docs.put(arsip, baca.markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } }).catch(() => {});
 
@@ -633,7 +681,7 @@ export async function ujiGemini(ctx: KonteksIngest, frbrUri: string, r2Key: stri
     `pasal ${nomorBaru} (tertinggi ${laporan.pasal_tertinggi}, hilang ${laporan.celah_pasal}), tersimpan ${nomorLama}, tersimpan hilang ${hilangDariLama.hilang}/${hilangDariLama.dasar}`,
     kesesuaian ? `kesesuaian ${kesesuaian.gemini_ada_di_lama}/${kesesuaian.lama_ada_di_gemini}` : "",
     masalah.length ? `masalah: ${masalah.join("; ")}` : "",
-  ].filter(Boolean).join(" | ");
+  ].filter(Boolean).join(" | ") + `\n--- cuplikan ---\n${cuplikanNaskah(bersih)}`;
   await catatPembacaanAi(ctx.db, frbrUri, {
     hasil: "uji", model: baca.versiModel, halaman: baca.halaman, putaran: baca.putaran, token: baca.token, durasiMs: durasi,
     vonisBaru: laporan.vonis, pasalBaru: nomorBaru, catatan: ringkas,
@@ -1038,7 +1086,7 @@ export async function prosesPesanIngest(ctx: KonteksIngest, pesan: PesanIngest):
 async function ujiGeminiDariAntrean(ctx: KonteksIngest, frbrUri: string, r2Key: string): Promise<void> {
   const mulai = Date.now();
   try {
-    await ujiGemini(ctx, frbrUri, r2Key);
+    await ujiGemini(ctx, frbrUri, r2Key, { tenggat: mulai + TENGGAT_PESAN_MS });
   } catch (e) {
     if (!(e instanceof GalatGemini) || e.sementara) throw e;
     if (e.jenis !== "anggaran" && e.jenis !== "kunci" && e.jenis !== "model") {

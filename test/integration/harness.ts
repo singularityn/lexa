@@ -169,6 +169,13 @@ export class R2Palsu {
     return { key: kunci, size: bytes.byteLength };
   }
 
+  /** Seperti R2 `list`: kunci berawalan `prefix`, menurut urutan abjad, paling banyak `limit` (bawaan 1000). */
+  async list(opsi: { prefix?: string; limit?: number } = {}) {
+    const semua = [...this.objek.keys()].filter((k) => k.startsWith(opsi.prefix ?? "")).sort();
+    const objects = semua.slice(0, opsi.limit ?? 1000).map((key) => ({ key, size: this.objek.get(key)!.bytes.byteLength }));
+    return { objects, truncated: semua.length > objects.length, delimitedPrefixes: [] as string[] };
+  }
+
   /** Seperti R2: menghapus satu kunci atau larik (maksimal 1000), dan kunci yang tak ada bukan galat. */
   readonly panggilanHapus: string[][] = [];
   async delete(kunci: string | string[]): Promise<void> {

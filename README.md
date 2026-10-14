@@ -201,6 +201,7 @@ cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignor
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | secret | login Google; tanpa ini aplikasi berjalan sebagai tamu |
 | `GEMINI_API` | secret (opsional) | kunci Gemini untuk membaca PDF pindaian; tanpa ini jalur `gemini` menjawab 503 dan fitur lain tak terpengaruh |
 | `GEMINI_MODEL`, `GEMINI_BATAS_HARIAN`, `GEMINI_BASE_URL` | variabel (opsional) | model (bawaan `gemini-flash-latest`), anggaran token per hari UTC (bawaan 5.000.000), dan alamat dasar API (mis. AI Gateway) |
+| `GEMINI_BERPIKIR`, `GEMINI_HALAMAN`, `GEMINI_PARALEL` | variabel (opsional) | pengaturan berpikir model (angka = `thinkingBudget`, kata = `thinkingLevel`; tanpa bawaan, diuji `geminiCek`), halaman per panggilan untuk PDF panjang (bawaan 4, 1-20), dan panggilan bersamaan per PDF (bawaan 3, 1-8) |
 | `GEMINI_OTOMATIS` | variabel (opsional) | `uji` (percobaan kering otomatis, berhenti sendiri setelah `GEMINI_OTOMATIS_UJI_MAKS`) atau `ya` (membaca sungguhan) lewat Cron 15 menit; tak ada atau nilai lain: mati |
 | `GEMINI_OTOMATIS_BATAS`, `GEMINI_OTOMATIS_UJI_MAKS`, `GEMINI_OTOMATIS_VONIS` | variabel (opsional) | peraturan per putaran (bawaan 2, maks 10), banyak percobaan kering (bawaan 8), dan vonis calon (bawaan `tanpa_pasal,berat,gagal`) |
 

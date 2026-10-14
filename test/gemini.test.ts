@@ -4,13 +4,16 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import {
-  ANGGARAN_HARIAN_BAWAAN, BASE_URL_BAWAAN, GalatGemini, MAKS_BYTE_PDF, MAKS_PUTARAN, MODEL_BAWAAN, PETUNJUK_TRANSKRIPSI, bacaKonfigGemini,
-  bacaPdfDenganGemini, catatPemakaian, keBase64, keMarkdownHalaman, nomorPenanda, panggilGemini, pemakaianHariIni, perintahLanjut,
-  perkirakanHalamanPdf, periksaTranskripsi, pingGemini, type KonfigGemini,
+  ANGGARAN_HARIAN_BAWAAN, BASE_URL_BAWAAN, GalatGemini, HALAMAN_PER_PANGGILAN_BAWAAN, MAKS_BYTE_PDF, MAKS_PUTARAN, MODEL_BAWAAN, PARALEL_BAWAAN,
+  PETUNJUK_TRANSKRIPSI, bacaKonfigGemini,
+  bacaPdfDenganGemini, catatPemakaian, keBase64, keMarkdownHalaman, nomorPenanda, nomoriBagian, panggilGemini, pemakaianHariIni, pengaturanGenerasi,
+  perintahBagian, perintahLanjut, perkirakanHalamanPdf, periksaTranskripsi, pingGemini, type KonfigGemini,
 } from "../src/worker/lib/gemini";
 
 const KUNCI = "AIzaRAHASIA-uji-1234567890";
-const K: KonfigGemini = { kunci: KUNCI, model: "gemini-uji", baseUrl: "https://gemini.test/v1beta", anggaranHarian: 1_000_000 };
+const K: KonfigGemini = {
+  kunci: KUNCI, model: "gemini-uji", baseUrl: "https://gemini.test/v1beta", anggaranHarian: 1_000_000, berpikir: null, halamanPerPanggilan: 5, paralel: 3,
+};
 
 interface Panggilan {
   url: string;
@@ -65,12 +68,14 @@ describe("bacaKonfigGemini", () => {
   it("nilai bawaan: model, alamat, dan anggaran harian", () => {
     expect(bacaKonfigGemini({ GEMINI_API: ` ${KUNCI} ` })).toEqual({
       kunci: KUNCI, model: MODEL_BAWAAN, baseUrl: BASE_URL_BAWAAN, anggaranHarian: ANGGARAN_HARIAN_BAWAAN,
+      berpikir: null, halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN,
     });
   });
 
   it("model, alamat, dan anggaran dari variabel; 'models/' di depan nama model dibuang; garis miring akhir dibuang", () => {
     expect(bacaKonfigGemini({ GEMINI_API: KUNCI, GEMINI_MODEL: "models/gemini-2.5-flash", GEMINI_BASE_URL: "https://gateway.ai.cloudflare.com/v1/a/b/google-ai-studio/v1beta//", GEMINI_BATAS_HARIAN: "250000" })).toEqual({
       kunci: KUNCI, model: "gemini-2.5-flash", baseUrl: "https://gateway.ai.cloudflare.com/v1/a/b/google-ai-studio/v1beta", anggaranHarian: 250000,
+      berpikir: null, halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN,
     });
   });
 
@@ -80,6 +85,29 @@ describe("bacaKonfigGemini", () => {
     expect(bacaKonfigGemini({ GEMINI_API: KUNCI, GEMINI_BATAS_HARIAN: "abc" })?.anggaranHarian).toBe(ANGGARAN_HARIAN_BAWAAN);
     expect(bacaKonfigGemini({ GEMINI_API: KUNCI, GEMINI_BATAS_HARIAN: "0" })?.anggaranHarian).toBe(ANGGARAN_HARIAN_BAWAAN); // nol bukan "tanpa batas"
     expect(bacaKonfigGemini({ GEMINI_API: KUNCI, GEMINI_BASE_URL: "https://x.test/a b" })?.baseUrl).toBe(BASE_URL_BAWAAN);
+  });
+});
+
+describe("bacaKonfigGemini: berpikir, halaman per panggilan, dan paralel", () => {
+  const baca = (env: Record<string, string>) => bacaKonfigGemini({ GEMINI_API: KUNCI, ...env })!;
+
+  it("GEMINI_BERPIKIR: angka menjadi anggaran berpikir, kata menjadi tingkat, selain itu (atau kosong) bawaan model", () => {
+    expect(baca({}).berpikir).toBeNull();
+    expect(baca({ GEMINI_BERPIKIR: "" }).berpikir).toBeNull();
+    expect(baca({ GEMINI_BERPIKIR: "0" }).berpikir).toEqual({ anggaran: 0 });
+    expect(baca({ GEMINI_BERPIKIR: " 1024 " }).berpikir).toEqual({ anggaran: 1024 });
+    expect(baca({ GEMINI_BERPIKIR: "LOW" }).berpikir).toEqual({ tingkat: "LOW" });
+    expect(baca({ GEMINI_BERPIKIR: "minimal" }).berpikir).toEqual({ tingkat: "minimal" });
+    expect(baca({ GEMINI_BERPIKIR: "THINKING_LEVEL_LOW" }).berpikir).toEqual({ tingkat: "THINKING_LEVEL_LOW" });
+    // Yang tak berbentuk angka atau kata tak boleh sampai ke badan permintaan.
+    for (const rusak of ["-1", "1.5", "low; drop", "a", "x".repeat(40), '{"a":1}', "1234567"]) expect(baca({ GEMINI_BERPIKIR: rusak }).berpikir, rusak).toBeNull();
+  });
+
+  it("GEMINI_HALAMAN dan GEMINI_PARALEL: dibatasi (1-20 dan 1-8), nilai rusak jatuh ke bawaan", () => {
+    expect(baca({ GEMINI_HALAMAN: "8", GEMINI_PARALEL: "2" })).toMatchObject({ halamanPerPanggilan: 8, paralel: 2 });
+    expect(baca({ GEMINI_HALAMAN: "999", GEMINI_PARALEL: "99" })).toMatchObject({ halamanPerPanggilan: 20, paralel: 8 });
+    expect(baca({ GEMINI_HALAMAN: "0", GEMINI_PARALEL: "-3" })).toMatchObject({ halamanPerPanggilan: 1, paralel: 1 });
+    expect(baca({ GEMINI_HALAMAN: "banyak", GEMINI_PARALEL: "" })).toMatchObject({ halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN });
   });
 });
 
@@ -323,9 +351,20 @@ describe("bacaPdfDenganGemini", () => {
 
   it("enam putaran terpotong semuanya: dilaporkan sebagai terlalu panjang, tanpa putaran ketujuh", async () => {
     const jawaban = Array.from({ length: 6 }, (_, i) => ok(`${halaman(i * 2 + 1)}\n${halaman(i * 2 + 2)}\n${halaman(i * 2 + 3)}`, { selesai: "MAX_TOKENS" }));
-    const e = await bacaPdfDenganGemini(K, pdf(40), { fetchFn: fetchPalsu(jawaban).fn }).catch((x) => x);
+    const e = await bacaPdfDenganGemini(K, pdf(25), { fetchFn: fetchPalsu(jawaban).fn }).catch((x) => x);
     expect(e).toMatchObject({ jenis: "keluaran" });
     expect(e.message).toMatch(/terlalu panjang/);
+  });
+
+  it("PDF yang tak bisa dipecah dan lebih dari 30 halaman ditolak tanpa memanggil Gemini; 30 halaman masih dibaca sekaligus", async () => {
+    const { fn, panggilan } = fetchPalsu([ok(Array.from({ length: 30 }, (_, i) => halaman(i + 1)).join("\n"))]);
+    const e = await bacaPdfDenganGemini(K, pdf(31), { fetchFn: fn }).catch((x) => x);
+    expect(e).toMatchObject({ jenis: "terlalu_panjang", sementara: false });
+    expect(e.message).toContain("31 halaman");
+    expect(panggilan).toHaveLength(0);
+    const hasil = await bacaPdfDenganGemini(K, pdf(30), { fetchFn: fn });
+    expect(hasil.halaman).toBe(30);
+    expect(panggilan).toHaveLength(1);
   });
 
   it("berhenti karena RECITATION, SAFETY, atau alasan lain: galat 'diblokir' yang tetap, teks sebagian tak dipakai", async () => {
@@ -502,5 +541,342 @@ describe("anggaran token harian", () => {
     const rusak = { get: async () => { throw new Error("KV mati"); }, put: async () => { throw new Error("KV mati"); } } as unknown as KVNamespace;
     expect(await pemakaianHariIni(rusak)).toBe(0);
     await expect(catatPemakaian(rusak, 10)).resolves.toBe(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pembacaan per potongan halaman
+// ---------------------------------------------------------------------------
+
+describe("nomoriBagian", () => {
+  const md = (...n: number[]) => n.map((x) => `### Page ${x}\nIsi ${x}.`).join("\n\n");
+
+  it("penanda relatif menjadi nomor halaman asli menurut urutan kemunculan, bukan menurut angka yang dicetak", () => {
+    expect(nomoriBagian(md(1, 2, 3), 11, 3)).toBe("### Page 11\nIsi 1.\n\n### Page 12\nIsi 2.\n\n### Page 13\nIsi 3.");
+    // Model memakai nomor asli alih-alih relatif: tetap diurutkan dari `mulai`.
+    expect(nomoriBagian(md(11, 12, 13), 11, 3)).toBe("### Page 11\nIsi 11.\n\n### Page 12\nIsi 12.\n\n### Page 13\nIsi 13.");
+    // Nomor yang kacau pun dinomori ulang menurut urutan.
+    expect(nomoriBagian(md(2, 2, 7), 4, 3)).toBe("### Page 4\nIsi 2.\n\n### Page 5\nIsi 2.\n\n### Page 6\nIsi 7.");
+  });
+
+  it("banyak penanda yang tak sama dengan jumlah halaman: null (terlewat atau tertambah)", () => {
+    expect(nomoriBagian(md(1, 2), 1, 3)).toBeNull();
+    expect(nomoriBagian(md(1, 2, 3, 4), 1, 3)).toBeNull();
+    expect(nomoriBagian("tanpa penanda sama sekali", 1, 2)).toBeNull();
+  });
+
+  it("satu halaman: penanda selalu dipasang sendiri; penanda yang dicetak model dibuang", () => {
+    expect(nomoriBagian("Isi saja.", 9, 1)).toBe("### Page 9\nIsi saja.");
+    expect(nomoriBagian(md(1), 9, 1)).toBe("### Page 9\nIsi 1.");
+    // Dua penanda pada potongan satu halaman (tak lazim): keduanya dibuang, isinya tetap utuh di bawah satu penanda.
+    expect(nomoriBagian(md(1, 2), 9, 1)).toBe("### Page 9\nIsi 1.\n\n\nIsi 2.");
+  });
+});
+
+describe("pengaturanGenerasi dan pengaturan berpikir di permintaan", () => {
+  it("tanpa pengaturan: tak ada generationConfig (tak ada parameter khusus versi yang terkirim tanpa diminta)", () => {
+    expect(pengaturanGenerasi({ berpikir: null })).toEqual({});
+  });
+
+  it("angka menjadi thinkingBudget, kata menjadi thinkingLevel apa adanya", () => {
+    expect(pengaturanGenerasi({ berpikir: { anggaran: 0 } })).toEqual({ generationConfig: { thinkingConfig: { thinkingBudget: 0 } } });
+    expect(pengaturanGenerasi({ berpikir: { tingkat: "LOW" } })).toEqual({ generationConfig: { thinkingConfig: { thinkingLevel: "LOW" } } });
+  });
+
+  it("uji sambungan (geminiCek) mengirim pengaturan yang sama dengan pembacaan, supaya penolakan model terlihat sejak awal", async () => {
+    const { fn, panggilan } = fetchPalsu([ok("siap"), ok("siap")]);
+    await pingGemini({ ...K, berpikir: { tingkat: "LOW" } }, { fetchFn: fn });
+    expect(panggilan[0].badan.generationConfig).toEqual({ thinkingConfig: { thinkingLevel: "LOW" } });
+    await pingGemini(K, { fetchFn: fn });
+    expect(panggilan[1].badan).not.toHaveProperty("generationConfig");
+  });
+
+  it("pembacaan utuh dan per potongan sama-sama membawa pengaturan; penolakan model (400) menjadi galat 'permintaan' yang tetap", async () => {
+    const utuh = fetchPalsu([ok(halaman(1)), galat(400, "Thinking level MINIMAL is not supported for this model")]);
+    await bacaPdfDenganGemini({ ...K, berpikir: { anggaran: 128 } }, pdf(1), { fetchFn: utuh.fn });
+    expect(utuh.panggilan[0].badan.generationConfig).toEqual({ thinkingConfig: { thinkingBudget: 128 } });
+    const e = await pingGemini({ ...K, berpikir: { tingkat: "MINIMAL" } }, { fetchFn: utuh.fn }).catch((x) => x);
+    expect(e).toMatchObject({ jenis: "permintaan", sementara: false, status: 400 });
+    expect(e.message).toContain("MINIMAL");
+  });
+});
+
+describe("bacaPdfDenganGemini: per potongan halaman", () => {
+  interface Rekam {
+    m: number;
+    a: number;
+    total: number;
+    /** Isi PDF yang dikirim (di uji: "RENTANG m-a"). */
+    pdf: string;
+    badan: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  }
+
+  /** Teks jawaban untuk halaman m..a: penanda relatif (atau asli bila `mutlak`), tiap halaman memuat "Pasal n" dengan n nomor halaman asli. */
+  const teksPotongan = (m: number, a: number, o: { mutlak?: boolean } = {}) =>
+    Array.from({ length: a - m + 1 }, (_, i) => `=== HALAMAN ${o.mutlak ? m + i : i + 1} ===\nPasal ${m + i}\n${ISI}`).join("\n");
+
+  /** `fetch` palsu yang membaca rentang dari perintah, mencatat tiap panggilan, dan melacak banyaknya yang berjalan bersamaan. */
+  function fetchPotongan(jawab: (r: Rekam, ke: number) => Response | Error | Promise<Response | Error>, o: { tunda?: number } = {}) {
+    const rekam: Rekam[] = [];
+    let berjalan = 0;
+    let maks = 0;
+    const fn = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const badan = JSON.parse(String(init?.body));
+      const mm = /halaman (\d+) sampai (\d+) dari naskah sepanjang (\d+)/.exec(badan.contents[0].parts[1].text);
+      const r: Rekam = { m: Number(mm?.[1] ?? 1), a: Number(mm?.[2] ?? 0), total: Number(mm?.[3] ?? 0), pdf: atob(badan.contents[0].parts[0].inlineData.data), badan };
+      const ke = rekam.push(r) - 1;
+      berjalan++;
+      maks = Math.max(maks, berjalan);
+      try {
+        if (o.tunda) await new Promise((selesai) => setTimeout(selesai, o.tunda));
+        const j = await jawab(r, ke);
+        if (j instanceof Error) throw j;
+        return j;
+      } finally {
+        berjalan--;
+      }
+    }) as unknown as typeof fetch;
+    return { fn, rekam, maksBerjalan: () => maks };
+  }
+
+  const pemecahPalsu = (n: number) => ({ halaman: n, ambil: vi.fn(async (m: number, a: number) => new TextEncoder().encode(`RENTANG ${m}-${a}`)) });
+  const habisWaktu = () => Object.assign(new Error("tak menjawab"), { name: "TimeoutError" });
+  const PDF_UTUH = (n: number) => new TextEncoder().encode(`RENTANG 1-${n}`);
+  const rentangDari = (rekam: Rekam[]) => rekam.map((r) => `${r.m}-${r.a}`);
+
+  it("PDF 23 halaman dibaca per lima halaman, paling banyak tiga sekaligus; hasil bergabung berurutan dengan penanda 1..23", async () => {
+    const pemecah = pemecahPalsu(23);
+    const { fn, rekam, maksBerjalan } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a), { masuk: 3000, keluar: 1500, pikir: 500 }), { tunda: 15 });
+    const pakai = vi.fn();
+
+    const hasil = await bacaPdfDenganGemini(K, PDF_UTUH(23), { fetchFn: fn, tidur: tanpaTidur, bukaPdf: async () => pemecah, pakai });
+
+    expect(rentangDari(rekam).sort()).toEqual(["1-5", "11-15", "16-20", "21-23", "6-10"]);
+    expect(maksBerjalan()).toBe(3);
+    // PDF yang dikirim ke Gemini adalah potongan yang tepat, dan perintahnya menyebut rentang serta panjang naskah.
+    for (const r of rekam) expect(r.pdf).toBe(`RENTANG ${r.m}-${r.a}`);
+    expect(rekam.find((r) => r.m === 6)?.badan.contents[0].parts[1].text).toBe(perintahBagian(6, 10, 23));
+    expect(pemecah.ambil).toHaveBeenCalledTimes(5);
+
+    expect(nomorPenanda(hasil.markdown)).toEqual(Array.from({ length: 23 }, (_, i) => i + 1));
+    // Isi tiap halaman berada di bawah penandanya sendiri, menurut urutan naskah.
+    for (let n = 1; n <= 23; n++) expect(hasil.markdown).toMatch(new RegExp(`### Page ${n}\\nPasal ${n}\\n`));
+    expect(periksaTranskripsi(hasil.markdown, hasil.halamanPdf)).toEqual([]);
+    expect(hasil).toMatchObject({ halaman: 23, halamanPdf: 23, putaran: 5, token: { masuk: 15000, keluar: 7500, pikir: 2500, total: 25000 }, versiModel: "gemini-uji-001" });
+    expect(pakai).toHaveBeenCalledTimes(5);
+  });
+
+  it("halamanPerPanggilan dan paralel dari opsi: 10 per panggilan, satu per satu", async () => {
+    const { fn, rekam, maksBerjalan } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a)), { tunda: 5 });
+    await bacaPdfDenganGemini(K, PDF_UTUH(23), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(23), halamanPerPanggilan: 10, paralel: 1 });
+    expect(rentangDari(rekam)).toEqual(["1-10", "11-20", "21-23"]);
+    expect(maksBerjalan()).toBe(1);
+  });
+
+  it("nomor halaman yang dicetak model (asli, bukan relatif) diabaikan: yang dihitung urutannya", async () => {
+    const { fn } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a, { mutlak: true })));
+    const hasil = await bacaPdfDenganGemini(K, PDF_UTUH(12), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(12) });
+    expect(nomorPenanda(hasil.markdown)).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
+  });
+
+  it("PDF yang tak lebih panjang dari satu potongan dibaca sekali, tanpa dipecah, dengan perintah awal", async () => {
+    const pemecah = pemecahPalsu(4);
+    const { fn, rekam } = fetchPotongan((r) => ok(Array.from({ length: 4 }, (_, i) => halaman(i + 1)).join("\n")));
+    const hasil = await bacaPdfDenganGemini(K, PDF_UTUH(4), { fetchFn: fn, bukaPdf: async () => pemecah });
+    expect(rekam).toHaveLength(1);
+    expect(rekam[0].pdf).toBe("RENTANG 1-4"); // PDF asli utuh
+    expect(rekam[0].badan.contents[0].parts[1].text).toBe("Transkripsikan seluruh dokumen PDF ini sesuai aturan.");
+    expect(pemecah.ambil).not.toHaveBeenCalled();
+    expect(hasil).toMatchObject({ halaman: 4, halamanPdf: 4, putaran: 1 });
+  });
+
+  it("PDF sepanjang tepat satu potongan (5 halaman, bukan lebih) dibaca sekali dengan perintah awal, tanpa dipecah", async () => {
+    const pemecah = pemecahPalsu(5);
+    const { fn, rekam } = fetchPotongan((r) => ok(Array.from({ length: 5 }, (_, i) => halaman(i + 1)).join("\n")));
+    await bacaPdfDenganGemini(K, PDF_UTUH(5), { fetchFn: fn, bukaPdf: async () => pemecah });
+    expect(rekam).toHaveLength(1);
+    expect(rekam[0].badan.contents[0].parts[1].text).toBe("Transkripsikan seluruh dokumen PDF ini sesuai aturan.");
+    expect(pemecah.ambil).not.toHaveBeenCalled();
+    // Satu halaman lebih panjang dari potongan: dipecah.
+    const enam = fetchPotongan((r) => ok(teksPotongan(r.m, r.a)));
+    await bacaPdfDenganGemini(K, PDF_UTUH(6), { fetchFn: enam.fn, bukaPdf: async () => pemecahPalsu(6) });
+    expect(rentangDari(enam.rekam)).toEqual(["1-5", "6-6"]);
+  });
+
+  it("pembuka PDF yang gagal atau melempar: jatuh ke pembacaan utuh (PDF pendek) atau ditolak (PDF panjang), bukan galat tak terduga", async () => {
+    const { fn, rekam } = fetchPotongan(() => ok(`${halaman(1)}\n${halaman(2)}`));
+    for (const buka of [async () => null, async () => Promise.reject(new Error("pdf-lib meledak"))]) {
+      const hasil = await bacaPdfDenganGemini(K, pdf(2), { fetchFn: fn, bukaPdf: buka });
+      expect(hasil.halaman).toBe(2);
+    }
+    expect(rekam).toHaveLength(2);
+    const e = await bacaPdfDenganGemini(K, pdf(40), { fetchFn: fn, bukaPdf: async () => null }).catch((x) => x);
+    expect(e).toMatchObject({ jenis: "terlalu_panjang" });
+    expect(rekam).toHaveLength(2);
+  });
+
+  describe("potongan yang bermasalah dipecah dua, sampai satu halaman", () => {
+    it("lewat batas waktu: dipecah 3 + 2, hasilnya tetap berurutan; potongan lain tak terganggu", async () => {
+      let gagalSekali = false;
+      const { fn, rekam } = fetchPotongan((r) => {
+        if (r.m === 6 && r.a === 10 && !gagalSekali) {
+          gagalSekali = true;
+          return habisWaktu();
+        }
+        return ok(teksPotongan(r.m, r.a));
+      });
+      const hasil = await bacaPdfDenganGemini(K, PDF_UTUH(10), { fetchFn: fn, tidur: tanpaTidur, bukaPdf: async () => pemecahPalsu(10), paralel: 1 });
+      expect(rentangDari(rekam)).toEqual(["1-5", "6-10", "6-8", "9-10"]);
+      expect(nomorPenanda(hasil.markdown)).toEqual(Array.from({ length: 10 }, (_, i) => i + 1));
+      expect(hasil.putaran).toBe(3); // yang habis waktu tak berhasil, jadi tak dihitung
+    });
+
+    it("terpotong batas panjang jawaban (MAX_TOKENS): dipecah; satu halaman yang terpotong: galat 'keluaran' yang tetap", async () => {
+      const { fn, rekam } = fetchPotongan((r) => (r.a - r.m >= 1 ? ok(teksPotongan(r.m, r.a), { selesai: "MAX_TOKENS" }) : ok(teksPotongan(r.m, r.a))));
+      const hasil = await bacaPdfDenganGemini(K, PDF_UTUH(6), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(6), halamanPerPanggilan: 2, paralel: 1 });
+      // Tiap potongan dua halaman terpotong, lalu dibagi dua satu halaman.
+      expect(rentangDari(rekam)).toEqual(["1-2", "1-1", "2-2", "3-4", "3-3", "4-4", "5-6", "5-5", "6-6"]);
+      expect(nomorPenanda(hasil.markdown)).toEqual([1, 2, 3, 4, 5, 6]);
+
+      const padat = fetchPotongan(() => ok("setengah", { selesai: "MAX_TOKENS" }));
+      const e = await bacaPdfDenganGemini(K, PDF_UTUH(3), { fetchFn: padat.fn, bukaPdf: async () => pemecahPalsu(3), halamanPerPanggilan: 1 }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "keluaran", sementara: false });
+      expect(e.message).toContain("terlalu padat");
+    });
+
+    it("banyak penanda tak cocok (halaman terlewat): dipecah dan dibaca ulang; satu halaman selalu diberi penanda sendiri", async () => {
+      let sekali = true;
+      const { fn, rekam } = fetchPotongan((r) => {
+        if (r.m === 1 && r.a === 5 && sekali) {
+          sekali = false;
+          return ok(teksPotongan(1, 4)); // hanya empat penanda untuk lima halaman
+        }
+        // Potongan satu halaman tanpa penanda sama sekali.
+        return r.m === r.a ? ok(`Pasal ${r.m}\n${ISI}`) : ok(teksPotongan(r.m, r.a));
+      });
+      const hasil = await bacaPdfDenganGemini(K, PDF_UTUH(5 + 0), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(7), halamanPerPanggilan: 5, paralel: 1 }).catch((x) => x);
+      expect(rentangDari(rekam)).toEqual(["1-5", "1-3", "4-5", "6-7"]);
+      expect(nomorPenanda(hasil.markdown)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    });
+
+    it("dipecah sampai satu halaman yang tetap bermasalah: galat diteruskan, bukan lingkaran tak berujung", async () => {
+      const { fn, rekam } = fetchPotongan(() => habisWaktu());
+      const e = await bacaPdfDenganGemini(K, PDF_UTUH(6), { fetchFn: fn, tidur: tanpaTidur, bukaPdf: async () => pemecahPalsu(6), halamanPerPanggilan: 3, paralel: 1 }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "jaringan", sementara: true, habisWaktu: true });
+      // 3 -> 2 + 1 -> 1 + 1: potongan pertama gagal sampai satu halaman, dan berhenti di sana.
+      expect(rentangDari(rekam)).toEqual(["1-3", "1-2", "1-1"]);
+    });
+  });
+
+  describe("galat", () => {
+    it("galat tetap (diblokir) didahulukan atas galat sementara (kuota) dari potongan lain", async () => {
+      const { fn } = fetchPotongan((r) => (r.m === 1 ? galat(429, "quota", { "retry-after": "40" }) : ok("x", { selesai: "SAFETY" })), { tunda: 10 });
+      const e = await bacaPdfDenganGemini(K, PDF_UTUH(4), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(4), halamanPerPanggilan: 2, paralel: 2 }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "diblokir", sementara: false });
+      expect(e.message).toContain("SAFETY");
+    });
+
+    it("kuota (429) pada satu potongan: galat sementara dengan jeda Retry-After; potongan lain yang sudah jalan tak dibuang", async () => {
+      const simpan = vi.fn(async () => {});
+      const { fn } = fetchPotongan((r) => (r.m === 1 ? galat(429, "quota", { "retry-after": "40" }) : ok(teksPotongan(r.m, r.a))), { tunda: 10 });
+      const e = await bacaPdfDenganGemini(K, PDF_UTUH(4), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(4), halamanPerPanggilan: 2, paralel: 2, simpanBagian: simpan }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "kuota", sementara: true, jedaDetik: 40 });
+      expect(simpan).toHaveBeenCalledWith(3, 4, expect.stringContaining("### Page 3"));
+    });
+
+    it("setelah galat pertama, potongan baru tak lagi dimulai", async () => {
+      const { fn, rekam } = fetchPotongan((r) => (r.m === 1 ? galat(429, "quota") : ok(teksPotongan(r.m, r.a))), { tunda: 5 });
+      await bacaPdfDenganGemini(K, PDF_UTUH(20), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(20), halamanPerPanggilan: 2, paralel: 2 }).catch(() => {});
+      // Sepuluh potongan, tetapi hanya yang sudah berjalan saat galat muncul yang diselesaikan.
+      expect(rekam.length).toBeLessThan(10);
+    });
+
+    it("anggaran token: potongan pertama melampaui sisa, jadi berhenti tanpa memulai yang berikutnya (token tetap dicatat)", async () => {
+      const pakai = vi.fn();
+      const { fn, rekam } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a), { masuk: 800, keluar: 300 }));
+      const e = await bacaPdfDenganGemini(K, PDF_UTUH(15), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(15), paralel: 1, maksToken: 1000, pakai }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "anggaran", sementara: false });
+      expect(rekam).toHaveLength(1);
+      expect(pakai).toHaveBeenCalledTimes(1);
+    });
+
+    it("pembacaan yang SELESAI tak dibuang walau tokennya melampaui sisa anggaran: yang dijaga adalah panggilan baru", async () => {
+      // Dua potongan berjalan bersamaan sebelum ada yang selesai, jadi keduanya lolos pemeriksaan sebelum panggilan; total 2.200 > 1.000.
+      const pakai = vi.fn();
+      const { fn, rekam } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a), { masuk: 800, keluar: 300 }), { tunda: 10 });
+      const hasil = await bacaPdfDenganGemini(K, PDF_UTUH(8), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(8), halamanPerPanggilan: 4, paralel: 2, maksToken: 1000, pakai });
+      expect(rekam).toHaveLength(2);
+      expect(nomorPenanda(hasil.markdown)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(hasil.token.total).toBe(2200);
+      expect(pakai).toHaveBeenCalledTimes(2); // tokennya tetap tercatat untuk anggaran harian
+    });
+
+    it("anggaran yang sudah habis sebelum potongan pertama: tak ada panggilan", async () => {
+      const { fn, rekam } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a)));
+      const e = await bacaPdfDenganGemini(K, PDF_UTUH(15), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(15), maksToken: 0 }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "anggaran" });
+      expect(rekam).toHaveLength(0);
+    });
+  });
+
+  describe("melanjutkan yang terputus: tenggat dan potongan tersimpan", () => {
+    it("tenggat yang sudah lewat: galat sementara 'tertunda' sebelum memanggil apa pun", async () => {
+      const { fn, rekam } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a)));
+      const e = await bacaPdfDenganGemini(K, PDF_UTUH(15), { fetchFn: fn, bukaPdf: async () => pemecahPalsu(15), tenggat: Date.now() - 1 }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "tertunda", sementara: true, jedaDetik: 30 });
+      expect(rekam).toHaveLength(0);
+    });
+
+    it("tenggat lewat di tengah jalan: potongan yang selesai tersimpan, dan percobaan berikutnya memuatnya tanpa membayar ulang", async () => {
+      const tersimpan = new Map<string, string>();
+      const opsi = {
+        bukaPdf: async () => pemecahPalsu(15),
+        paralel: 1,
+        simpanBagian: async (m: number, a: number, md: string) => void tersimpan.set(`${m}-${a}`, md),
+        muatBagian: async (m: number, a: number) => tersimpan.get(`${m}-${a}`) ?? null,
+      };
+      // Setiap panggilan memakan 30 ms, tenggatnya 20 ms: hanya potongan pertama yang sempat dimulai.
+      const pertama = fetchPotongan((r) => ok(teksPotongan(r.m, r.a), { masuk: 100, keluar: 100 }), { tunda: 30 });
+      const e = await bacaPdfDenganGemini(K, PDF_UTUH(15), { ...opsi, fetchFn: pertama.fn, tenggat: Date.now() + 20 }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "tertunda", sementara: true });
+      expect(e.message).toContain("1 dari 3");
+      expect(rentangDari(pertama.rekam)).toEqual(["1-5"]);
+      expect([...tersimpan.keys()]).toEqual(["1-5"]);
+
+      // Percobaan berikutnya: potongan 1-5 dimuat, hanya yang tersisa dibaca; hasil akhirnya utuh.
+      const kedua = fetchPotongan((r) => ok(teksPotongan(r.m, r.a), { masuk: 100, keluar: 100 }));
+      const hasil = await bacaPdfDenganGemini(K, PDF_UTUH(15), { ...opsi, fetchFn: kedua.fn });
+      expect(rentangDari(kedua.rekam)).toEqual(["6-10", "11-15"]);
+      expect(nomorPenanda(hasil.markdown)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1));
+      expect(hasil.token.total).toBe(400); // hanya dua potongan yang baru dibayar
+    });
+
+    it("potongan yang dipecah menyimpan bagian-bagiannya dan juga gabungannya, supaya percobaan berikutnya tak mengulang yang gagal", async () => {
+      const tersimpan = new Map<string, string>();
+      let sekali = true;
+      const { fn } = fetchPotongan((r) => {
+        if (r.m === 1 && r.a === 4 && sekali) {
+          sekali = false;
+          return habisWaktu();
+        }
+        return ok(teksPotongan(r.m, r.a));
+      });
+      await bacaPdfDenganGemini(K, PDF_UTUH(4 + 3), {
+        fetchFn: fn, tidur: tanpaTidur, bukaPdf: async () => pemecahPalsu(7), halamanPerPanggilan: 4, paralel: 1,
+        simpanBagian: async (m, a, md) => void tersimpan.set(`${m}-${a}`, md),
+      });
+      expect([...tersimpan.keys()].sort()).toEqual(["1-2", "1-4", "3-4", "5-7"]);
+      expect(nomorPenanda(tersimpan.get("1-4")!)).toEqual([1, 2, 3, 4]);
+    });
+
+    it("galat dari penyimpanan atau pemuatan potongan tak menggagalkan pembacaan", async () => {
+      const { fn } = fetchPotongan((r) => ok(teksPotongan(r.m, r.a)));
+      const hasil = await bacaPdfDenganGemini(K, PDF_UTUH(10), {
+        fetchFn: fn, bukaPdf: async () => pemecahPalsu(10),
+        simpanBagian: async () => Promise.reject(new Error("R2 penuh")),
+        muatBagian: async () => Promise.reject(new Error("R2 mati")),
+      });
+      expect(nomorPenanda(hasil.markdown)).toEqual(Array.from({ length: 10 }, (_, i) => i + 1));
+    });
   });
 });

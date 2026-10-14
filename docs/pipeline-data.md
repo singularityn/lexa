@@ -64,7 +64,8 @@ di SQL dari `jenis` dan `tahun`; kolom `laws.isi_giliran` (urutan antrean sumber
   Pasal 1 yang tak terbaca pada peraturan berpasal ≥ 10 sedikitnya `ringan`. Versi 1-3 hanya mengukur karakter dan buta
   terhadap pindaian ber-OCR yang kehilangan pasalnya (UU 32/2014 Kelautan dinilai `bersih`, begitu pula UU 12/1967 yang hanya
   terbaca 23 dari 58 pasal): dari 802 peraturan berpasal ≥ 10 yang dinilai `bersih` di produksi, 227 kehilangan seperempat
-  nomornya atau lebih (14 Okt 2026). Alasan vonis ditulis di `ekstraksi_log.catatan`.
+  nomornya atau lebih (14 Okt 2026, versi pengurai 0). Uraian ulang `usang` versi 3 memulihkan sebagian (UU 12/1967 lengkap); sisanya,
+  115 dari 976, tetap hilang dan menjadi `berat` begitu diurai ulang dengan versi 4. Alasan vonis ditulis di `ekstraksi_log.catatan`.
 
 Hasilnya disimpan atomik. **Keputusan menimpa pasal yang tersimpan** (`putuskanPenggantian`) dihitung dengan *nomor pasal
 berbeda*, bukan baris: naskah lama yang menyimpan Penjelasan sebagai pasal kembar punya jauh lebih banyak baris daripada nomor.
@@ -383,8 +384,15 @@ lapisan teksnya rusak, dan 402 ketikan lama (1946-1979) yang bentuknya tak diken
 1. `POST /api/impor/ekstrak-ulang {"gemini":true}` mengantrekan pesan `ekstrak_pdf` dengan `pembaca: "gemini"` untuk peraturan ber-PDF
    yang vonis ekstraksinya `tanpa_pasal`, `berat`, atau `gagal`, yang belum pernah dicoba (tabel `pembacaan_ai`), menurut urutan
    alamat. Tanpa secret `GEMINI_API` menjawab 503; bila anggaran token hari ini habis, tak ada yang diantrekan.
-2. Konsumer mengirim PDF (sebaris, base64, hingga 14 MB) dengan petunjuk transkripsi setia. Jawaban yang terpotong batas panjang
-   dilanjutkan dari halaman terakhir yang utuh (maks 6 putaran). Penanda `=== HALAMAN n ===` menjadi `### Page n`.
+2. Konsumer membaca PDF (sebaris, base64, hingga 14 MB) dengan petunjuk transkripsi setia. PDF yang lebih panjang dari
+   `GEMINI_HALAMAN` (bawaan 4) dipecah per halaman dengan pdf-lib (`lib/pdfBagi.ts`) dan dibaca per potongan, `GEMINI_PARALEL`
+   (bawaan 3) sekaligus; PDF pendek, atau yang tak bisa dipecah (terenkripsi, rusak; paling banyak 30 halaman, selain itu ditolak
+   `terlalu_panjang`), dibaca dalam satu panggilan, dan jawaban yang terpotong batas panjang dilanjutkan dari halaman terakhir yang
+   utuh (maks 6 putaran). Satu potongan yang lewat batas waktu (3 menit), terpotong, atau penandanya tak sebanyak halamannya dipecah
+   dua, sampai satu halaman. Potongan yang selesai disimpan di R2 `teks-ai-bagian/<alamat>/<ukuran PDF>/<m>-<n>.md` dan dimuat
+   kembali bila pesan diulang (kuota, atau tenggat 7 menit per pesan yang melepas galat sementara `tertunda`); dibersihkan setelah
+   pembacaan selesai atau gagal tetap. Penanda `=== HALAMAN n ===` (relatif per potongan, dinomori ulang menurut urutan) menjadi
+   `### Page n`. `GEMINI_BERPIKIR` mengatur token berpikir (lihat analisis-gemini.md).
 3. **Pagar** (`periksaTranskripsi`, `putuskanPenerimaanAi`): jawaban selesai normal; halaman berurutan dari 1 dan sebanding dengan
    jumlah halaman PDF; tak ada pengulangan berturut-turut; `[tidak terbaca]` tak lebih dari 1,5% kata; judul cocok dengan
    peraturan yang dituju; pengurai menemukan pasal; mutu bukan `berat` (termasuk kehilangan seperempat nomor pasalnya); dan pasal

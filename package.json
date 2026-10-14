@@ -23,7 +23,8 @@
     "e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
-    "hono": "^4.13.12"
+    "hono": "^4.13.12",
+    "pdf-lib": "1.17.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261003.1",

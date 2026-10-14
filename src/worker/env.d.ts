@@ -48,6 +48,16 @@ interface Env {
   /** Token (masuk + keluar) per hari UTC yang boleh dipakai semua pembacaan Gemini (string; bawaan 5.000.000). */
   GEMINI_BATAS_HARIAN?: string;
   /**
+   * Pengaturan berpikir model: angka (thinkingBudget, mis. `0` pada seri 2.5) atau kata (thinkingLevel, mis. `LOW` pada seri 3).
+   * Tak ada bawaan: pembacaan nyata pertama memakai 4.443 token berpikir dari 7.748 token yang dihasilkan, jadi mengecilkannya
+   * menurunkan biaya dan waktu. Nilai yang ditolak model muncul sebagai galat 400 pada `geminiCek`.
+   */
+  GEMINI_BERPIKIR?: string;
+  /** Halaman per panggilan Gemini untuk PDF panjang (bawaan 4, 1-20). */
+  GEMINI_HALAMAN?: string;
+  /** Panggilan Gemini yang berjalan bersamaan untuk satu PDF (bawaan 3, 1-8). */
+  GEMINI_PARALEL?: string;
+  /**
    * Gemini otomatis lewat Cron 15 menit (lib/geminiOtomatis.ts): `uji` (percobaan kering, berhenti sendiri setelah
    * GEMINI_OTOMATIS_UJI_MAKS) atau `ya` (membaca sungguhan). Tak ada atau nilai lain: mati.
    */

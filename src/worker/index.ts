@@ -90,11 +90,12 @@ app.get("/sitemap.xml", async (c) => {
 });
 
 /**
- * Pesan pembacaan Gemini memakan menit per PDF, sedangkan satu pemanggilan konsumer dibatasi 15 menit waktu dinding. Sesudah
- * sekian lama, pesan Gemini yang tersisa dalam batch dikembalikan ke antrean (dikerjakan pemanggilan berikutnya) alih-alih
- * dibiarkan terpotong di tengah pembacaan yang sudah berbayar.
+ * Pesan pembacaan Gemini memakan menit per PDF, sedangkan satu pemanggilan konsumer dibatasi 15 menit waktu dinding. Pesan Gemini
+ * baru tak dimulai sesudah sekian lama sejak batch dimulai (yang tersisa dikembalikan ke antrean untuk pemanggilan berikutnya).
+ * Pesan yang sudah dimulai punya tenggatnya sendiri (TENGGAT_PESAN_MS, 7 menit, ditambah panggilan yang masih berjalan paling lama
+ * 3 menit), jadi yang terburuk 4 + 7 + 3 = 14 menit: di bawah 15.
  */
-const BATAS_GILIRAN_GEMINI_MS = 8 * 60_000;
+const BATAS_GILIRAN_GEMINI_MS = 4 * 60_000;
 
 export default {
   fetch: app.fetch,

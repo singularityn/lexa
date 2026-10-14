@@ -242,6 +242,9 @@ berjalan seperti biasa.
 2. Opsional, tipe teks: `GEMINI_MODEL` (bawaan `gemini-flash-latest`; nama model Google berganti dan dipensiunkan, jadi pilih yang
    masih didukung), `GEMINI_BATAS_HARIAN` (token masuk + keluar per hari UTC, bawaan 5.000.000), `GEMINI_BASE_URL` (mis. alamat AI
    Gateway Cloudflare; bawaan API Google langsung).
+   Juga opsional: `GEMINI_BERPIKIR` (angka atau kata, mis. `0` atau `LOW`; mengecilkan token berpikir, yang pada pembacaan nyata pertama
+   lebih banyak daripada token keluaran; bentuk nilainya berbeda per seri model, jadi uji dengan `geminiCek` sebelum membaca),
+   `GEMINI_HALAMAN` (halaman per panggilan untuk PDF panjang, bawaan 4) dan `GEMINI_PARALEL` (panggilan bersamaan per PDF, bawaan 3).
 3. Terapkan migrasi 0008 (tabel `pembacaan_ai`) sebelum memakainya: `npm run d1:migrate:remote`.
 4. Uji dari konsol dengan skrip panen: `window.LEXA_PANEN = { geminiCek: true }`, lalu `{ geminiUji: ["/akn/id/act/uu/2019/24"] }`
    (percobaan kering), baru `{ gemini: true, batas: 3 }`.

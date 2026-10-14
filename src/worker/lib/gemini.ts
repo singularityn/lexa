@@ -21,6 +21,8 @@
  * ekstrak-ulang `gemini` yang berhenti.
  */
 
+import { bukaPdf, type PemecahPdf } from "./pdfBagi";
+
 export const MODEL_BAWAAN = "gemini-flash-latest";
 export const BASE_URL_BAWAAN = "https://generativelanguage.googleapis.com/v1beta";
 /** Token (masuk + keluar) per hari UTC yang boleh dipakai semua pembacaan sekaligus. Bisa diubah lewat GEMINI_BATAS_HARIAN. */
@@ -29,10 +31,24 @@ export const ANGGARAN_HARIAN_BAWAAN = 5_000_000;
 export const MAKS_BYTE_PDF = 14 * 1024 * 1024;
 /** Paling banyak berapa kali satu PDF dikirim untuk melanjutkan keluaran yang terpotong batas panjang jawaban. */
 export const MAKS_PUTARAN = 6;
+/**
+ * PDF dibaca per potongan sependek ini (GEMINI_HALAMAN). Pembacaan nyata pertama (PP 3/1961, 9 halaman) memakan 337 detik dan
+ * 13.052 token dalam satu panggilan; potongan pendek muat dalam batas waktu, dapat dibaca paralel, dan dicoba ulang satu per satu.
+ */
+export const HALAMAN_PER_PANGGILAN_BAWAAN = 4;
+/** Panggilan Gemini yang berjalan bersamaan untuk satu PDF (GEMINI_PARALEL). Lebih banyak mempercepat, tetapi lebih mudah menabrak kuota. */
+export const PARALEL_BAWAAN = 3;
+/** PDF yang tak bisa dipecah dan lebih panjang dari ini ditolak: satu panggilan untuk semuanya tak akan selesai dalam batas waktu. */
+export const MAKS_HALAMAN_UTUH = 30;
 
 const BATAS_WAKTU_BAWAAN_MS = 240_000;
+/** Batas waktu satu panggilan untuk satu potongan; yang melewatinya dipecah lagi menjadi dua. */
+const BATAS_WAKTU_BAGIAN_MS = 180_000;
 const MAKS_PERCOBAAN = 3;
 const JEDA_ULANG_MS = [4_000, 12_000];
+
+/** Pengaturan berpikir model: angka (thinkingBudget, seri 2.5) atau tingkat (thinkingLevel, seri 3); null = bawaan model. */
+export type PengaturanBerpikir = { anggaran: number } | { tingkat: string } | null;
 
 export interface KonfigGemini {
   kunci: string;
@@ -40,6 +56,16 @@ export interface KonfigGemini {
   baseUrl: string;
   /** Token (masuk + keluar) yang boleh dipakai per hari UTC. */
   anggaranHarian: number;
+  /**
+   * GEMINI_BERPIKIR. Pembacaan nyata pertama memakai 4.443 token berpikir dari 7.748 token yang dihasilkan, sedangkan transkripsi tak
+   * butuh bernalar: mengecilkannya menurunkan biaya dan waktu. Bentuk nilainya berbeda per seri model, jadi tak ada bawaan; uji
+   * dengan `geminiCek`, yang mengirim pengaturan yang sama.
+   */
+  berpikir: PengaturanBerpikir;
+  /** Halaman per panggilan (GEMINI_HALAMAN). */
+  halamanPerPanggilan: number;
+  /** Panggilan bersamaan per PDF (GEMINI_PARALEL). */
+  paralel: number;
 }
 
 /** Variabel dan secret yang dibaca modul ini (env.d.ts). */
@@ -48,7 +74,22 @@ export interface EnvGemini {
   GEMINI_MODEL?: string;
   GEMINI_BASE_URL?: string;
   GEMINI_BATAS_HARIAN?: string;
+  GEMINI_BERPIKIR?: string;
+  GEMINI_HALAMAN?: string;
+  GEMINI_PARALEL?: string;
 }
+
+function bacaBerpikir(nilai: string | undefined): PengaturanBerpikir {
+  const v = (nilai ?? "").trim();
+  if (/^\d{1,6}$/.test(v)) return { anggaran: Number(v) };
+  if (/^[A-Za-z][A-Za-z_]{1,31}$/.test(v)) return { tingkat: v };
+  return null;
+}
+
+const bulatDalam = (nilai: string | undefined, bawaan: number, min: number, maks: number) => {
+  const n = Number.parseInt((nilai ?? "").trim(), 10);
+  return Number.isFinite(n) ? Math.min(Math.max(n, min), maks) : bawaan;
+};
 
 /** Konfigurasi dari env; null bila kunci tak dipasang. Nilai variabel yang tak sah diabaikan (jatuh ke bawaan), bukan ditolak. */
 export function bacaKonfigGemini(env: EnvGemini): KonfigGemini | null {
@@ -65,6 +106,9 @@ export function bacaKonfigGemini(env: EnvGemini): KonfigGemini | null {
     model: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model) ? model : MODEL_BAWAAN,
     baseUrl: /^https:\/\/[^\s?#]+$/.test(baseUrl) ? baseUrl : BASE_URL_BAWAAN,
     anggaranHarian: Number.isFinite(anggaran) && anggaran > 0 ? anggaran : ANGGARAN_HARIAN_BAWAAN,
+    berpikir: bacaBerpikir(env.GEMINI_BERPIKIR),
+    halamanPerPanggilan: bulatDalam(env.GEMINI_HALAMAN, HALAMAN_PER_PANGGILAN_BAWAAN, 1, 20),
+    paralel: bulatDalam(env.GEMINI_PARALEL, PARALEL_BAWAAN, 1, 8),
   };
 }
 
@@ -78,13 +122,15 @@ export type JenisGalatGemini =
   | "permintaan" //    permintaan ditolak (parameter tak dikenal model, isi terlalu besar)
   | "diblokir" //      jawaban dihentikan (SAFETY, RECITATION, ...) atau permintaan diblokir
   | "terlalu_besar" // PDF melebihi MAKS_BYTE_PDF
-  | "keluaran" //      jawaban tak bisa dilanjutkan atau tak lengkap setelah MAKS_PUTARAN
+  | "terlalu_panjang" // PDF tak bisa dipecah dan melebihi MAKS_HALAMAN_UTUH halaman
+  | "keluaran" //      jawaban tak bisa dilanjutkan atau tak lengkap setelah MAKS_PUTARAN, atau satu halaman terlalu padat
   | "anggaran" //      anggaran token harian habis
   | "kuota" //         429: laju atau kuota Google habis (sementara)
   | "server" //        5xx dari Google (sementara)
-  | "jaringan"; //     Google tak terjangkau atau melewati batas waktu (sementara)
+  | "jaringan" //     Google tak terjangkau atau melewati batas waktu (sementara)
+  | "tertunda"; //     tenggat giliran habis di tengah pembacaan; bagian yang selesai tersimpan, sisanya dilanjutkan (sementara)
 
-const SEMENTARA: ReadonlySet<JenisGalatGemini> = new Set(["kuota", "server", "jaringan"]);
+const SEMENTARA: ReadonlySet<JenisGalatGemini> = new Set(["kuota", "server", "jaringan", "tertunda"]);
 
 /**
  * Galat pemanggilan Gemini. Yang `sementara` layak dicoba lagi nanti (konsumer antrean mengulang pesan dengan jeda
@@ -95,7 +141,7 @@ export class GalatGemini extends Error {
   constructor(
     readonly jenis: JenisGalatGemini,
     pesan: string,
-    readonly rincian: { status?: number; jedaDetik?: number } = {},
+    readonly rincian: { status?: number; jedaDetik?: number; habisWaktu?: boolean } = {},
   ) {
     super(pesan);
     this.name = "GalatGemini";
@@ -106,6 +152,10 @@ export class GalatGemini extends Error {
   }
   get jedaDetik(): number | undefined {
     return this.rincian.jedaDetik;
+  }
+  /** Gagal karena panggilan melewati batas waktu (bukan jaringan putus): potongan yang lebih pendek mungkin selesai. */
+  get habisWaktu(): boolean {
+    return this.rincian.habisWaktu === true;
   }
 }
 
@@ -204,17 +254,29 @@ export const PERINTAH_AWAL = "Transkripsikan seluruh dokumen PDF ini sesuai atur
 export const perintahLanjut = (halaman: number) =>
   `Transkripsikan dokumen PDF ini sesuai aturan, tetapi mulai dari halaman ${halaman}: tulis penanda === HALAMAN ${halaman} === lebih dulu, lalu teruskan sampai halaman terakhir. Jangan mengulang halaman sebelum ${halaman}.`;
 
+/** Perintah untuk satu potongan: PDF-nya hanya memuat halaman `mulai`-`akhir` dari `total`, dan penandanya relatif (mulai dari 1). */
+export const perintahBagian = (mulai: number, akhir: number, total: number) =>
+  `PDF ini hanya memuat halaman ${mulai} sampai ${akhir} dari naskah sepanjang ${total} halaman. Transkripsikan semua halaman di PDF ini sesuai aturan, dan beri penanda === HALAMAN n === dengan n dihitung dari 1 menurut urutan halaman di PDF ini (halaman pertama PDF ini = 1). Potongan ini mungkin dimulai atau berakhir di tengah kalimat atau pasal: salin apa adanya, jangan dilengkapi atau diberi kata pembuka.`;
+
 /**
  * Pemblokiran bawaan Gemini sering salah menyangka naskah hukum (narkotika, pornografi, terorisme, pidana) sebagai konten
  * berbahaya. Yang disalin di sini dokumen resmi negara, jadi semua kategori dilonggarkan.
  */
 const KATEGORI_KEAMANAN = ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"];
 
-function badanTranskripsi(pdfBase64: string, perintah: string) {
+/** `generationConfig` dari GEMINI_BERPIKIR; kosong bila tak diatur, jadi tak ada parameter khusus versi yang terkirim tanpa diminta. */
+export function pengaturanGenerasi(k: Pick<KonfigGemini, "berpikir">) {
+  if (!k.berpikir) return {};
+  const berpikir = "anggaran" in k.berpikir ? { thinkingBudget: k.berpikir.anggaran } : { thinkingLevel: k.berpikir.tingkat };
+  return { generationConfig: { thinkingConfig: berpikir } };
+}
+
+function badanTranskripsi(k: KonfigGemini, pdfBase64: string, perintah: string) {
   return {
     systemInstruction: { parts: [{ text: PETUNJUK_TRANSKRIPSI }] },
     contents: [{ role: "user", parts: [{ inlineData: { mimeType: "application/pdf", data: pdfBase64 } }, { text: perintah }] }],
     safetySettings: KATEGORI_KEAMANAN.map((category) => ({ category, threshold: "BLOCK_NONE" })),
+    ...pengaturanGenerasi(k),
   };
 }
 
@@ -325,7 +387,11 @@ export async function panggilGemini(k: KonfigGemini, badan: unknown, opsi: OpsiP
         await tidur(JEDA_ULANG_MS[percobaan - 1] ?? 12_000);
         continue;
       }
-      throw new GalatGemini("jaringan", `Gemini tidak terjangkau: ${samarkan(String(e), k.kunci).slice(0, 200)}`, { jedaDetik: 60 });
+      throw new GalatGemini(
+        "jaringan",
+        habisWaktu ? `Gemini tidak menjawab dalam ${Math.round((opsi.batasWaktuMs ?? BATAS_WAKTU_BAWAAN_MS) / 1000)} detik` : `Gemini tidak terjangkau: ${samarkan(String(e), k.kunci).slice(0, 200)}`,
+        { jedaDetik: 60, habisWaktu },
+      );
     }
 
     if (res.ok) {
@@ -350,7 +416,7 @@ export async function panggilGemini(k: KonfigGemini, badan: unknown, opsi: OpsiP
 /** Uji sambungan: kunci, model, dan alamat. Murah (beberapa token) dan tak menyentuh dokumen mana pun. */
 export async function pingGemini(k: KonfigGemini, opsi: OpsiPanggilan = {}) {
   const mulai = Date.now();
-  const hasil = await panggilGemini(k, { contents: [{ role: "user", parts: [{ text: "Balas hanya dengan satu kata: siap" }] }] }, opsi);
+  const hasil = await panggilGemini(k, { contents: [{ role: "user", parts: [{ text: "Balas hanya dengan satu kata: siap" }] }], ...pengaturanGenerasi(k) }, opsi);
   return { balasan: hasil.teks.trim().slice(0, 80), selesai: hasil.selesai, versiModel: hasil.versiModel, token: hasil.token, durasiMs: Date.now() - mulai };
 }
 
@@ -395,6 +461,19 @@ export interface OpsiBaca extends OpsiPanggilan {
   pakai?: (token: PemakaianToken) => void;
   /** Berhenti (galat "anggaran") bila token pembacaan ini melampaui jumlah itu. */
   maksToken?: number;
+  /** Halaman per panggilan dan panggilan bersamaan; bawaannya dari konfigurasi (GEMINI_HALAMAN, GEMINI_PARALEL). */
+  halamanPerPanggilan?: number;
+  paralel?: number;
+  /**
+   * Saat (milidetik sejak epoch) sesudahnya tak ada panggilan baru. Pembacaan yang belum selesai dilepas sebagai galat sementara
+   * "tertunda"; bagian yang sudah dibaca tersimpan lewat `simpanBagian`, jadi percobaan berikutnya melanjutkannya.
+   */
+  tenggat?: number;
+  /** Bagian yang sudah dibaca (markdown ber-penanda "### Page n" menurut nomor PDF asli) untuk rentang itu, atau null. */
+  muatBagian?: (mulai: number, akhir: number) => Promise<string | null>;
+  simpanBagian?: (mulai: number, akhir: number, markdown: string) => Promise<void>;
+  /** Pengganti pembuka PDF (uji). */
+  bukaPdf?: (bytes: Uint8Array) => Promise<PemecahPdf | null>;
 }
 
 export interface HasilBacaPdf {
@@ -402,17 +481,18 @@ export interface HasilBacaPdf {
   markdown: string;
   /** Nomor halaman terakhir yang ditandai. */
   halaman: number;
-  /** Perkiraan jumlah halaman PDF (lihat perkirakanHalamanPdf); null bila tak terbaca. */
+  /** Jumlah halaman PDF: dari pdf-lib bila bisa dibuka, selain itu perkiraan (lihat perkirakanHalamanPdf); null bila tak terbaca. */
   halamanPdf: number | null;
+  /** Banyaknya panggilan Gemini yang berhasil (potongan, termasuk potongan yang dipecah ulang). */
   putaran: number;
   token: PemakaianToken;
   versiModel: string;
 }
 
 /**
- * Baca seluruh PDF dengan Gemini. Keluaran yang terpotong batas panjang jawaban (MAX_TOKENS) dilanjutkan: halaman terakhir
- * yang terpotong dibuang, lalu PDF dikirim lagi dengan perintah mulai dari halaman itu. Lebih dari MAKS_PUTARAN putaran,
- * atau berhenti karena alasan lain (SAFETY, RECITATION), dilaporkan sebagai galat; teks yang sebagian tak dipakai.
+ * Baca seluruh PDF dengan Gemini. PDF yang lebih panjang dari `halamanPerPanggilan` dipecah (pdf-lib) dan dibaca per potongan,
+ * `paralel` sekaligus (`bacaBerbagian`); yang pendek, atau yang tak bisa dipecah (terenkripsi, rusak), dibaca dalam satu panggilan
+ * (`bacaUtuh`). Hasilnya markdown ber-penanda halaman yang sama untuk kedua jalan.
  */
 export async function bacaPdfDenganGemini(k: KonfigGemini, bytes: Uint8Array, opsi: OpsiBaca = {}): Promise<HasilBacaPdf> {
   if (bytes.byteLength > MAKS_BYTE_PDF) {
@@ -421,7 +501,23 @@ export async function bacaPdfDenganGemini(k: KonfigGemini, bytes: Uint8Array, op
       `PDF ${(bytes.byteLength / 1048576).toFixed(1)} MB melebihi batas ${MAKS_BYTE_PDF / 1048576} MB untuk dikirim sebaris (Files API belum didukung)`,
     );
   }
-  const halamanPdf = perkirakanHalamanPdf(bytes);
+  const pemecah = await (opsi.bukaPdf ?? bukaPdf)(bytes).catch(() => null);
+  const ukuran = Math.max(1, opsi.halamanPerPanggilan ?? k.halamanPerPanggilan);
+  if (pemecah && pemecah.halaman > ukuran) return bacaBerbagian(k, bytes, pemecah, opsi);
+
+  const halamanPdf = pemecah?.halaman ?? perkirakanHalamanPdf(bytes);
+  if (!pemecah && halamanPdf !== null && halamanPdf > MAKS_HALAMAN_UTUH) {
+    throw new GalatGemini("terlalu_panjang", `PDF ${halamanPdf} halaman dan tak bisa dipecah (terenkripsi atau rusak): satu panggilan untuk semuanya tak akan selesai tepat waktu`);
+  }
+  return bacaUtuh(k, bytes, opsi, halamanPdf);
+}
+
+/**
+ * Satu PDF, satu panggilan. Keluaran yang terpotong batas panjang jawaban (MAX_TOKENS) dilanjutkan: halaman terakhir yang terpotong
+ * dibuang, lalu PDF dikirim lagi dengan perintah mulai dari halaman itu. Lebih dari MAKS_PUTARAN putaran, atau berhenti karena
+ * alasan lain (SAFETY, RECITATION), dilaporkan sebagai galat; teks yang sebagian tak dipakai.
+ */
+async function bacaUtuh(k: KonfigGemini, bytes: Uint8Array, opsi: OpsiBaca, halamanPdf: number | null): Promise<HasilBacaPdf> {
   const data = keBase64(bytes);
   let token = tokenKosong();
   let versiModel = k.model;
@@ -429,7 +525,7 @@ export async function bacaPdfDenganGemini(k: KonfigGemini, bytes: Uint8Array, op
   let mulaiDari = 1;
 
   for (let putaran = 1; putaran <= MAKS_PUTARAN; putaran++) {
-    const jawaban = await panggilGemini(k, badanTranskripsi(data, putaran === 1 ? PERINTAH_AWAL : perintahLanjut(mulaiDari)), opsi);
+    const jawaban = await panggilGemini(k, badanTranskripsi(k, data, putaran === 1 ? PERINTAH_AWAL : perintahLanjut(mulaiDari)), opsi);
     token = tambahToken(token, jawaban.token);
     versiModel = jawaban.versiModel;
     opsi.pakai?.(jawaban.token);
@@ -457,6 +553,116 @@ export async function bacaPdfDenganGemini(k: KonfigGemini, bytes: Uint8Array, op
     mulaiDari = akhir;
   }
   throw new GalatGemini("keluaran", `PDF terlalu panjang: belum selesai terbaca setelah ${MAKS_PUTARAN} putaran (sampai halaman ${mulaiDari})`);
+}
+
+/**
+ * Penanda halaman relatif sebuah potongan (1..jumlah, menurut urutan kemunculan) menjadi nomor halaman PDF asli (`mulai`...). Yang
+ * dihitung urutannya, bukan angka yang dicetak model: model kadang memakai nomor asli alih-alih relatif. null bila banyaknya penanda
+ * tak sama dengan `jumlah` (halaman terlewat atau tertambah). Potongan satu halaman tak pernah gagal: penandanya dipasang sendiri.
+ */
+export function nomoriBagian(markdown: string, mulai: number, jumlah: number): string | null {
+  if (jumlah === 1) return `### Page ${mulai}\n${markdown.replace(RE_PENANDA_MD, "").trim()}`;
+  if (nomorPenanda(markdown).length !== jumlah) return null;
+  let urutan = 0;
+  return markdown.replace(RE_PENANDA_MD, () => `### Page ${mulai + urutan++}`);
+}
+
+/** Jalankan `jumlah` tugas dengan paling banyak `paralel` sekaligus; berhenti mengambil tugas baru sesudah galat pertama. Galat tetap didahulukan atas yang sementara. */
+async function jalankanBerbatas<T>(jumlah: number, paralel: number, kerja: (i: number) => Promise<T>): Promise<T[]> {
+  const hasil = new Array<T>(jumlah);
+  const galat: unknown[] = [];
+  let berikut = 0;
+  const pekerja = Array.from({ length: Math.min(paralel, jumlah) }, async () => {
+    while (!galat.length) {
+      const i = berikut++;
+      if (i >= jumlah) return;
+      try {
+        hasil[i] = await kerja(i);
+      } catch (e) {
+        galat.push(e);
+      }
+    }
+  });
+  await Promise.all(pekerja);
+  if (galat.length) throw galat.find((e) => !(e instanceof GalatGemini) || !e.sementara) ?? galat[0];
+  return hasil;
+}
+
+/**
+ * PDF panjang dibaca per potongan `halamanPerPanggilan` halaman, `paralel` sekaligus. Satu potongan yang lewat batas waktu, terpotong
+ * batas panjang jawaban, atau penandanya tak cocok dipecah dua dan dibaca lagi, sampai satu halaman. Potongan yang sudah dibaca
+ * disimpan lewat `simpanBagian` dan dimuat kembali lewat `muatBagian`, supaya pembacaan yang terputus (kuota, tenggat giliran)
+ * dilanjutkan tanpa membayar ulang. Sesudah `tenggat` tak ada panggilan baru: galat sementara "tertunda".
+ */
+async function bacaBerbagian(k: KonfigGemini, bytes: Uint8Array, pemecah: PemecahPdf, opsi: OpsiBaca): Promise<HasilBacaPdf> {
+  const total = pemecah.halaman;
+  const ukuran = Math.max(1, opsi.halamanPerPanggilan ?? k.halamanPerPanggilan);
+  const paralel = Math.max(1, opsi.paralel ?? k.paralel);
+  const rentang: Array<[number, number]> = [];
+  for (let m = 1; m <= total; m += ukuran) rentang.push([m, Math.min(m + ukuran - 1, total)]);
+
+  let token = tokenKosong();
+  let versiModel = k.model;
+  let panggilan = 0;
+  let selesai = 0;
+
+  const baca = async (mulai: number, akhir: number): Promise<string> => {
+    const tersimpan = await opsi.muatBagian?.(mulai, akhir).catch(() => null);
+    if (tersimpan) return tersimpan;
+
+    const jumlah = akhir - mulai + 1;
+    const pecah = async () => {
+      const tengah = mulai + Math.floor((jumlah - 1) / 2);
+      const kiri = await baca(mulai, tengah);
+      const kanan = await baca(tengah + 1, akhir);
+      const gabung = `${kiri}\n\n\n\n${kanan}`;
+      await opsi.simpanBagian?.(mulai, akhir, gabung).catch(() => {});
+      return gabung;
+    };
+
+    if (opsi.tenggat !== undefined && Date.now() > opsi.tenggat) {
+      throw new GalatGemini("tertunda", `Tenggat giliran habis di tengah pembacaan (${selesai} dari ${rentang.length} potongan awal selesai); dilanjutkan oleh percobaan berikutnya`, { jedaDetik: 30 });
+    }
+    if (opsi.maksToken !== undefined && token.total >= opsi.maksToken) {
+      throw new GalatGemini("anggaran", `Pembacaan melampaui sisa anggaran token harian (${token.total} token terpakai)`);
+    }
+
+    let jawaban: HasilPanggilan;
+    try {
+      const potongan = jumlah === total ? bytes : await pemecah.ambil(mulai, akhir);
+      jawaban = await panggilGemini(k, badanTranskripsi(k, keBase64(potongan), perintahBagian(mulai, akhir, total)), {
+        ...opsi,
+        batasWaktuMs: opsi.batasWaktuMs ?? BATAS_WAKTU_BAGIAN_MS,
+      });
+    } catch (e) {
+      if (jumlah > 1 && e instanceof GalatGemini && e.habisWaktu) return pecah();
+      throw e;
+    }
+    token = tambahToken(token, jawaban.token);
+    versiModel = jawaban.versiModel;
+    panggilan++;
+    opsi.pakai?.(jawaban.token);
+    // Tak ada galat anggaran di sini: yang sudah dibaca tak dibuang karena tokennya melampaui sisa. Anggaran dijaga sebelum
+    // tiap panggilan baru (di atas), jadi kelebihannya paling banyak sebesar panggilan yang sudah berjalan bersamaan.
+
+    if (jawaban.selesai === "MAX_TOKENS") {
+      if (jumlah > 1) return pecah();
+      throw new GalatGemini("keluaran", `Halaman ${mulai} terlalu padat: jawaban terpotong batas panjang`);
+    }
+    if (jawaban.selesai !== "STOP") {
+      throw new GalatGemini("diblokir", `Gemini berhenti membaca halaman ${mulai}-${akhir} dengan alasan ${jawaban.selesai}`);
+    }
+    const hasil = nomoriBagian(keMarkdownHalaman(jawaban.teks), mulai, jumlah);
+    if (hasil === null) return pecah();
+    await opsi.simpanBagian?.(mulai, akhir, hasil).catch(() => {});
+    selesai++;
+    return hasil;
+  };
+
+  const bagian = await jalankanBerbatas(rentang.length, paralel, (i) => baca(rentang[i][0], rentang[i][1]));
+  const markdown = bagian.join("\n\n\n\n").trim();
+  const nomor = nomorPenanda(markdown);
+  return { markdown, halaman: nomor.length ? Math.max(...nomor) : 0, halamanPdf: total, putaran: panggilan, token, versiModel };
 }
 
 // ---------------------------------------------------------------------------
