@@ -325,22 +325,30 @@ itu salah satu alasan tidak dipilih.
 
 Prasyarat: secret `GEMINI_API` ada di Worker (Cloudflare > Workers > lexa > Settings > Variables and Secrets, **tipe Secret**;
 `keep_vars` sudah aktif, tetapi variabel teks terlihat di dashboard). Migrasi 0008 (tabel `pembacaan_ai`) sudah diterapkan di
-produksi. Variabel opsional: `GEMINI_MODEL`, `GEMINI_BATAS_HARIAN`, `GEMINI_BASE_URL` (untuk AI Gateway Cloudflare).
+produksi. Variabel opsional: `GEMINI_MODEL`, `GEMINI_BATAS_HARIAN`, `GEMINI_BASE_URL` (untuk AI Gateway Cloudflare), `GEMINI_BERPIKIR`
+(angka atau kata; mengecilkan token berpikir), `GEMINI_HALAMAN` (halaman per panggilan, bawaan 4), dan `GEMINI_PARALEL` (bawaan 3).
 
 Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bpk-console-harvest.js`:
 
-0. **Uraikan ulang yang usang lebih dulu** (`window.LEXA_PANEN = { usang: true }`, sekali). Seluruh 2.630 baris masih berversi
-   pengurai 0, dan versi 4 menghitung pasal yang hilang, jadi vonis semua peraturan dihitung ulang dari arsip teksnya tanpa biaya
-   Gemini: sebagian `tanpa_pasal` (ketikan 1946-1969 bergaya "Pasal 1.") pulih, dan `bersih` yang kehilangan pasal menjadi `berat`.
-   Jangan membayar Gemini untuk yang bisa diperbaiki secara deterministik; yang `tanpa_pasal`, `berat`, atau `gagal` sesudahnya
-   barulah calonnya. (Jumlahnya baru diketahui sesudah langkah ini; `calon_belum_dicoba` di `/api/impor/ringkasan` menyebutnya.)
-1. **Cek sambungan.** `window.LEXA_PANEN = { geminiCek: true }`. Hasil yang baik mencetak model, versi model, dan anggaran. Galat
-   menyebut penyebabnya (kunci salah, model tak ada, kuota).
+0. **Uraikan ulang yang usang lebih dulu** (`window.LEXA_PANEN = { usang: true }`, sekali). Pengurai versi 4 menghitung pasal yang
+   hilang dan pembukaan yang tertelan, jadi semua baris yang berversi lebih lama (seluruhnya, setelah deploy ini) diurai ulang dari
+   arsip teksnya tanpa biaya Gemini dan vonisnya dihitung ulang: `bersih` yang kehilangan pasal menjadi `berat`. Jangan membayar
+   Gemini untuk yang bisa diperbaiki secara deterministik; yang `tanpa_pasal`, `berat`, atau `gagal` sesudahnya barulah calonnya
+   (perkiraan ±420; `calon_belum_dicoba` di `/api/impor/ringkasan` menyebut yang pasti).
+1. **Cek sambungan.** `window.LEXA_PANEN = { geminiCek: true }`. Hasil yang baik mencetak model, versi model, anggaran, dan pengaturan
+   yang berlaku (`berpikir`, `halaman_per_panggilan`, `paralel`). Galat menyebut penyebabnya (kunci salah, model tak ada, kuota).
+   **Mengecilkan token berpikir:** setel `GEMINI_BERPIKIR` di dashboard (mis. `0` pada seri 2.5, atau `LOW` pada seri 3), lalu
+   `geminiCek` lagi. Permintaan `geminiCek` membawa pengaturan yang sama dengan pembacaan, jadi nilai yang tak diterima model muncul
+   sebagai galat 400 berisi pesan Google (mis. "Thinking level MINIMAL is not supported"), dan token berpikir turun di `token.pikir` pada
+   uji kering berikutnya.
 2. **Uji kering pada beberapa peraturan** (tak menulis pasal): `window.LEXA_PANEN = { geminiUji: ["/akn/id/act/uu/2019/24",
    "/akn/id/act/uu/2014/33", "/akn/id/act/pp/1961/3", "/akn/id/act/pp/2026/13"] }`. Keempatnya mewakili tiga kelompok
    (dua pindaian modern, satu ketikan lama, satu `berat`) dan semuanya ada di D1 produksi per 14 Oktober 2026.
-   Tiap peraturan melaporkan keputusan, pasal terbaca dibanding tersimpan, mutu, halaman terbaca dari halaman PDF, token, dan
-   kesesuaian dengan teks lama. Baca juga teksnya di R2 (`teks-ai/...`) dan bandingkan beberapa pasal dengan PDF-nya.
+   Tiap peraturan melaporkan keputusan, pasal terbaca dibanding tersimpan, mutu, halaman terbaca dari halaman PDF, jumlah panggilan,
+   token, dan kesesuaian dengan teks lama. PDF yang lebih dari 4 halaman dibaca per potongan secara paralel (peraturan 50 halaman
+   kira-kira 3 sampai 8 menit, tergantung kuota Google). Baca teksnya di R2 (`teks-ai/...`) dan bandingkan beberapa pasal dengan PDF-nya;
+   cuplikannya (awal dan tengah) juga tersimpan di D1: `SELECT frbr_uri, vonis_baru, pasal_baru, catatan FROM pembacaan_ai WHERE hasil =
+   'uji'`.
 3. **Putuskan.** Layak dilanjutkan bila keputusan `dipakai`, `masalah` kosong, halaman lengkap, dan sampel pasal cocok dengan PDF.
    `kesesuaian_dengan_teks_lama` yang tinggi menandakan dua bacaan saling sepakat; yang rendah pada dokumen berlapisan teks rusak
    wajar, tetapi minta pemeriksaan manual.
