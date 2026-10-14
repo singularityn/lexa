@@ -471,6 +471,21 @@ export const RE_PENJELASAN =
 export const RE_PASAL_DEMI_PASAL = /^#{0,6}\s*\**\s*PASAL\s+DEMI\s+PASAL\s*\**\s*$/i;
 
 /**
+ * Rumus penutup baku setiap undang-undang, Perppu, dan peraturan pemerintah, yang mengakhiri batang tubuh:
+ *
+ *     Agar setiap orang mengetahuinya, memerintahkan pengundangan Undang-Undang ini dengan penempatannya
+ *     dalam Lembaran Negara Republik Indonesia.        (1950-an: "Agar supaya setiap orang dapat mengetahuinya, ...")
+ *
+ * disusul pengesahan ("Disahkan di Jakarta ... ttd"), pengundangan, dan kadang lampiran (naskah perjanjian yang disahkan,
+ * tabel). Semuanya bukan bagian pasal terakhir, tetapi tadinya ikut tersimpan di dalamnya: hampir setiap peraturan
+ * memuat tanda tangan di pasal terakhirnya. Rumus ini dikenali hanya bila memuat "mengetahui" DAN, dalam tiga baris
+ * berikutnya, "memerintahkan pengundangan", jadi kalimat pasal yang kebetulan berawal "Agar setiap orang ..." tidak
+ * memotong apa pun.
+ */
+const RE_PENUTUP = /^#{0,6}\s*\**\s*Agar\s+(?:supaya\s+)?setiap\s+orang\s+(?:dapat\s+)?mengetahui/i;
+const RE_PENGUNDANGAN = /memerintahkan\s+pengundangan/i;
+
+/**
  * Pisahkan judul pasal yang menempel di AKHIR baris sebelumnya.
  *
  * `toMarkdown` menyambung teks lintas baris PDF dengan tiga pola berbeda.
@@ -492,6 +507,8 @@ export function pisahkanJudulMenempel(naskah: string): string {
     .replace(/([.;:)"])(Pasal\s+(?:\d|[IVXLC]))/g, "$1\n$2")
     // Menempel pada artefak nomor halaman, mis. "- 17 -Pasal 20".
     .replace(/(-\s*\d+\s*-)\s*(Pasal\s+(?:\d|[IVXLC]))/g, "$1\n$2")
+    // Rumus penutup menempel pada kalimat terakhir pasal: "... pada tanggal diundangkan.Agar setiap orang mengetahuinya, ...".
+    .replace(/([.;:)"])(Agar\s+(?:supaya\s+)?setiap\s+orang\s+(?:dapat\s+)?mengetahui)/g, "$1\n$2")
     // Judul PENJELASAN menempel pada kepala halaman ("PRESIDEN⏎REPUBLIK INDONESIAPENJELASAN"): 701 peraturan BPK di produksi
     // menyimpan seluruh Penjelasan di pasal terakhirnya karena judul ini lolos dari batas penguraian. Kepalanya dibuang
     // (lib/halaman.ts melakukannya di awal halaman; ini untuk naskah tanpa penanda halaman), judulnya diberi baris sendiri.
@@ -548,10 +565,19 @@ export function uraikanPasal(naskah: string): PasalTerurai[] {
     nomorPasal = null;
   }
 
-  for (const b of baris) {
+  /** Rumus penutup sudah lewat: sisanya (pengesahan, pengundangan, lampiran) bukan isi pasal sampai Penjelasan. */
+  let dalamPenutup = false;
+
+  for (let i = 0; i < baris.length; i++) {
+    const b = baris[i];
     if (RE_PENJELASAN.test(b) || RE_PASAL_DEMI_PASAL.test(b)) {
       tutupPasal();
       break;
+    }
+    if (dalamPenutup) continue;
+    if (RE_PENUTUP.test(b) && RE_PENGUNDANGAN.test(baris.slice(i, i + 3).join(" "))) {
+      dalamPenutup = true; // pasal yang berjalan ditutup di penanda Penjelasan atau akhir naskah, seperti biasa
+      continue;
     }
 
     // Baris tak kosong sebelum baris ini; dipakai menilai judul bertitik ("Pasal 1.") di bawah.

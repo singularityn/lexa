@@ -218,9 +218,10 @@ describe("uraikanPasal: artefak halaman PDF tidak masuk ke isi pasal", () => {
   it("judul PENJELASAN yang menempel pada kepala halaman tanpa nomor tetap menjadi batas (UU 7/1998 dan 700 peraturan lain)", () => {
     // Produksi 14 Okt 2026: "PRESIDEN⏎REPUBLIK INDONESIAPENJELASAN" lolos dari batas penguraian, dan seluruh Penjelasan
     // (hingga 24.000 karakter) tersimpan di pasal terakhir.
+    // Tanpa rumus penutup yang utuh (naskah lama atau pindaian), pengesahan tetap di pasal terakhir; yang tak boleh ikut hanya Penjelasan.
     const naskah = [
       "Pasal 2\nIsi dua.",
-      "Pasal 3\nUndang-undang ini mulai berlaku pada tanggal diundangkan.\nAgar setiap orang mengetahuinya, memerintahkan pengundangan Undang-undang ini.",
+      "Pasal 3\nUndang-undang ini mulai berlaku pada tanggal diundangkan.",
       `Disahkan di Jakarta.\nPRESIDEN REPUBLIK INDONESIA,\nLEMBARAN NEGARA REPUBLIK INDONESIA TAHUN 1998 NOMOR 175${P(9)}PRESIDEN\nREPUBLIK INDONESIAPENJELASAN\nATAS\nUNDANG-UNDANG REPUBLIK INDONESIA\nNOMOR 7 TAHUN 1998\nTENTANG\nPERUBAHAN\nUMUM\nUraian umum.\nPASAL DEMI PASAL\nPasal 1\nCukup jelas.`,
     ].join("\n");
     const pasal = uraikanPasal(naskah);
@@ -260,6 +261,58 @@ describe("uraikanPasal: artefak halaman PDF tidak masuk ke isi pasal", () => {
     const kotor = `Pasal 1\n(1) Satu.\nPemantau . . .${P(2)}PRESIDEN\nREPUBLIK INDONESIA- 2 -(2) Pemantau dua.\nPasal 2\nDua.`;
     const sekali = uraikanPasal(kotor);
     expect(sekali.map((p) => p.isi)).toEqual(["Satu.", "Pemantau dua.", "Dua."]);
+  });
+});
+
+describe("uraikanPasal: rumus penutup bukan bagian pasal terakhir", () => {
+  const P = (n: number) => `\n\n\n\n### Page ${n}\n`;
+  const PENGESAHAN = [
+    "Disahkan di Jakarta", "pada tanggal 25 Maret 2003", "PRESIDEN REPUBLIK INDONESIA,", "ttd.", "MEGAWATI SOEKARNOPUTRI",
+    "Diundangkan di Jakarta", "pada tanggal 25 Maret 2003", "SEKRETARIS NEGARA REPUBLIK INDONESIA,", "ttd.", "BAMBANG KESOWO",
+    "LEMBARAN NEGARA REPUBLIK INDONESIA TAHUN 2003 NOMOR 39",
+  ].join("\n");
+
+  it("pasal terakhir berhenti sebelum 'Agar setiap orang mengetahuinya'; pengesahan dan pengundangan tidak ikut", () => {
+    const naskah = `Pasal 192\nSemua peraturan dinyatakan masih tetap berlaku.\nPasal 193\nUndang-undang ini mulai berlaku pada tanggal diundangkan.\nAgar setiap orang mengetahuinya, memerintahkan pengundangan Undang-undang ini\ndengan penempatannya dalam Lembaran Negara Republik Indonesia.\n${PENGESAHAN}`;
+    const pasal = uraikanPasal(naskah);
+    expect(pasal.map((p) => [p.nomor_pasal, p.isi])).toEqual([
+      ["192", "Semua peraturan dinyatakan masih tetap berlaku."], ["193", "Undang-undang ini mulai berlaku pada tanggal diundangkan."],
+    ]);
+  });
+
+  it("penulisan lama ('Agar supaya setiap orang dapat mengetahuinya'), menempel pada kalimat, dan terpisah halaman", () => {
+    const lama = uraikanPasal("Pasal II\nUndang-undang ini mulai berlaku pada hari diundangkan.\nAgar supaya setiap orang dapat mengetahuinya, memerintahkan pengundangan undang-undang ini dengan penempatan dalam Lembaran-Negara Republik Indonesia.\nDisahkan di Jakarta.");
+    expect(lama.map((p) => p.isi)).toEqual(["Undang-undang ini mulai berlaku pada hari diundangkan."]);
+
+    const menempel = uraikanPasal("Pasal 2\nPeraturan ini mulai berlaku pada tanggal diundangkan.Agar setiap orang mengetahuinya, memerintahkan pengundangan Peraturan Pemerintah ini dengan penempatannya dalam Lembaran Negara Republik Indonesia.\nDitetapkan di Jakarta");
+    expect(menempel.map((p) => p.isi)).toEqual(["Peraturan ini mulai berlaku pada tanggal diundangkan."]);
+
+    const halaman = uraikanPasal(`Pasal 2\nPeraturan ini mulai berlaku.${P(5)}PRESIDEN\nREPUBLIK INDONESIA- 5 -Agar setiap orang mengetahuinya, memerintahkan\npengundangan Peraturan Pemerintah ini dengan penempatannya dalam Lembaran Negara Republik Indonesia.`);
+    expect(halaman.map((p) => p.isi)).toEqual(["Peraturan ini mulai berlaku."]);
+  });
+
+  it("lampiran sesudah penutup (naskah perjanjian, tabel) tidak menjadi isi pasal dan 'Pasal N'-nya tidak dikira pasal", () => {
+    const naskah = `Pasal 1\nMengesahkan perjanjian.\nPasal 2\nUndang-undang ini mulai berlaku.\nAgar setiap orang mengetahuinya, memerintahkan pengundangan Undang-undang ini dengan penempatannya dalam Lembaran Negara Republik Indonesia.\n${PENGESAHAN}\nLAMPIRAN\nARTICLE 1\nPasal 3 Konvensi ini berlaku bagi semua pihak.\nPasal 4\nTabel tarif.\nPENJELASAN\nATAS\nUNDANG-UNDANG\nPasal 1\nCukup jelas.`;
+    const pasal = uraikanPasal(naskah);
+    expect(pasal.map((p) => [p.nomor_pasal, p.isi])).toEqual([["1", "Mengesahkan perjanjian."], ["2", "Undang-undang ini mulai berlaku."]]);
+  });
+
+  it("kalimat pasal yang kebetulan berawal 'Agar setiap orang ...' tidak memotong pasal", () => {
+    const naskah = [
+      "Pasal 5", "Agar setiap orang dapat memperoleh pelayanan, Pemerintah wajib menyediakan loket.",
+      "Pasal 6", "Agar setiap orang mengetahui hak-haknya, Pemerintah wajib melakukan sosialisasi.",
+      "Pasal 7", "Agar setiap orang mengetahuinya, Menteri dapat memerintahkan pengumuman di media.", "Ketentuan lebih lanjut diatur dengan Peraturan Menteri.",
+    ].join("\n");
+    expect(uraikanPasal(naskah).map((p) => [p.nomor_pasal, p.isi])).toEqual([
+      ["5", "Agar setiap orang dapat memperoleh pelayanan, Pemerintah wajib menyediakan loket."],
+      ["6", "Agar setiap orang mengetahui hak-haknya, Pemerintah wajib melakukan sosialisasi."],
+      ["7", "Agar setiap orang mengetahuinya, Menteri dapat memerintahkan pengumuman di media.\nKetentuan lebih lanjut diatur dengan Peraturan Menteri."],
+    ]);
+  });
+
+  it("rumus tanpa kata 'pengundangan' dalam tiga baris tidak dikenali sebagai penutup", () => {
+    const naskah = "Pasal 1\nSatu.\nAgar setiap orang mengetahuinya, Pemerintah wajib mengumumkan.\nBaris kedua.\nBaris ketiga.\nBaris keempat memerintahkan pengundangan.";
+    expect(uraikanPasal(naskah).map((p) => p.isi)).toEqual(["Satu.\nAgar setiap orang mengetahuinya, Pemerintah wajib mengumumkan.\nBaris kedua.\nBaris ketiga.\nBaris keempat memerintahkan pengundangan."]);
   });
 });
 
