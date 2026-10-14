@@ -163,8 +163,15 @@ karakter / 3,5` ditambah token berpikir. Untuk 487 peraturan dengan anggapan rat
 | $1,50 / $9,00 (kelas Flash generasi terbaru) | ±$38 |
 
 Angka ini selisihnya besar karena dua hal yang belum diketahui: jumlah halaman rata-rata, dan token berpikir. Yang pasti adalah
-batasnya: anggaran harian menahan pemakaian di `GEMINI_BATAS_HARIAN` token per hari, apa pun yang terjadi. Menulis ulang seluruh
-korpus (opsi A) akan puluhan kali lebih mahal, itu salah satu alasan tidak dipilih.
+batasnya: anggaran harian menahan pemakaian di `GEMINI_BATAS_HARIAN` token per hari, apa pun yang terjadi.
+
+**Langit-langit per hari.** Anggaran bawaan 5.000.000 token per hari UTC menghitung token masuk, keluar, dan berpikir sekaligus.
+Sisa anggaran diperiksa sebelum tiap pembacaan dan sesudah tiap putarannya. Dengan perbandingan masuk:keluar seperti perkiraan di atas
+(±73% : 27%), satu hari yang menghabiskan seluruh anggaran bernilai ±$3 (kelas Flash-Lite), ±$6 (Flash), atau ±$18 (Flash
+generasi terbaru). Itu hitungan turunan dari tiga tingkat harga di atas, bukan angka tagihan. Pengamannya lunak: pembacaan yang
+melampaui sisa anggaran dihentikan pada putaran itu juga (token putaran itu tetap dibayar), dan KV tak atomik, jadi kelebihan
+sebesar satu pembacaan mungkin terjadi. Untuk batas yang lebih ketat, turunkan `GEMINI_BATAS_HARIAN` di dashboard tanpa deploy.
+Menulis ulang seluruh korpus (opsi A) akan puluhan kali lebih mahal, itu salah satu alasan tidak dipilih.
 
 ## Risiko dan penjagaannya
 
