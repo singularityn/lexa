@@ -350,8 +350,9 @@ export function periksaKecocokanNaskah(
  *
  * 1: pembersih halaman, batas Penjelasan yang menempel, dan Penjelasan per pasal (14 Okt 2026).
  * 2: catchword yang tak terpisah penanda halaman ("Agar…Agar setiap orang") dibuang, sehingga penutup tetap dikenali.
+ * 3: catchword yang diulang di baris berikutnya ("Ayat (4)…⏎Ayat (4)"; 827 baris pasal pada 184 peraturan produksi) ikut dibuang.
  */
-export const VERSI_PARSER = 2;
+export const VERSI_PARSER = 3;
 
 export interface PasalTerurai {
   nomor_pasal: string;

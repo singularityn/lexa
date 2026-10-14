@@ -41,8 +41,11 @@ di SQL dari `jenis` dan `tahun`; kolom `laws.isi_giliran` (urutan antrean sumber
   (`SK No 004269 A`, `www.peraturan.go.id`), catchword (kata pertama halaman berikutnya diulang di ujung halaman ini),
   baris berulang di tepi halaman, dan bingkai tabel markdown. Hanya tepi halaman yang disentuh, kecuali satu hal: konversi
   kadang tak menaruh penanda halaman di antara catchword dan pengulangannya ("... 1 Januari 1996.Agar…Agar setiap orang
-  mengetahuinya"); catchword semacam itu dibuang di mana pun ia berada, tetapi hanya bila titik-titiknya langsung disusul kata-kata
-  yang sama persis (paling banyak lima kata). Hasilnya idempoten.
+  mengetahuinya", "Ayat (4)…⏎Ayat (4)⏎Cukup jelas"; 827 baris pasal pada 184 peraturan produksi). Catchword semacam itu dibuang
+  di mana pun ia berada, tetapi hanya bila titik-titiknya langsung disusul (spasi atau baris baru di antaranya) kata-kata yang
+  sama dengan yang mendahuluinya: paling banyak enam kata, spasi dan huruf besar-kecil tak diperhatikan, penanda butir ("(2)",
+  "c.") boleh ada di satu sisi saja, dan pengulangan harus berhenti di batas kata ("Pasal 1…⏎Pasal 12" tak tersentuh). Hasilnya
+  idempoten.
 - **`uraikanPasal`** (`lib/bpk.ts`) memecah batang tubuh menjadi pasal dan ayat. Ia berhenti di judul PENJELASAN (juga yang
   menempel pada kepala halaman) dan di **rumus penutup** ("Agar setiap orang mengetahuinya, memerintahkan pengundangan ...");
   pengesahan, tanda tangan, dan lampiran sesudahnya bukan isi pasal.
@@ -311,7 +314,8 @@ migrasi 0007 bernilai 0), dan mode `usang` menawarkan yang versinya lebih rendah
 
 Urutannya (satu kali per versi):
 
-1. Terapkan migrasi 0007 (`npm run d1:migrate:remote`) dan deploy rilis yang memuat pengurai baru.
+1. Terapkan migrasi 0007 (`npm run d1:migrate:remote`; pada produksi Lexa ini sudah diterapkan 14 Okt 2026) dan deploy rilis
+   yang memuat pengurai baru.
 2. Jalankan uraian ulang, salah satunya:
    - di konsol peramban (tab situs BPK atau Lexa): `window.LEXA_PANEN = { usang: true }`, tempel
      `scripts/bpk-console-harvest.js`, isi alamat Lexa dan token; atau

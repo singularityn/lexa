@@ -299,6 +299,11 @@ describe("uraikanPasal: rumus penutup bukan bagian pasal terakhir", () => {
     ]);
   });
 
+  it("catchword 'Agar …' yang berdiri di barisnya sendiri sebelum rumus penutup tak tertinggal di pasal terakhir (PP 7/1977)", () => {
+    const naskah = `Pasal 26\nPeraturan Pemerintah ini mulai berlaku pada tanggal 1 April 1977.\nAgar …\nAgar supaya setiap orang mengetahuinya, memerintahkan\npengundangan Peraturan Pemerintah ini dengan penempatannya dalam Lembaran Negara Republik Indonesia.\n${PENGESAHAN}`;
+    expect(uraikanPasal(naskah).map((p) => [p.nomor_pasal, p.isi])).toEqual([["26", "Peraturan Pemerintah ini mulai berlaku pada tanggal 1 April 1977."]]);
+  });
+
   it("lampiran sesudah penutup (naskah perjanjian, tabel) tidak menjadi isi pasal dan 'Pasal N'-nya tidak dikira pasal", () => {
     const naskah = `Pasal 1\nMengesahkan perjanjian.\nPasal 2\nUndang-undang ini mulai berlaku.\nAgar setiap orang mengetahuinya, memerintahkan pengundangan Undang-undang ini dengan penempatannya dalam Lembaran Negara Republik Indonesia.\n${PENGESAHAN}\nLAMPIRAN\nARTICLE 1\nPasal 3 Konvensi ini berlaku bagi semua pihak.\nPasal 4\nTabel tarif.\nPENJELASAN\nATAS\nUNDANG-UNDANG\nPasal 1\nCukup jelas.`;
     const pasal = uraikanPasal(naskah);

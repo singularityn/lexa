@@ -46,7 +46,7 @@ kaki cetak menjadi teks biasa. Diukur pada `articles` produksi:
   diulang di ujung halaman ini: `Pemantau . . .`, `Huruf d`, `Ayat(2)...`).
 
 Laporan menyarankan penyaring baris berulang berbasis frekuensi. Itu saja tidak cukup: sebagian besar artefak **menempel**
-pada teks dan tidak berdiri di barisnya sendiri. Pembersih (`lib/halaman.ts`, 45 tes yang memakai cuplikan naskah
+pada teks dan tidak berdiri di barisnya sendiri. Pembersih (`lib/halaman.ts`, 49 tes yang memakai cuplikan naskah
 produksi) bekerja per halaman dan hanya menyentuh tepi halaman atau bentuk yang khas:
 
 - penanda halaman dibuang;
@@ -55,8 +55,9 @@ produksi) bekerja per halaman dan hanya menyentuh tepi halaman atau bentuk yang 
 - kepala tanpa nomor yang menempel pada judul (`PRESIDEN⏎REPUBLIK INDONESIAPENJELASAN`) dibuang;
 - kaki tetap dibuang, juga yang menempel pada kata terakhir halaman;
 - catchword dibuang hanya bila halaman berikutnya memang diawali kata yang sama (titik-titiknya boleh hilang dibaca OCR,
-  spasinya boleh berbeda); bila penanda halaman tak terletak di antaranya ("1996.Agar…Agar setiap orang", UU 8/1995), titik-titik
-  yang langsung disusul pengulangan persis (paling banyak lima kata) dibuang di mana pun letaknya;
+  spasinya boleh berbeda); bila penanda halaman tak terletak di antaranya ("1996.Agar…Agar setiap orang" pada UU 8/1995,
+  "Ayat (4)…⏎Ayat (4)" pada 827 baris di 184 peraturan), titik-titik yang langsung disusul pengulangan persis (paling banyak enam
+  kata, berhenti di batas kata) dibuang di mana pun letaknya;
 - baris yang sama di tepi sedikitnya 30% halaman dibuang (`DISTRIBUSI II`);
 - bingkai tabel markdown (`| Pasal 1 |`) dibuka supaya judul dan catchword di dalam sel tetap terbaca.
 
@@ -129,7 +130,7 @@ mendahulukan jaringan, jadi pra-muat paralel membantu kunjungan berikutnya juga,
 
 | # | Fitur | Keadaan | Catatan |
 |---|---|---|---|
-| 4.4 | Penjelasan di bawah pasal | **Dikerjakan** | lipatan tertutup per pasal; "Penjelasan: cukup jelas" bila hanya itu; Penjelasan Umum di awal; ikut dicari |
+| 4.4 | Penjelasan di bawah pasal | **Dikerjakan** | lipatan tertutup per pasal; "Penjelasan: cukup jelas" bila hanya itu; Penjelasan Umum di awal; ikut disaring oleh pencarian di dalam halaman peraturan (bukan pencarian global) |
 | 4.6 | Salin kutipan | **Sebagian dikerjakan** | tautan dalam per pasal (`#pasal-82`) dan "Salin sitasi/tautan" sudah ada; kini ada **Salin kutipan lengkap** (`Pasal 156 Undang-Undang Nomor 13 Tahun 2003 tentang Ketenagakerjaan`, teks pasal, tautan) dan **Salin pasal beserta penjelasannya**. Nomor Lembaran Negara/Tambahan tidak tersimpan, jadi bentuk kutipan yang menyertakannya tidak dibuat |
 | 4.6 | Gambar OG dinamis | Ditunda | pratinjau tautan per peraturan sudah ada (judul, deskripsi); gambarnya satu untuk semua. Menggambar per peraturan butuh rendering gambar di Worker |
 | 4.1 | Silsilah dan status | Sebagian ada | tab Relasi dengan peta relasi dua arah; lini masa perubahan dan daftar peraturan pelaksana belum |
@@ -156,9 +157,9 @@ mendahulukan jaringan, jadi pra-muat paralel membantu kunjungan berikutnya juga,
 
 Urutannya penting karena data lama tidak berubah sendiri:
 
-1. **Terapkan migrasi 0007** sebelum perubahan ini dipakai penuh: `npm run d1:migrate:remote` (tabel `penjelasan` dan kolom
-   `ekstraksi_log.versi_parser`). Kode menahan galatnya bila migrasi belum diterapkan, tetapi Penjelasan tidak tersimpan dan
-   `ekstrak-ulang` mode `usang` menjawab 503 sampai itu.
+1. **Migrasi 0007** (tabel `penjelasan` dan kolom `ekstraksi_log.versi_parser`) sudah diterapkan ke D1 produksi pada
+   14 Okt 2026. Pada salinan Lexa lain, terapkan dengan `npm run d1:migrate:remote`: kode menahan galatnya bila migrasi belum
+   diterapkan, tetapi Penjelasan tidak tersimpan dan `ekstrak-ulang` mode `usang` menjawab 503 sampai itu.
 2. **Uraikan ulang yang sudah terlanjur tersimpan** (sekali): tempel ulang `scripts/bpk-console-harvest.js` dengan
    `window.LEXA_PANEN = { usang: true }`, atau jalankan perintah di [pipeline-data.md](pipeline-data.md#memperbarui-pengurai-uraikan-ulang-yang-usang).
    Ini memperbaiki 701 peraturan yang menyimpan Penjelasan di batang tubuh, 19.000 baris yang bertanda halaman, dan pengesahan di

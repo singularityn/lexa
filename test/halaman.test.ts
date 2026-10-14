@@ -287,6 +287,13 @@ describe("bersihkanHalaman: bentuk dari bagian Penjelasan (produksi, 14 Okt 2026
     expect(bersihkanHalaman(judul)).toBe("ketentuan perjanjianinternasional.\nII. PASAL DEMI PASALPasal 1Cukup jelas.");
   });
 
+  it("baris terakhir halaman yang sangat panjang: catchword di ujungnya tetap dikenali, titik-titik panjang pun", () => {
+    const panjang = "Setiap orang yang dengan sengaja melakukan perbuatan sebagaimana dimaksud dalam ketentuan ini diancam dengan pidana penjara dan denda paling banyak sebagaimana diatur dalam undang-undang ini, kecuali dalam hal yang ditentukan lain oleh peraturan pelaksanaannya. ";
+    expect(panjang.length).toBeGreaterThan(200);
+    expect(bersihkanHalaman(`${panjang}Pemantau ${".".repeat(30)}${P(7)}Pemantau asing wajib hadir.`)).toBe(`${panjang.trimEnd()}\nPemantau asing wajib hadir.`);
+    expect(bersihkanHalaman(`${panjang}Pemantau . . .${P(7)}Pemantau asing wajib hadir.`)).toBe(`${panjang.trimEnd()}\nPemantau asing wajib hadir.`);
+  });
+
   it("baris pendek di dasar halaman yang BUKAN diulang di halaman berikutnya tetap: judul yang menggantung, kata tunggal", () => {
     for (const [ujung, awal] of [
       ["Pasal 12", "(1) Setiap orang wajib."],
@@ -335,6 +342,112 @@ describe("bersihkanHalaman: catchword tanpa penanda halaman di antaranya (UU 8/1
   });
 });
 
+describe("bersihkanHalaman: catchword yang diulang di baris berikutnya (cuplikan produksi, 184 peraturan)", () => {
+  it("seluruh baris adalah catchword: baris dibuang, pengulangannya tinggal (Ayat, Huruf, butir)", () => {
+    const kasus: [string, string][] = [
+      // UU 1/2001 dan PP 4/1996: Penjelasan
+      ["Ayat (3)\nCukup jelas\nAyat (4)…\nAyat (4)\nCukup jelas", "Ayat (3)\nCukup jelas\nAyat (4)\nCukup jelas"],
+      ["Huruf f\nCukup jelas\nHuruf g…\nHuruf g\nCukup jelas", "Huruf f\nCukup jelas\nHuruf g\nCukup jelas"],
+      // UU 7/1983 dan PP 67/1996: butir huruf, dengan koma
+      [
+        "yang diterima\nhutang;\nc. sewa, …\nc. sewa, royalti, dan penghasilan lain karena penggunaan\nharta;",
+        "yang diterima\nhutang;\nc. sewa, royalti, dan penghasilan lain karena penggunaan\nharta;",
+      ],
+      ["3) masyarakat; dan\nc. pengawasan…\nc. pengawasan dan pengendalian terhadap penyelenggaraan", "3) masyarakat; dan\nc. pengawasan dan pengendalian terhadap penyelenggaraan"],
+      // UU 11/2001: catchword berspasi sebelum titik-titik
+      ["4. Desa Lubuk Kupang;\n4. Desa …\n4. Desa Air Kati;", "4. Desa Lubuk Kupang;\n4. Desa Air Kati;"],
+    ];
+    for (const [masuk, keluar] of kasus) expect(bersihkanHalaman(masuk), masuk).toBe(keluar);
+  });
+
+  it("pengulangan membawa penanda butir yang tak ada pada catchword, dan sebaliknya (UU 16/2001, PP 127/2000, UU 17/2000)", () => {
+    expect(bersihkanHalaman("Pasal 12\nDalam hal …\n(3) Dalam hal diperlukan pertimbangan sebagaimana dimaksud dalam Pasal 11")).toBe(
+      "Pasal 12\n(3) Dalam hal diperlukan pertimbangan sebagaimana dimaksud dalam Pasal 11",
+    );
+    expect(bersihkanHalaman("(3) Pengalihan …\n(4) Pengalihan atau perjanjian dengan pihak ketiga")).toBe("(4) Pengalihan atau perjanjian dengan pihak ketiga");
+    expect(bersihkanHalaman("(2) Dalam hal …\n(2) Dalam hal tidak ada")).toBe("(2) Dalam hal tidak ada");
+  });
+
+  it("kata yang terpotong tanda hubung di ujung halaman: 'Pejabat- …' diulang sebagai 'Pejabat-pejabat' (PP 20/1975)", () => {
+    expect(bersihkanHalaman("Pasal 11\nPejabat- …\n(2) Pejabat-pejabat yang dimaksud dalam Pasal 10 dan Pasal 11 ayat (1)")).toBe(
+      "Pasal 11\n(2) Pejabat-pejabat yang dimaksud dalam Pasal 10 dan Pasal 11 ayat (1)",
+    );
+  });
+
+  it("spasi dalam catchword berbeda dari pengulangannya, tanda petik pembuka ikut (UU 2/2002, UU 10/2000)", () => {
+    expect(bersihkanHalaman("menyejahterakan masyarakat;\nc . penyerap…\nc. penyerap, penghimpun, dan penyalur aspirasi")).toBe(
+      "menyejahterakan masyarakat;\nc. penyerap, penghimpun, dan penyalur aspirasi",
+    );
+    expect(bersihkanHalaman("diubah sebagai berikut:\n“Pasal 13 …\n“Pasal 13\nSetiap orang")).toBe("diubah sebagai berikut:\n“Pasal 13\nSetiap orang");
+  });
+
+  it("catchword di tengah baris yang disusul baris baru: hanya catchword dan titik-titiknya yang pergi", () => {
+    expect(bersihkanHalaman("mulai berlaku pada tanggal 1 April 1977. Agar …\nAgar supaya setiap orang mengetahuinya")).toBe(
+      "mulai berlaku pada tanggal 1 April 1977.\nAgar supaya setiap orang mengetahuinya",
+    );
+  });
+
+  it("baris kosong di antara catchword dan pengulangannya ikut hilang; catchword di awal teks dikenali", () => {
+    expect(bersihkanHalaman("Agar …\n\n\nAgar setiap orang mengetahuinya")).toBe("Agar setiap orang mengetahuinya");
+    expect(bersihkanHalaman("Isi.\nAgar …\n\n\n\nAgar setiap orang mengetahuinya")).toBe("Isi.\nAgar setiap orang mengetahuinya");
+  });
+
+  it("catchword yang menempel pada teks sesudahnya berhenti di tanda baca, bukan di huruf (PP 93/2021)", () => {
+    expect(bersihkanHalaman("Ayat (2)…Ayat (2)Cukup jelas")).toBe("Ayat (2)Cukup jelas");
+    expect(bersihkanHalaman("Ayat (2)…\nAyat (2)Cukup jelas")).toBe("Ayat (2)Cukup jelas");
+  });
+
+  it("catchword panjang (enam kata) dan baris yang menjorok; akhir baris Windows tidak mengubah hasil", () => {
+    expect(bersihkanHalaman("Isi.\nyang dimaksud dalam ayat (1) huruf…\nyang dimaksud dalam ayat (1) huruf a adalah")).toBe(
+      "Isi.\nyang dimaksud dalam ayat (1) huruf a adalah",
+    );
+    expect(bersihkanHalaman("Isi.\n  Ayat (4)…\nAyat (4)\nCukup jelas")).toBe("Isi.\nAyat (4)\nCukup jelas");
+    expect(bersihkanHalaman("tanggal 1 April 1977. Agar …\r\nAgar supaya setiap orang")).toBe("tanggal 1 April 1977.\r\nAgar supaya setiap orang");
+    expect(bersihkanHalaman("Ayat (4)…\r\nAyat (4)\r\nCukup jelas")).toBe("Ayat (4)\r\nCukup jelas");
+  });
+
+  it("baris yang sangat panjang sebelum catchword: hanya ujungnya yang diperiksa dan dibuang", () => {
+    const panjang = "Setiap orang yang dengan sengaja melakukan perbuatan sebagaimana dimaksud dalam ketentuan ini diancam dengan pidana penjara dan denda paling banyak sebagaimana diatur dalam undang-undang ini. ";
+    expect(bersihkanHalaman(`${panjang}Agar…Agar setiap orang mengetahuinya`)).toBe(`${panjang}Agar setiap orang mengetahuinya`);
+    expect(bersihkanHalaman(`${panjang}Agar …\nAgar setiap orang mengetahuinya`)).toBe(`${panjang.trimEnd()}\nAgar setiap orang mengetahuinya`);
+  });
+
+  it("catchword beruntun dibuang semuanya", () => {
+    expect(bersihkanHalaman("Ayat (2)…Ayat (2)…Ayat (2) Cukup jelas")).toBe("Ayat (2) Cukup jelas");
+    expect(bersihkanHalaman("dua tiga…dua tiga empat…empat lima")).toBe("dua tiga empat lima");
+  });
+
+  it("bukan catchword: pengulangan hanya sebagian kata atau angka, atau yang berbeda, dibiarkan", () => {
+    for (const teks of [
+      "Pasal 1…\nPasal 12\nIsi pasal",
+      "Ketentuan…\nKetentuanlain tidak sama",
+      "Ayat (2) …\nAyat (3)\nCukup jelas",
+      "Jumlah…\nJumlah2 tidak sama",
+      "dan seterusnya…\nsebagainya",
+      "Isi.\nAkhir kalimat…\n\nBab berikutnya",
+    ]) {
+      expect(bersihkanHalaman(teks), teks).toBe(teks);
+    }
+  });
+
+  it("catchword yang terlalu pendek (di bawah tiga huruf) tak dipercaya", () => {
+    expect(bersihkanHalaman("a. …\na. isi")).toBe("a. …\na. isi");
+    expect(bersihkanHalaman("No …\nNo isi")).toBe("No …\nNo isi");
+  });
+
+  it("idempoten", () => {
+    for (const teks of ["Ayat (4)…\nAyat (4)\nCukup jelas", "Agar …\n\n\nAgar setiap orang", "dua tiga…dua tiga empat…empat lima"]) {
+      const sekali = bersihkanHalaman(teks);
+      expect(bersihkanHalaman(sekali), teks).toBe(sekali);
+    }
+  });
+
+  it("dengan penanda halaman dan kepala di antaranya, dua cara pembuangan bekerja bersama (UU 8/2001)", () => {
+    const naskah = `Pasal 7\nAyat (1)\nCukup jelas.${P(13)}PRESIDEN\nREPUBLIK INDONESIA- 3 -Ayat (2) …\nAyat (2)\nDalam rangka pengembangan Kota Pagar Alam`;
+    expect(bersihkanHalaman(naskah)).toBe("Pasal 7\nAyat (1)\nCukup jelas.\nAyat (2)\nDalam rangka pengembangan Kota Pagar Alam");
+  });
+});
+
 describe("bersihkanHalaman: sifat umum", () => {
   const CONTOH = [
     `(2) Pemantau dapat berasal dari perorangan.\nPemantau . . .www.peraturan.go.id${P(48)}2021, No.15-48-(3) Pemantau asing harus\nmemenuhi prosedur.SK No 004269 A(4) Satu.`,
@@ -348,6 +461,18 @@ describe("bersihkanHalaman: sifat umum", () => {
     const sekali = bersihkanHalaman(CONTOH);
     expect(bersihkanHalaman(sekali)).toBe(sekali);
     expect(sekali).not.toMatch(/Page|REPUBLIK INDONESIA|DISTRIBUSI|SK No|www\./);
+  });
+
+  it("tahan terhadap baris dan deretan spasi yang sangat panjang (waktu linear, bukan kuadrat)", () => {
+    // Kuadrat pada 300 ribu spasi berarti puluhan miliar langkah: tes ini tak akan selesai dalam batas waktu bawaan.
+    const spasi = `isi${" ".repeat(300_000)}...${" ".repeat(300_000)}isi`;
+    expect(bersihkanHalaman(spasi)).toBe(spasi);
+    const satuBaris = "kata satu dua tiga… ".repeat(30_000);
+    expect(bersihkanHalaman(satuBaris)).toBe("kata satu dua tiga…");
+    // Isi tiap halaman berbeda huruf, supaya tak dianggap kepala atau kaki yang berulang.
+    const unik = (i: number) => String.fromCharCode(97 + (i % 26)) + String.fromCharCode(97 + Math.floor(i / 26));
+    const halamanBanyak = Array.from({ length: 400 }, (_, i) => `${P(i + 1)}${" ".repeat(10_000)}isi halaman ${unik(i)}`).join("");
+    expect(bersihkanHalaman(halamanBanyak).split("\n").length).toBeGreaterThan(300);
   });
 
   it("teks kosong dan teks tanpa isi di antara penanda tidak menimbulkan galat", () => {
