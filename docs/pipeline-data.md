@@ -394,7 +394,10 @@ lapisan teksnya rusak, dan 402 ketikan lama (1946-1979) yang bentuknya tak diken
    dua, sampai satu halaman. Potongan yang selesai disimpan di R2 `teks-ai-bagian/<alamat>/<ukuran PDF>/<m>-<n>.md` dan dimuat
    kembali bila pesan diulang (kuota, atau tenggat 7 menit per pesan yang melepas galat sementara `tertunda`); dibersihkan setelah
    pembacaan selesai atau gagal tetap. Penanda `=== HALAMAN n ===` (relatif per potongan, dinomori ulang menurut urutan) menjadi
-   `### Page n`. `GEMINI_BERPIKIR` mengatur token berpikir (lihat analisis-gemini.md).
+   `### Page n`. `GEMINI_BERPIKIR` mengatur token berpikir (lihat analisis-gemini.md). Model yang penuh (503 "high demand") atau
+   kuotanya habis (429) diulang tiga kali; bila `GEMINI_MODEL_CADANGAN` terpasang, model itu dicoba sekali (dua percobaan, tanpa
+   pengaturan berpikir) dan hasilnya bertanda `cadangan`; selebihnya galat sementara (antrean mengembalikan pesan dengan jeda tanpa
+   mencatat `gagal`; skrip konsol menunggu dan mengulang sendiri).
 3. **Pagar** (`periksaTranskripsi`, `putuskanPenerimaanAi`): jawaban selesai normal; halaman berurutan dari 1 dan sebanding dengan
    jumlah halaman PDF; tak ada pengulangan berturut-turut; `[tidak terbaca]` tak lebih dari 1,5% kata; judul cocok dengan
    peraturan yang dituju; pengurai menemukan pasal; mutu bukan `berat` (termasuk kehilangan seperempat nomor pasalnya); dan pasal

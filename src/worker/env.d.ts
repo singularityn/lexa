@@ -53,6 +53,11 @@ interface Env {
    * menurunkan biaya dan waktu. Nilai yang ditolak model muncul sebagai galat 400 pada `geminiCek`.
    */
   GEMINI_BERPIKIR?: string;
+  /**
+   * Model Gemini cadangan, dicoba sekali bila model utama (GEMINI_MODEL) masih sibuk (503 "high demand") atau kuotanya habis (429)
+   * setelah percobaannya. Tanpa bawaan. Pengaturan berpikir tidak dikirim ke model cadangan.
+   */
+  GEMINI_MODEL_CADANGAN?: string;
   /** Halaman per panggilan Gemini untuk PDF panjang (bawaan 4, 1-20). */
   GEMINI_HALAMAN?: string;
   /** Panggilan Gemini yang berjalan bersamaan untuk satu PDF (bawaan 3, 1-8). */

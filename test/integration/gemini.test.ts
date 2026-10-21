@@ -449,6 +449,37 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
       expect(tokenHariIni()).toEqual([]);
     });
 
+    describe("model utama penuh (503 'high demand') pada jalur antrean", () => {
+      const sibuk = () => galatHttp(503, "This model is currently experiencing high demand.");
+      const jalanDenganJeda = async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout"] });
+        try {
+          const p = jalan();
+          await vi.advanceTimersByTimeAsync(30_000);
+          return await p;
+        } finally {
+          vi.useRealTimers();
+        }
+      };
+
+      it("tanpa cadangan: pesan dikembalikan ke antrean dengan jeda 60 detik, tanpa catatan 'gagal' dan tanpa anggaran terpakai", async () => {
+        await tanamLama({ vonis: "tanpa_pasal" });
+        pasangGemini([sibuk(), sibuk(), sibuk()]);
+        expect(await jalanDenganJeda()).toEqual({ diakui: 0, diulang: [{ penundaanDetik: 60 }] });
+        expect(await pembacaan()).toBeNull();
+        expect(tokenHariIni()).toEqual([]);
+      });
+
+      it("dengan cadangan: pembacaan selesai oleh model cadangan; versi yang menjawab tercatat, anggaran terhitung", async () => {
+        l.env.GEMINI_MODEL_CADANGAN = "gemini-lain";
+        await tanamLama({ vonis: "tanpa_pasal" });
+        pasangGemini([sibuk(), sibuk(), sibuk(), ok(NASKAH_AI, { model: "gemini-lain-003", masuk: 900, keluar: 100 })]);
+        expect(await jalanDenganJeda()).toEqual({ diakui: 1, diulang: [] });
+        expect(await pembacaan()).toMatchObject({ hasil: "dipakai", model: "gemini-lain-003", pasal_baru: 3 });
+        expect(tokenHariIni()).toEqual([1000]);
+      });
+    });
+
     describe("galat lokasi Google (400 'User location is not supported'): sifat lokasi eksekusi, bukan salah dokumen", () => {
       const lokasi = () => galatHttp(400, "User location is not supported for the API use.");
       /** Jawaban untuk jejak lokasi keluar (cdn-cgi/trace); selebihnya dijawab `gemini`. */
@@ -860,13 +891,68 @@ describe.skipIf(!sqliteAda)("pembacaan PDF oleh Gemini", () => {
         const res = await p;
         expect(res.status).toBe(502);
         expect(await json(res)).toMatchObject({
-          error: "gemini_galat", jenis: "lokasi", sementara: true, status: 400,
+          error: "gemini_galat", jenis: "lokasi", sementara: true, status: 400, jeda_detik: 120,
           message: expect.stringContaining("placement.region"), lokasi_worker: { colo: "HKG", placement: "local-HKG" },
         });
         expect(panggilan).toHaveLength(3);
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    describe("model penuh (503 'high demand') dan model cadangan", () => {
+      const sibuk = () => galatHttp(503, "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.");
+      /** Jalankan `cek` sambil memajukan jeda ulang di tempat (4 dan 12 detik) tanpa menunggu sungguhan. */
+      const cekDenganJeda = async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout"] });
+        try {
+          const p = cek();
+          await vi.advanceTimersByTimeAsync(30_000);
+          return await p;
+        } finally {
+          vi.useRealTimers();
+        }
+      };
+
+      it("tanpa cadangan: 502 sementara dengan jeda yang disarankan dan saran memasang GEMINI_MODEL_CADANGAN", async () => {
+        const panggilan = pasangGemini([sibuk(), sibuk(), sibuk()]);
+        const res = await cekDenganJeda();
+        expect(res.status).toBe(502);
+        expect(await json(res)).toMatchObject({
+          error: "gemini_galat", jenis: "server", status: 503, sementara: true, jeda_detik: 60,
+          message: expect.stringContaining("Kunci dan lokasi sudah diterima Google"),
+        });
+        expect(panggilan).toHaveLength(3);
+      });
+
+      it("dengan cadangan: dijawab model cadangan, dilaporkan (cadangan: true) beserta versi yang menjawab", async () => {
+        l.env.GEMINI_MODEL_CADANGAN = "gemini-lain";
+        const panggilan = pasangGemini([sibuk(), sibuk(), sibuk(), ok("siap", { model: "gemini-lain-003" })]);
+        const res = await cekDenganJeda();
+        expect(res.status).toBe(200);
+        expect(await json(res)).toMatchObject({ tersedia: true, model: "gemini-uji", model_cadangan: "gemini-lain", cadangan: true, versi_model: "gemini-lain-003" });
+        expect(panggilan.map((x) => x.url.split("/models/")[1])).toEqual([
+          "gemini-uji:generateContent", "gemini-uji:generateContent", "gemini-uji:generateContent", "gemini-lain:generateContent",
+        ]);
+      });
+
+      it("model utama sehat: cadangan tercantum tetapi tidak dipakai (cadangan: false)", async () => {
+        l.env.GEMINI_MODEL_CADANGAN = "gemini-lain";
+        pasangGemini([ok("siap")]);
+        expect(await json(await cek())).toMatchObject({ model_cadangan: "gemini-lain", cadangan: false });
+      });
+
+      it("tanpa cadangan terpasang: model_cadangan null dan cadangan false", async () => {
+        pasangGemini([ok("siap")]);
+        expect(await json(await cek())).toMatchObject({ model_cadangan: null, cadangan: false });
+      });
+
+      it("jeda yang disarankan ikut di galat: Retry-After dari Google untuk kuota", async () => {
+        pasangGemini([galatHttp(429, "quota", { "retry-after": "37" })]);
+        expect(await json(await cek())).toMatchObject({ jenis: "kuota", sementara: true, jeda_detik: 37 });
+        pasangGemini([galatHttp(403, "ditolak")]);
+        expect(await json(await cek())).toMatchObject({ jenis: "kunci", sementara: false, jeda_detik: null });
+      });
     });
 
     it("tanpa secret GEMINI_API: 503 dengan petunjuk pemasangan", async () => {

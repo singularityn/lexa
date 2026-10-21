@@ -13,7 +13,7 @@ import {
 const KUNCI = "AIzaRAHASIA-uji-1234567890";
 const K: KonfigGemini = {
   kunci: KUNCI, model: "gemini-uji", baseUrl: "https://gemini.test/v1beta", anggaranHarian: 1_000_000, berpikir: null, halamanPerPanggilan: 5, paralel: 3,
-  halamanMaks: 120,
+  halamanMaks: 120, modelCadangan: null,
 };
 
 interface Panggilan {
@@ -69,14 +69,14 @@ describe("bacaKonfigGemini", () => {
   it("nilai bawaan: model, alamat, dan anggaran harian", () => {
     expect(bacaKonfigGemini({ GEMINI_API: ` ${KUNCI} ` })).toEqual({
       kunci: KUNCI, model: MODEL_BAWAAN, baseUrl: BASE_URL_BAWAAN, anggaranHarian: ANGGARAN_HARIAN_BAWAAN,
-      berpikir: null, halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN, halamanMaks: MAKS_HALAMAN_BAWAAN,
+      berpikir: null, halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN, halamanMaks: MAKS_HALAMAN_BAWAAN, modelCadangan: null,
     });
   });
 
   it("model, alamat, dan anggaran dari variabel; 'models/' di depan nama model dibuang; garis miring akhir dibuang", () => {
     expect(bacaKonfigGemini({ GEMINI_API: KUNCI, GEMINI_MODEL: "models/gemini-2.5-flash", GEMINI_BASE_URL: "https://gateway.ai.cloudflare.com/v1/a/b/google-ai-studio/v1beta//", GEMINI_BATAS_HARIAN: "250000" })).toEqual({
       kunci: KUNCI, model: "gemini-2.5-flash", baseUrl: "https://gateway.ai.cloudflare.com/v1/a/b/google-ai-studio/v1beta", anggaranHarian: 250000,
-      berpikir: null, halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN, halamanMaks: MAKS_HALAMAN_BAWAAN,
+      berpikir: null, halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN, halamanMaks: MAKS_HALAMAN_BAWAAN, modelCadangan: null,
     });
   });
 
@@ -109,6 +109,15 @@ describe("bacaKonfigGemini: berpikir, halaman per panggilan, dan paralel", () =>
     expect(baca({ GEMINI_HALAMAN: "999", GEMINI_PARALEL: "99" })).toMatchObject({ halamanPerPanggilan: 20, paralel: 8 });
     expect(baca({ GEMINI_HALAMAN: "0", GEMINI_PARALEL: "-3" })).toMatchObject({ halamanPerPanggilan: 1, paralel: 1 });
     expect(baca({ GEMINI_HALAMAN: "banyak", GEMINI_PARALEL: "" })).toMatchObject({ halamanPerPanggilan: HALAMAN_PER_PANGGILAN_BAWAAN, paralel: PARALEL_BAWAAN });
+  });
+
+  it("GEMINI_MODEL_CADANGAN: tanpa bawaan; 'models/' dibuang; sama dengan model utama, kosong, atau tak sah dianggap tidak ada", () => {
+    expect(baca({}).modelCadangan).toBeNull();
+    expect(baca({ GEMINI_MODEL_CADANGAN: " gemini-lain " }).modelCadangan).toBe("gemini-lain");
+    expect(baca({ GEMINI_MODEL_CADANGAN: "models/gemini-lain" }).modelCadangan).toBe("gemini-lain");
+    expect(baca({ GEMINI_MODEL: "gemini-utama", GEMINI_MODEL_CADANGAN: "gemini-utama" }).modelCadangan).toBeNull();
+    expect(baca({ GEMINI_MODEL_CADANGAN: MODEL_BAWAAN }).modelCadangan).toBeNull(); // sama dengan model utama bawaan
+    for (const rusak of ["", "  ", "../x?y=1", "a b", "x".repeat(70)]) expect(baca({ GEMINI_MODEL_CADANGAN: rusak }).modelCadangan, rusak).toBeNull();
   });
 
   it("GEMINI_HALAMAN_MAKS: bawaan 120, dibatasi 1-5000, nilai rusak atau kosong jatuh ke bawaan", () => {
@@ -215,6 +224,125 @@ describe("panggilGemini", () => {
     expect(e).toMatchObject({ jenis: "server", sementara: true, status: 503 });
     expect(panggilan).toHaveLength(3);
     expect(tanpaTidur).toHaveBeenCalledTimes(2);
+  });
+
+  describe("model cadangan (GEMINI_MODEL_CADANGAN) bila model utama sibuk atau kuotanya habis", () => {
+    const Kc: KonfigGemini = { ...K, model: "utama", modelCadangan: "cadangan" };
+    const sibuk = () => galat(503, "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.");
+
+    it("tiga kali 503 pada model utama: satu panggilan ke model cadangan (alamat model lain), hasilnya bertanda cadangan", async () => {
+      tanpaTidur.mockClear();
+      const { fn, panggilan } = fetchPalsu([sibuk(), sibuk(), sibuk(), ok("dari cadangan", { model: "cadangan-001" })]);
+      const hasil = await panggilGemini(Kc, { contents: [] }, { fetchFn: fn, tidur: tanpaTidur });
+      expect(hasil).toMatchObject({ teks: "dari cadangan", versiModel: "cadangan-001", cadangan: true });
+      expect(panggilan.map((p) => p.url.split("/models/")[1])).toEqual(["utama:generateContent", "utama:generateContent", "utama:generateContent", "cadangan:generateContent"]);
+      expect(panggilan[3].header["x-goog-api-key"]).toBe(KUNCI);
+    });
+
+    it("kuota model utama habis (429): langsung ke model cadangan, tanpa mengulang model utama", async () => {
+      const { fn, panggilan } = fetchPalsu([galat(429, "quota"), ok("dari cadangan")]);
+      const hasil = await panggilGemini(Kc, {}, { fetchFn: fn, tidur: tanpaTidur });
+      expect(hasil.cadangan).toBe(true);
+      expect(panggilan.map((p) => p.url.split("/models/")[1])).toEqual(["utama:generateContent", "cadangan:generateContent"]);
+    });
+
+    it("model utama berhasil: model cadangan tak disentuh dan hasilnya tak bertanda cadangan", async () => {
+      const { fn, panggilan } = fetchPalsu([ok("utama")]);
+      const hasil = await panggilGemini(Kc, {}, { fetchFn: fn, tidur: tanpaTidur });
+      expect(hasil.cadangan).toBeUndefined();
+      expect(panggilan).toHaveLength(1);
+    });
+
+    it("pengaturan berpikir tidak dikirim ke model cadangan (bentuknya berbeda per seri), selebihnya badan permintaan sama", async () => {
+      const badan = { contents: [{ role: "user", parts: [{ text: "hai" }] }], generationConfig: { thinkingConfig: { thinkingLevel: "LOW" } } };
+      const { fn, panggilan } = fetchPalsu([sibuk(), sibuk(), sibuk(), ok("c")]);
+      await panggilGemini({ ...Kc, berpikir: { tingkat: "LOW" } }, badan, { fetchFn: fn, tidur: tanpaTidur });
+      expect(panggilan[0].badan.generationConfig).toEqual({ thinkingConfig: { thinkingLevel: "LOW" } });
+      expect(panggilan[3].badan).toEqual({ contents: [{ role: "user", parts: [{ text: "hai" }] }] });
+      // Pengaturan generasi lain (bila kelak ada) ikut terkirim; hanya thinkingConfig yang dibuang.
+      const lain = { contents: [], generationConfig: { thinkingConfig: { thinkingBudget: 0 }, maxOutputTokens: 100 } };
+      const b = fetchPalsu([sibuk(), sibuk(), sibuk(), ok("c")]);
+      await panggilGemini(Kc, lain, { fetchFn: b.fn, tidur: tanpaTidur });
+      expect(b.panggilan[3].badan.generationConfig).toEqual({ maxOutputTokens: 100 });
+    });
+
+    it("model cadangan gagal juga: yang dilaporkan galat model utama, setelah paling banyak dua percobaan di cadangan", async () => {
+      tanpaTidur.mockClear();
+      const { fn, panggilan } = fetchPalsu([sibuk(), sibuk(), sibuk(), galat(503, "cadangan juga penuh"), galat(503, "cadangan juga penuh")]);
+      const e = await panggilGemini(Kc, {}, { fetchFn: fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "server", status: 503, sementara: true });
+      expect(e.message).toContain("high demand");
+      expect(e.message).not.toContain("cadangan juga penuh");
+      expect(panggilan).toHaveLength(5);
+    });
+
+    it("tanpa model cadangan: perilaku lama (tiga percobaan lalu galat), dengan saran memasang cadangan pada 503", async () => {
+      const { fn, panggilan } = fetchPalsu([sibuk(), sibuk(), sibuk(), ok("tak terpakai")]);
+      const e = await panggilGemini(K, {}, { fetchFn: fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "server", status: 503 });
+      expect(e.message).toContain("Kunci dan lokasi sudah diterima Google");
+      expect(e.message).toContain("GEMINI_MODEL_CADANGAN");
+      expect(panggilan).toHaveLength(3);
+      // 500 biasa tidak diberi saran model penuh.
+      const f = await panggilGemini(K, {}, { fetchFn: fetchPalsu([galat(500, "a"), galat(500, "b"), galat(500, "c")]).fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(f.message).not.toContain("GEMINI_MODEL_CADANGAN");
+    });
+
+    it("saran tidak muncul bila model cadangan sudah dipasang", async () => {
+      const e = await panggilGemini(Kc, {}, { fetchFn: fetchPalsu([sibuk(), sibuk(), sibuk(), sibuk(), sibuk()]).fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(e.message).not.toContain("GEMINI_MODEL_CADANGAN");
+    });
+
+    it("hanya galat sibuk atau kuota yang memicu cadangan: kunci, 400, 404, dan jaringan tidak", async () => {
+      for (const jawab of [galat(403, "ditolak"), galat(400, "isi salah"), galat(404, "tak ada")]) {
+        const { fn, panggilan } = fetchPalsu([jawab, ok("tak boleh dipakai")]);
+        const e = await panggilGemini(Kc, {}, { fetchFn: fn, tidur: tanpaTidur }).catch((x) => x);
+        expect(e).toBeInstanceOf(GalatGemini);
+        expect(panggilan, jawab.status.toString()).toHaveLength(1);
+        expect(panggilan[0].url).toContain("/models/utama:");
+      }
+      const waktu = Object.assign(new Error("tak menjawab"), { name: "TimeoutError" });
+      const { fn, panggilan } = fetchPalsu([waktu, ok("tak terpakai")]);
+      expect(await panggilGemini(Kc, {}, { fetchFn: fn, tidur: tanpaTidur }).catch((x) => x)).toMatchObject({ jenis: "jaringan" });
+      expect(panggilan).toHaveLength(1);
+    });
+
+    it("penolakan lokasi (400) diulang di model utama saja: berpindah ke model lain tak mengubah alamat keluar Worker", async () => {
+      // Tiap jawaban harus Response baru: badan yang sudah dibaca tak bisa dibaca lagi, dan galat itu akan tampak sebagai 'permintaan' tetap.
+      const lokasi = () => galat(400, "User location is not supported for the API use.");
+      const { fn, panggilan } = fetchPalsu([lokasi(), lokasi(), lokasi(), ok("tak boleh dipakai")]);
+      const e = await panggilGemini(Kc, {}, { fetchFn: fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "lokasi", sementara: true });
+      expect(panggilan).toHaveLength(3);
+      expect(panggilan.every((p) => p.url.includes("/models/utama:"))).toBe(true);
+    });
+
+    it("jawaban tanpa modelVersion memakai nama model yang dipanggil: cadangan, bukan utama", async () => {
+      const tanpaVersi = () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "c" }] }, finishReason: "STOP" }] }), { status: 200 });
+      const dariCadangan = await panggilGemini(Kc, {}, { fetchFn: fetchPalsu([sibuk(), sibuk(), sibuk(), tanpaVersi()]).fn, tidur: tanpaTidur });
+      expect(dariCadangan).toMatchObject({ versiModel: "cadangan", cadangan: true });
+      const dariUtama = await panggilGemini(Kc, {}, { fetchFn: fetchPalsu([tanpaVersi()]).fn, tidur: tanpaTidur });
+      expect(dariUtama.versiModel).toBe("utama");
+    });
+
+    it("model cadangan yang salah nama (404) tidak menggantikan galat model utama", async () => {
+      const { fn, panggilan } = fetchPalsu([sibuk(), sibuk(), sibuk(), galat(404, "tak ada")]);
+      const e = await panggilGemini(Kc, {}, { fetchFn: fn, tidur: tanpaTidur }).catch((x) => x);
+      expect(e).toMatchObject({ jenis: "server", status: 503 });
+      expect(panggilan).toHaveLength(4); // 404 tidak diulang di cadangan
+    });
+
+    it("pesan 404 menyebut nama model yang dipanggil", async () => {
+      const e = await panggilGemini({ ...K, model: "utama-yang-hilang" }, {}, { fetchFn: fetchPalsu([galat(404, "tak ada")]).fn }).catch((x) => x);
+      expect(e.message).toContain("Model utama-yang-hilang tidak ditemukan");
+    });
+
+    it("pingGemini melaporkan bila dijawab model cadangan", async () => {
+      const hasil = await pingGemini(Kc, { fetchFn: fetchPalsu([sibuk(), sibuk(), sibuk(), ok("siap", { model: "cadangan-002" })]).fn, tidur: tanpaTidur });
+      expect(hasil).toMatchObject({ cadangan: true, versiModel: "cadangan-002", balasan: "siap" });
+      const utama = await pingGemini(Kc, { fetchFn: fetchPalsu([ok("siap")]).fn });
+      expect(utama.cadangan).toBe(false);
+    });
   });
 
   describe("400 'User location is not supported for the API use' (pusat data Cloudflare yang ditolak Google)", () => {

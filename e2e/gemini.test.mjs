@@ -52,7 +52,10 @@ afterEach(async () => {
 /** Opsi bawaan uji: tanpa kotak status, jeda pemeriksaan singkat. */
 const jalankan = (opsi) => page.evaluate((o) => window.lexaPanenBpk(o), { lexa: LEXA, token: TOKEN, papan: false, _jedaGemini: 20, ...opsi });
 const galatDari = (opsi) => page.evaluate((o) => window.lexaPanenBpk(o).then(() => null, (e) => e.message), { lexa: LEXA, token: TOKEN, papan: false, ...opsi });
-const modeGemini = (mode) => fetch(`${BASE}/__dev/gemini?mode=${mode}`, { method: "POST" });
+/** Mode Gemini palsu (scripts/dev-node.ts); `berapa`: hanya sekian jawaban galat berikutnya, lalu kembali ok; `retryAfter`: detik pada header retry-after jawaban 429. */
+const modeGemini = (mode, berapa, retryAfter) =>
+  fetch(`${BASE}/__dev/gemini?mode=${mode}${berapa ? `&berapa=${berapa}` : ""}${retryAfter ? `&retryAfter=${retryAfter}` : ""}`, { method: "POST" });
+const keadaanGemini = async () => (await fetch(`${BASE}/__dev/gemini`)).json();
 const kerjakanAntrean = () => fetch(`${BASE}/__dev/antrean`, { method: "POST" }).then((r) => r.json());
 const detail = async (uri) => (await fetch(`${BASE}/api/laws/detail?uri=${encodeURIComponent(uri)}`)).json();
 const ringkasanGemini = async () => (await (await fetch(`${BASE}/api/impor/ringkasan`, { headers: adm })).json()).gemini;
@@ -98,7 +101,8 @@ describe("skrip panen BPK: geminiCek", () => {
     page.on("console", (m) => konsol.push(m.text()));
     const hasil = await jalankan({ geminiCek: true });
     expect(hasil.geminiCek).toMatchObject({
-      tersedia: true, model: "gemini-pratinjau", versi_model: "gemini-pratinjau-001", alamat: "gemini.pratinjau.test", balasan: "siap",
+      tersedia: true, model: "gemini-pratinjau", model_cadangan: "gemini-cadangan", cadangan: false, versi_model: "gemini-pratinjau-001",
+      alamat: "gemini.pratinjau.test", balasan: "siap",
       anggaran: { terpakai: 12, batas: 5_000_000 }, berpikir: null, halaman_per_panggilan: 4, paralel: 3, halaman_maks: 120,
     });
     // Di awal setiap jalan skrip mencetak keadaan Gemini di Lexa: terpasang, otomatis menyala atau tidak, dan berapa PDF yang belum dibaca.
@@ -109,6 +113,8 @@ describe("skrip panen BPK: geminiCek", () => {
     expect(baris).toContain("model gemini-pratinjau (versi gemini-pratinjau-001)");
     expect(baris).toContain("anggaran token hari ini 12 dari 5.000.000");
     expect(baris).toContain("pengaturan: berpikir bawaan model, 4 halaman per panggilan, 3 paralel, PDF lebih dari 120 halaman ditolak");
+    expect(baris).toContain("; model cadangan gemini-cadangan.");
+    expect(baris).not.toContain("DIJAWAB MODEL CADANGAN");
     expect(baris).not.toMatch(/undefined|null|NaN/); // pratinjau lokal tanpa pusat data: bagian lokasi dilewati, bukan dicetak kosong
     expect(hasil.geminiCek.lokasi_worker).toEqual({ colo: null, placement: null });
     expect((await ringkasanGemini()).anggaran.terpakai).toBe(12);
@@ -121,14 +127,79 @@ describe("skrip panen BPK: geminiCek", () => {
     expect(galat).toContain("Gemini menolak kunci");
   });
 
-  it("kuota habis: galat yang menyebutnya", async () => {
+  it("kuota habis: galat yang menyebutnya (tanpa pengulangan: ulangGemini 1)", async () => {
     await modeGemini("kuota");
-    expect(await galatDari({ geminiCek: true })).toContain("Kuota atau laju Gemini habis");
+    expect(await galatDari({ geminiCek: true, ulangGemini: 1 })).toContain("Kuota atau laju Gemini habis");
   });
 
   it("token admin salah: berhenti sejak awal (401)", async () => {
     const galat = await page.evaluate((o) => window.lexaPanenBpk(o).then(() => null, (e) => e.message), { lexa: LEXA, token: "salah", geminiCek: true, papan: false });
     expect(galat).toContain("401");
+  });
+});
+
+describe("skrip panen BPK: Gemini sibuk atau kuota habis (galat sementara)", () => {
+  it("kuota reda sesudah satu putaran gagal: skrip menunggu sendiri lalu berhasil, tanpa berhenti", async () => {
+    const konsol = [];
+    page.on("console", (m) => konsol.push(m.text()));
+    await modeGemini("kuota", 2); // model utama dan model cadangan sama-sama 429 pada putaran pertama
+    const hasil = await jalankan({ geminiCek: true, _jedaUlangGemini: 20 });
+    expect(hasil.geminiCek).toMatchObject({ tersedia: true, balasan: "siap", cadangan: false });
+    const tunggu = konsol.find((t) => t.includes("Mencoba lagi dalam"));
+    expect(tunggu).toContain("geminiCek: Lexa 502: Kuota atau laju Gemini habis (HTTP 429)");
+    expect(tunggu).toContain("(percobaan 2 dari 5)");
+  });
+
+  it("kuota tidak reda: berhenti sesudah ulangGemini percobaan dan menyebut jumlahnya", async () => {
+    await modeGemini("kuota");
+    const galat = await galatDari({ geminiCek: true, ulangGemini: 3, _jedaUlangGemini: 20 });
+    expect(galat).toContain("Kuota atau laju Gemini habis");
+    expect(galat).toContain("(sudah dicoba 3 kali)");
+  });
+
+  it("kuota model utama habis: model cadangan menjawab dan skrip mengatakannya", async () => {
+    const konsol = [];
+    page.on("console", (m) => konsol.push(m.text()));
+    await modeGemini("kuota-utama");
+    const hasil = await jalankan({ geminiCek: true });
+    expect(hasil.geminiCek).toMatchObject({ tersedia: true, cadangan: true, model: "gemini-pratinjau", model_cadangan: "gemini-cadangan", versi_model: "gemini-cadangan-001" });
+    expect(konsol.find((t) => t.includes("Gemini siap"))).toContain("DIJAWAB MODEL CADANGAN karena model utama sedang sibuk");
+    expect(konsol.some((t) => t.includes("Mencoba lagi dalam"))).toBe(false); // tak ada galat yang sampai ke skrip
+  });
+
+  it.each([
+    [30, 30, "saran Google dipakai apa adanya"],
+    [5, 20, "saran yang terlalu pendek dinaikkan ke 20 detik supaya Gemini tidak digempur"],
+    [900, 120, "saran yang terlalu panjang dipotong ke 120 detik supaya skrip tak tertidur berpuluh menit"],
+  ])("retry-after %i detik: skrip menunggu %i detik (%s); tombol Berhenti memutus penantian tanpa mencoba lagi", async (saran, tunggu) => {
+    const konsol = [];
+    page.on("console", (m) => konsol.push(m.text()));
+    await modeGemini("kuota", undefined, saran); // model utama dan cadangan sama-sama 429 dan menyuruh menunggu `saran` detik
+    const jalan = page.evaluate((o) => window.lexaPanenBpk(o).then(() => null, (e) => e.message), { lexa: LEXA, token: TOKEN, papan: false, geminiCek: true });
+    await expect.poll(() => konsol.some((t) => t.includes("Mencoba lagi dalam")), { timeout: 15_000 }).toBe(true);
+    await page.evaluate(() => window.lexaPanenBerhenti());
+    const galat = await jalan;
+    expect(konsol.filter((t) => t.includes("Mencoba lagi dalam"))).toHaveLength(1); // dihentikan di tengah penantian pertama
+    expect(konsol.find((t) => t.includes("Mencoba lagi dalam"))).toContain(`Mencoba lagi dalam ${tunggu} detik (percobaan 2 dari 5).`);
+    expect(galat).toContain("Kuota atau laju Gemini habis");
+    // Putaran pertama memakai dua permintaan (model utama, lalu cadangan); sesudah Berhenti tidak ada permintaan baru.
+    expect((await keadaanGemini()).permintaan).toBe(2);
+  });
+
+  it("model utama penuh (503 'high demand', galat yang dialami pengguna): Lexa mengulang lalu beralih ke model cadangan", async () => {
+    await modeGemini("sibuk");
+    const hasil = await jalankan({ geminiCek: true });
+    expect(hasil.geminiCek).toMatchObject({ tersedia: true, cadangan: true, versi_model: "gemini-cadangan-001", balasan: "siap" });
+  }, 60_000);
+
+  it("geminiUji mengulang sendiri galat sementara dan melaporkan hasil sahnya", async () => {
+    const konsol = [];
+    page.on("console", (m) => konsol.push(m.text()));
+    await modeGemini("kuota", 2);
+    const hasil = await jalankan({ geminiUji: [UU13], _jedaUlangGemini: 20 });
+    expect(hasil.geminiUji).toHaveLength(1);
+    expect(hasil.geminiUji[0]).toMatchObject({ uri: UU13, model: "gemini-pratinjau-001", keputusan: { hasil: "dipertahankan" } });
+    expect(konsol.some((t) => t.includes(`${UU13}: Lexa 502: Kuota atau laju Gemini habis`) && t.includes("Mencoba lagi dalam"))).toBe(true);
   });
 });
 

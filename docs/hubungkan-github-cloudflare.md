@@ -247,13 +247,30 @@ berjalan seperti biasa.
    lebih banyak daripada token keluaran; bentuk nilainya berbeda per seri model, jadi uji dengan `geminiCek` sebelum membaca),
    `GEMINI_HALAMAN` (halaman per panggilan untuk PDF panjang, bawaan 4), `GEMINI_PARALEL` (panggilan bersamaan per PDF, bawaan 3), dan
    `GEMINI_HALAMAN_MAKS` (PDF yang lebih panjang ditolak tanpa memanggil Gemini, bawaan 120 halaman; naikkan hanya bila memang ingin
-   membaca undang-undang yang sangat panjang).
+   membaca undang-undang yang sangat panjang), dan `GEMINI_MODEL_CADANGAN` (model Gemini lain yang dicoba sekali bila model utama
+   penuh atau kuotanya habis; lihat bagian 503 di bawah).
 3. Terapkan migrasi 0008 (tabel `pembacaan_ai`) sebelum memakainya: `npm run d1:migrate:remote`.
 4. Uji dari konsol dengan skrip panen: `window.LEXA_PANEN = { geminiCek: true }`, lalu `{ geminiUji: ["/akn/id/act/uu/2019/24"] }`
    (percobaan kering), baru `{ gemini: true, batas: 3 }`.
 
 Konsumer antrean `lexa-ingest` memproses pesan secara berurutan, dan satu pemanggilan dibatasi 15 menit oleh Cloudflare; pembacaan
 Gemini memakan menit per PDF, jadi pesannya dikirim dalam kelompok kecil (skrip memakai `batas: 3` dan menunggu selesai).
+
+### Galat `This model is currently experiencing high demand` (HTTP 503)
+
+Itu bukan salah kunci, lokasi, atau dokumen: Google sudah menerima semuanya dan hanya modelnya yang sedang penuh. Lonjakan seperti ini
+biasanya reda dalam menit sampai jam, dan model terbaru paling sering terkena. Yang dilakukan Lexa:
+
+- Worker mengulang panggilan tiga kali (jeda 4 dan 12 detik). Bila `GEMINI_MODEL_CADANGAN` terpasang, model itu dicoba sekali lagi
+  (dua percobaan, tanpa pengaturan berpikir karena bentuknya berbeda per seri). Hasilnya bertanda "dijawab model cadangan" pada
+  `geminiCek`, dan versi model yang menjawab tercatat di `pembacaan_ai.model`.
+- Bila semuanya masih penuh, galat disebut sementara: skrip konsol **menunggu sendiri** (sesuai saran Google, 20 sampai 120 detik)
+  lalu mencoba lagi sampai 5 kali (opsi `ulangGemini`; tombol Berhenti memutus penantian), dan antrean mengembalikan pesannya dengan
+  jeda tanpa mencatat `gagal`. Kunci salah, model tak ada, dan galat tetap lain tetap berhenti seketika.
+- Bila tetap gagal sesudah 5 kali: tunggu beberapa menit lalu jalankan lagi (potongan yang sudah terbaca tersimpan dan tidak dibayar
+  dua kali), atau isi `GEMINI_MODEL_CADANGAN` dengan **nama model persis dari daftar model di Google AI Studio** (model yang salah
+  nama menjawab 404 dan diabaikan; galat model utama yang dilaporkan). Pilih model yang bukan keluaran terbaru, karena yang terbaru
+  yang paling sering penuh; pembacaannya belum pernah diukur, jadi coba dulu dengan `geminiUji`.
 
 ### Galat `User location is not supported for the API use` (HTTP 400)
 

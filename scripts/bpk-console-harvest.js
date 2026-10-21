@@ -61,6 +61,9 @@
  *                 menunggu tiap kelompok selesai sebelum yang berikutnya, sampai habis atau anggaran token harian habis.
  *                 `geminiVonis`: "tanpa_pasal,berat" untuk menyaring (juga "ringan", "bersih"); `ulangi: true`: coba juga
  *                 yang pernah dicoba; `jedaGemini`: jeda pemeriksaan kemajuan dalam milidetik (bawaan 15000)
+ *   ulangGemini   berapa kali `geminiCek` dan `geminiUji` mencoba bila Gemini sementara tak bisa melayani (model penuh: 503 "high demand",
+ *                 kuota 429, lokasi pusat data): bawaan 5, dengan jeda 20-120 detik yang disarankan Lexa. Kunci salah dan galat tetap
+ *                 lain langsung berhenti
  *   jeda          jeda minimum antarpermintaan ke BPK dalam milidetik (bawaan 4000; minimum 2000; jangan dikecilkan)
  *   kering        true: tidak menulis apa pun ke Lexa (penjelajahan tak mengirim tautan, PDF diunduh tetapi tak diunggah)
  *   rincian       true: buka halaman rincian walau tautan PDF langsung dari daftar diketahui (metadata ikut diperbarui,
@@ -464,6 +467,7 @@
       if (!res.ok) {
         var galat = new Error("Lexa " + res.status + (badan && badan.message ? ": " + badan.message : ""));
         galat.status = res.status;
+        galat.badan = badan;
         galat.fatal = res.status === 401 || res.status === 403;
         throw galat;
       }
@@ -769,12 +773,40 @@
   // Gemini membaca PDF yang tak punya lapisan teks (tak menyentuh BPK)
   // ---------------------------------------------------------------------------------------------------------------
 
+  /**
+   * Galat Gemini yang SEMENTARA (model penuh: 503 "high demand", kuota 429, lokasi pusat data, jaringan) tidak menghentikan skrip:
+   * ia menunggu lalu mencoba lagi (opsi `ulangGemini`, bawaan 5 percobaan). Jeda: yang disarankan Lexa (`jeda_detik`), dibatasi
+   * 20-120 detik. Kunci salah, model tak ada, dan galat tetap lain langsung dilempar. Pembacaan yang terputus dilanjutkan Lexa dari
+   * potongan yang sudah tersimpan, jadi mengulang tidak membayar dua kali.
+   */
+  async function denganUlangSementara(ctx, apa, kerja) {
+    var opsi = ctx.opsi;
+    var maks = Math.max(Number(opsi.ulangGemini) || 5, 1);
+    for (var percobaan = 1; ; percobaan++) {
+      try {
+        return await kerja();
+      } catch (e) {
+        var b = e && e.badan;
+        var sementara = Boolean(e && e.status === 502 && b && b.error === "gemini_galat" && b.sementara === true);
+        if (!sementara || percobaan >= maks || berhenti) {
+          if (sementara && percobaan > 1) e.message += " (sudah dicoba " + percobaan + " kali)";
+          throw e;
+        }
+        var jeda = typeof opsi._jedaUlangGemini === "number" ? opsi._jedaUlangGemini : Math.min(Math.max((Number(b.jeda_detik) || 60) * 1000, 20000), 120000);
+        console.warn("[Lexa panen] " + apa + ": " + e.message + " Mencoba lagi dalam " + Math.round(jeda / 1000) + " detik (percobaan " + (percobaan + 1) + " dari " + maks + ").");
+        await tungguSopan(jeda);
+        if (berhenti) throw e; // tombol Berhenti ditekan selama menunggu: jangan mulai pembacaan baru yang bisa makan beberapa menit
+      }
+    }
+  }
+
   async function cekGemini(ctx) {
-    var j = await ctx.lexaMinta("/api/impor/gemini-cek");
+    var j = await denganUlangSementara(ctx, "geminiCek", function () { return ctx.lexaMinta("/api/impor/gemini-cek"); });
     // Pengaturan yang berlaku (Lexa yang lebih lama tak menyebutnya): berpikir, halaman per panggilan, paralel, dan batas panjang PDF.
     var atur = j.halaman_maks === undefined ? "" : "; pengaturan: berpikir " + (j.berpikir ? JSON.stringify(j.berpikir) : "bawaan model") + ", " + j.halaman_per_panggilan + " halaman per panggilan, " + j.paralel + " paralel, PDF lebih dari " + j.halaman_maks + " halaman ditolak";
     var di = j.lokasi_worker && j.lokasi_worker.colo ? "; Worker berjalan di pusat data " + j.lokasi_worker.colo + (j.lokasi_worker.placement ? " (" + j.lokasi_worker.placement + ")" : "") : "";
-    console.log("[Lexa panen] Gemini siap: model " + j.model + " (versi " + j.versi_model + "), " + j.alamat + ", balasan \"" + j.balasan + "\", " + j.durasi_ms + " ms; anggaran token hari ini " + angka(j.anggaran.terpakai) + " dari " + angka(j.anggaran.batas) + atur + di + ".");
+    var cad = j.cadangan ? "; DIJAWAB MODEL CADANGAN karena model utama sedang sibuk" : j.model_cadangan ? "; model cadangan " + j.model_cadangan : "";
+    console.log("[Lexa panen] Gemini siap: model " + j.model + " (versi " + j.versi_model + "), " + j.alamat + ", balasan \"" + j.balasan + "\", " + j.durasi_ms + " ms; anggaran token hari ini " + angka(j.anggaran.terpakai) + " dari " + angka(j.anggaran.batas) + atur + di + cad + ".");
     return j;
   }
 
@@ -784,7 +816,7 @@
     for (var i = 0; i < daftar.length && !berhenti; i++) {
       console.log("[Lexa panen] Gemini membaca " + daftar[i] + " (satu sampai beberapa menit)...");
       try {
-        var l = await kirimJson(ctx.lexaMinta, "/api/impor/gemini-uji", { uri: daftar[i] });
+        var l = await denganUlangSementara(ctx, daftar[i], function () { return kirimJson(ctx.lexaMinta, "/api/impor/gemini-uji", { uri: daftar[i] }); });
         hasil.push(l);
         var k = l.kesesuaian_dengan_teks_lama;
         console.log("[Lexa panen] " + l.uri + ": " + l.keputusan.hasil + (l.keputusan.alasan ? " (" + l.keputusan.alasan + ")" : "") + "; " + l.hasil.nomor_pasal_berbeda + " nomor pasal terbaca (" + l.hasil.vonis + "), tersimpan " + l.tersimpan.nomor_pasal_berbeda + " (" + l.tersimpan.vonis + "); halaman " + l.halaman + "/" + (l.halaman_pdf === null ? "?" : l.halaman_pdf) + "; " + angka(l.token.total) + " token, " + Math.round(l.durasi_ms / 1000) + " detik" + (k ? "; sepakat dengan teks lama " + k.gemini_ada_di_lama + "/" + k.lama_ada_di_gemini : "") + (l.masalah.length ? "; MASALAH: " + l.masalah.join(" | ") : ""));

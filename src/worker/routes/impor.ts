@@ -536,7 +536,7 @@ function lokasiEksekusi(c: Context<{ Bindings: Bindings }>) {
 
 function jawabGalatGemini(c: Context<{ Bindings: Bindings }>, e: GalatGemini) {
   return c.json(
-    { error: "gemini_galat", jenis: e.jenis, status: e.status ?? null, sementara: e.sementara, message: e.message, lokasi_worker: lokasiEksekusi(c) },
+    { error: "gemini_galat", jenis: e.jenis, status: e.status ?? null, sementara: e.sementara, jeda_detik: e.jedaDetik ?? null, message: e.message, lokasi_worker: lokasiEksekusi(c) },
     e.jenis === "anggaran" ? 429 : 502,
     headerCors(c),
   );
@@ -555,7 +555,8 @@ impor.get("/gemini-cek", async (c) => {
     const terpakai = await catatPemakaian(c.env.CACHE, ping.token.total);
     return c.json(
       {
-        tersedia: true, model: k.model, versi_model: ping.versiModel, alamat: new URL(k.baseUrl).host, balasan: ping.balasan,
+        tersedia: true, model: k.model, model_cadangan: k.modelCadangan, cadangan: ping.cadangan, versi_model: ping.versiModel,
+        alamat: new URL(k.baseUrl).host, balasan: ping.balasan,
         berpikir: k.berpikir, halaman_per_panggilan: k.halamanPerPanggilan, paralel: k.paralel, halaman_maks: k.halamanMaks,
         lokasi_worker: lokasiEksekusi(c),
         selesai: ping.selesai, token: ping.token, durasi_ms: ping.durasiMs, anggaran: { terpakai, batas: k.anggaranHarian },

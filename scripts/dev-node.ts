@@ -37,7 +37,21 @@ const PDF_CONTOH = new TextEncoder().encode(
  * generateContent (teks, token, versi model); mutunya tak mewakili Gemini sungguhan. `modeGemini` diubah lewat POST /__dev/gemini.
  */
 const ALAMAT_GEMINI_PALSU = "https://gemini.pratinjau.test/v1beta";
-let modeGemini: "ok" | "kunci" | "kuota" = "ok";
+/** Model cadangan palsu (GEMINI_MODEL_CADANGAN di `siapkan`); model utamanya `gemini-pratinjau`. */
+const MODEL_CADANGAN_PALSU = "gemini-cadangan";
+/**
+ * ok = semua model menjawab; kunci = kunci ditolak (400); kuota = semua model 429; sibuk = model utama 503 "high demand" dan
+ * cadangan menjawab; sibuk-semua = semua model 503; kuota-utama = model utama 429 dan cadangan menjawab.
+ */
+type ModeGemini = "ok" | "kunci" | "kuota" | "sibuk" | "sibuk-semua" | "kuota-utama";
+const MODE_GEMINI: readonly ModeGemini[] = ["ok", "kunci", "kuota", "sibuk", "sibuk-semua", "kuota-utama"];
+let modeGemini: ModeGemini = "ok";
+/** Bila diisi, hanya sekian permintaan berikutnya yang gagal menurut `modeGemini`; sesudahnya kembali `ok` (galat sementara yang reda). */
+let sisaGagalGemini: number | null = null;
+/** Header `retry-after` (detik) pada jawaban 429; tes mengubahnya lewat `retryAfter=` untuk memeriksa lama tunggu skrip panen. */
+let retryAfterGemini = 30;
+/** Permintaan yang sampai ke Gemini palsu sejak pratinjau disiapkan (tes memastikan tak ada permintaan baru sesudah tombol Berhenti). */
+let permintaanGemini = 0;
 const NASKAH_GEMINI_PALSU = [
   "=== HALAMAN 1 ===", "BAB I", "KETENTUAN UMUM", "Pasal 1",
   "Dalam peraturan ini yang dimaksud dengan pindaian adalah dokumen yang dibaca sebagai gambar halaman.",
@@ -46,11 +60,27 @@ const NASKAH_GEMINI_PALSU = [
   "Pasal 3", "Ketentuan lebih lanjut diatur dengan Peraturan Menteri.",
 ].join("\n");
 
-function jawabGeminiPalsu(init?: RequestInit): Response {
+function jawabGeminiPalsu(alamat: string, init?: RequestInit): Response {
   const galat = (status: number, pesan: string, header: Record<string, string> = {}) =>
     new Response(JSON.stringify({ error: { code: status, message: pesan, status: "GALAT" } }), { status, headers: header });
-  if (modeGemini === "kunci") return galat(400, "API key not valid. Please pass a valid API key.");
-  if (modeGemini === "kuota") return galat(429, "Resource has been exhausted (e.g. check quota).", { "retry-after": "30" });
+  permintaanGemini++;
+  const cadangan = /\/models\/([^:/]+):/.exec(alamat)?.[1] === MODEL_CADANGAN_PALSU;
+  const penuh = () => galat(503, "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.");
+  const habis = () => galat(429, "Resource has been exhausted (e.g. check quota).", { "retry-after": String(retryAfterGemini) });
+  const gagal =
+    modeGemini === "kunci" ? galat(400, "API key not valid. Please pass a valid API key.")
+    : modeGemini === "kuota" ? habis()
+    : modeGemini === "kuota-utama" && !cadangan ? habis()
+    : modeGemini === "sibuk" && !cadangan ? penuh()
+    : modeGemini === "sibuk-semua" ? penuh()
+    : null;
+  if (gagal) {
+    if (sisaGagalGemini !== null && --sisaGagalGemini <= 0) {
+      modeGemini = "ok";
+      sisaGagalGemini = null;
+    }
+    return gagal;
+  }
   const sebaris = String(init?.body ?? "").includes("inlineData");
   const teks = sebaris ? NASKAH_GEMINI_PALSU : "siap";
   const masuk = sebaris ? 2400 : 10;
@@ -59,7 +89,7 @@ function jawabGeminiPalsu(init?: RequestInit): Response {
     JSON.stringify({
       candidates: [{ content: { parts: [{ text: teks }] }, finishReason: "STOP" }],
       usageMetadata: { promptTokenCount: masuk, candidatesTokenCount: keluar, totalTokenCount: masuk + keluar },
-      modelVersion: "gemini-pratinjau-001",
+      modelVersion: cadangan ? "gemini-cadangan-001" : "gemini-pratinjau-001",
     }),
     { status: 200 },
   );
@@ -68,7 +98,7 @@ function jawabGeminiPalsu(init?: RequestInit): Response {
 const fetchAsli = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const alamat = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  return alamat.startsWith(ALAMAT_GEMINI_PALSU) ? jawabGeminiPalsu(init) : fetchAsli(input, init);
+  return alamat.startsWith(ALAMAT_GEMINI_PALSU) ? jawabGeminiPalsu(alamat, init) : fetchAsli(input, init);
 }) as typeof fetch;
 
 const DATA_NYATA = process.env.LEXA_DATA_NYATA;
@@ -107,8 +137,11 @@ async function siapkan(): Promise<Lingkungan> {
   // Kunci tiruan agar tombol "Masuk dengan Google" tampil; alurnya dialihkan ke /__dev/masuk (lihat bawah).
   Object.assign(l.env, { GOOGLE_CLIENT_ID: "pratinjau-lokal", GOOGLE_CLIENT_SECRET: "pratinjau-lokal" });
   // Gemini palsu (lihat atas): kunci dan alamat tiruan supaya jalur pembacaan PDF pindaian bisa dicoba tanpa jaringan.
-  Object.assign(l.env, { GEMINI_API: "kunci-pratinjau", GEMINI_MODEL: "gemini-pratinjau", GEMINI_BASE_URL: ALAMAT_GEMINI_PALSU });
+  Object.assign(l.env, { GEMINI_API: "kunci-pratinjau", GEMINI_MODEL: "gemini-pratinjau", GEMINI_MODEL_CADANGAN: MODEL_CADANGAN_PALSU, GEMINI_BASE_URL: ALAMAT_GEMINI_PALSU });
   modeGemini = "ok";
+  sisaGagalGemini = null;
+  retryAfterGemini = 30;
+  permintaanGemini = 0;
   // Cakupan peraturan sama dengan produksi (bawaan di src/shared/cakupan.ts). CAKUPAN_JENIS melebarkannya, mis. untuk
   // melihat salinan data produksi yang memuat Perpres atau POJK: CAKUPAN_JENIS=UU,PERPPU,PP,PERPRES npm run dev:node.
   if (process.env.CAKUPAN_JENIS) l.env.CAKUPAN_JENIS = process.env.CAKUPAN_JENIS;
@@ -221,12 +254,21 @@ async function main() {
         res.end(JSON.stringify(hasil));
         return;
       }
-      // Pratinjau saja: ubah perilaku Gemini palsu (ok, kunci = kunci ditolak, kuota = 429).
-      if (url.pathname === "/__dev/gemini" && req.method === "POST") {
-        const mode = url.searchParams.get("mode");
-        if (mode === "ok" || mode === "kunci" || mode === "kuota") modeGemini = mode;
+      // Pratinjau saja: ubah perilaku Gemini palsu (lihat ModeGemini). `berapa=N`: hanya N jawaban galat berikutnya, lalu kembali ok;
+      // `retryAfter=S`: detik pada header retry-after jawaban 429. GET: keadaan sekarang dan jumlah permintaan yang sudah diterima.
+      if (url.pathname === "/__dev/gemini" && (req.method === "POST" || req.method === "GET")) {
+        if (req.method === "POST") {
+          const mode = url.searchParams.get("mode");
+          const berapa = Number.parseInt(url.searchParams.get("berapa") ?? "", 10);
+          const tunggu = Number.parseInt(url.searchParams.get("retryAfter") ?? "", 10);
+          if (MODE_GEMINI.includes(mode as ModeGemini)) {
+            modeGemini = mode as ModeGemini;
+            sisaGagalGemini = Number.isFinite(berapa) && berapa > 0 ? berapa : null;
+          }
+          if (Number.isFinite(tunggu) && tunggu > 0) retryAfterGemini = tunggu;
+        }
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ mode: modeGemini }));
+        res.end(JSON.stringify({ mode: modeGemini, sisa_gagal: sisaGagalGemini, retry_after: retryAfterGemini, permintaan: permintaanGemini }));
         return;
       }
       // Pratinjau saja: buat peraturan sintetis dengan banyak pasal untuk menguji kinerja halaman detail.

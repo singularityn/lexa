@@ -53,6 +53,8 @@ const BATAS_WAKTU_BAWAAN_MS = 240_000;
 /** Batas waktu satu panggilan untuk satu potongan; yang melewatinya dipecah lagi menjadi dua. */
 const BATAS_WAKTU_BAGIAN_MS = 180_000;
 const MAKS_PERCOBAAN = 3;
+/** Percobaan di model cadangan (setelah model utama gagal): satu kesempatan yang pendek, bukan putaran baru yang panjang. */
+const MAKS_PERCOBAAN_CADANGAN = 2;
 const JEDA_ULANG_MS = [4_000, 12_000];
 
 /** Pengaturan berpikir model: angka (thinkingBudget, seri 2.5) atau tingkat (thinkingLevel, seri 3); null = bawaan model. */
@@ -61,6 +63,13 @@ export type PengaturanBerpikir = { anggaran: number } | { tingkat: string } | nu
 export interface KonfigGemini {
   kunci: string;
   model: string;
+  /**
+   * GEMINI_MODEL_CADANGAN: model lain yang dicoba SEKALI bila model utama masih sibuk (5xx, 408) atau kuotanya habis (429) setelah
+   * percobaannya. Model terbaru sering menjawab 503 "This model is currently experiencing high demand" berjam-jam; pembacaan ribuan
+   * peraturan tak boleh macet karenanya. Null = tanpa cadangan. Pengaturan berpikir tidak dikirim ke model cadangan (bentuknya
+   * berbeda per seri model), dan versi model yang menjawab tetap dicatat per pembacaan (`pembacaan_ai.model`).
+   */
+  modelCadangan: string | null;
   baseUrl: string;
   /** Token (masuk + keluar) yang boleh dipakai per hari UTC. */
   anggaranHarian: number;
@@ -82,6 +91,7 @@ export interface KonfigGemini {
 export interface EnvGemini {
   GEMINI_API?: string;
   GEMINI_MODEL?: string;
+  GEMINI_MODEL_CADANGAN?: string;
   GEMINI_BASE_URL?: string;
   GEMINI_BATAS_HARIAN?: string;
   GEMINI_BERPIKIR?: string;
@@ -109,12 +119,15 @@ export function bacaKonfigGemini(env: EnvGemini): KonfigGemini | null {
 
   // "models/gemini-..." (bentuk di dokumentasi Google) dan "gemini-..." sama saja.
   const model = (env.GEMINI_MODEL ?? "").trim().replace(/^models\//, "");
+  const cadangan = (env.GEMINI_MODEL_CADANGAN ?? "").trim().replace(/^models\//, "");
   const baseUrl = (env.GEMINI_BASE_URL ?? "").trim().replace(/\/+$/, "");
   const anggaran = Number.parseInt((env.GEMINI_BATAS_HARIAN ?? "").trim(), 10);
 
+  const namaModel = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model) ? model : MODEL_BAWAAN;
   return {
     kunci,
-    model: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model) ? model : MODEL_BAWAAN,
+    model: namaModel,
+    modelCadangan: cadangan !== namaModel && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(cadangan) ? cadangan : null,
     baseUrl: /^https:\/\/[^\s?#]+$/.test(baseUrl) ? baseUrl : BASE_URL_BAWAAN,
     anggaranHarian: Number.isFinite(anggaran) && anggaran > 0 ? anggaran : ANGGARAN_HARIAN_BAWAAN,
     berpikir: bacaBerpikir(env.GEMINI_BERPIKIR),
@@ -306,6 +319,8 @@ export interface OpsiPanggilan {
 }
 
 export interface HasilPanggilan {
+  /** Dijawab model cadangan (GEMINI_MODEL_CADANGAN), karena model utama sibuk atau kuotanya habis. */
+  cadangan?: boolean;
   teks: string;
   /** finishReason: STOP, MAX_TOKENS, SAFETY, RECITATION, ... */
   selesai: string;
@@ -382,15 +397,49 @@ async function galatDariRespons(res: Response, k: KonfigGemini): Promise<GalatGe
   if (status === 429) {
     return new GalatGemini("kuota", `Kuota atau laju Gemini habis (HTTP 429)${sisipan}`, { status, jedaDetik: jedaDariHeader(res) ?? 120 });
   }
-  if (status === 408 || status >= 500) return new GalatGemini("server", `Gemini bermasalah (HTTP ${status})${sisipan}`, { status, jedaDetik: jedaDariHeader(res) ?? 60 });
+  if (status === 408 || status >= 500) {
+    // 503 "This model is currently experiencing high demand": Google sudah menerima kunci dan lokasi, hanya modelnya yang penuh.
+    const saran = status === 503 && !k.modelCadangan
+      ? ". Kunci dan lokasi sudah diterima Google; modelnya sedang penuh. Coba lagi beberapa menit lagi, atau pasang model lain sebagai cadangan (variabel GEMINI_MODEL_CADANGAN)"
+      : "";
+    return new GalatGemini("server", `Gemini bermasalah (HTTP ${status})${sisipan}${saran}`, { status, jedaDetik: jedaDariHeader(res) ?? 60 });
+  }
   return new GalatGemini("permintaan", `Gemini menolak permintaan (HTTP ${status})${sisipan}`, rincian);
 }
 
-/** Satu pemanggilan generateContent, dengan pengulangan untuk gangguan jaringan, 5xx, dan penolakan lokasi (alamat keluar bisa berganti). Kuota (429) langsung dilaporkan. */
+/**
+ * `generationConfig.thinkingConfig` dibuang: bentuknya berbeda per seri model (angka `thinkingBudget` atau kata `thinkingLevel`), jadi
+ * nilai yang diatur untuk model utama bisa ditolak model cadangan dengan 400.
+ */
+function tanpaPengaturanBerpikir(badan: unknown): unknown {
+  if (!badan || typeof badan !== "object" || !("generationConfig" in badan)) return badan;
+  const { generationConfig, ...sisa } = badan as { generationConfig?: Record<string, unknown> } & Record<string, unknown>;
+  const { thinkingConfig: _berpikir, ...konfig } = generationConfig ?? {};
+  return Object.keys(konfig).length ? { ...sisa, generationConfig: konfig } : sisa;
+}
+
+/**
+ * Satu pemanggilan generateContent, dengan pengulangan untuk gangguan jaringan, 5xx, dan penolakan lokasi (alamat keluar bisa berganti).
+ * Kuota (429) langsung dilaporkan. Bila model utama tetap gagal karena sibuk (5xx, 408) atau kuota (429) dan `modelCadangan` dipasang,
+ * model cadangan dicoba sekali (hasilnya bertanda `cadangan`); gagal juga, yang dilaporkan galat model utama.
+ */
 export async function panggilGemini(k: KonfigGemini, badan: unknown, opsi: OpsiPanggilan = {}): Promise<HasilPanggilan> {
+  try {
+    return await panggilModel(k, k.model, badan, opsi, MAKS_PERCOBAAN);
+  } catch (e) {
+    if (!(e instanceof GalatGemini) || (e.jenis !== "server" && e.jenis !== "kuota") || !k.modelCadangan) throw e;
+    try {
+      return { ...(await panggilModel(k, k.modelCadangan, tanpaPengaturanBerpikir(badan), opsi, MAKS_PERCOBAAN_CADANGAN)), cadangan: true };
+    } catch {
+      throw e;
+    }
+  }
+}
+
+async function panggilModel(k: KonfigGemini, model: string, badan: unknown, opsi: OpsiPanggilan, maksPercobaan: number): Promise<HasilPanggilan> {
   const fetchFn = opsi.fetchFn ?? fetch;
   const tidur = opsi.tidur ?? tidurNyata;
-  const url = `${k.baseUrl}/models/${k.model}:generateContent`;
+  const url = `${k.baseUrl}/models/${model}:generateContent`;
   const isi = JSON.stringify(badan);
 
   for (let percobaan = 1; ; percobaan++) {
@@ -406,7 +455,7 @@ export async function panggilGemini(k: KonfigGemini, badan: unknown, opsi: OpsiP
       // Lewat batas waktu tidak diulang di tempat: permintaan yang sama akan lewat lagi dan Google mungkin sudah menagihnya.
       // Antrean mengulang pesannya nanti.
       const habisWaktu = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
-      if (!habisWaktu && percobaan < MAKS_PERCOBAAN) {
+      if (!habisWaktu && percobaan < maksPercobaan) {
         await tidur(JEDA_ULANG_MS[percobaan - 1] ?? 12_000);
         continue;
       }
@@ -424,11 +473,11 @@ export async function panggilGemini(k: KonfigGemini, badan: unknown, opsi: OpsiP
       } catch {
         throw new GalatGemini("server", "Jawaban Gemini bukan JSON yang sah", { status: res.status, jedaDetik: 60 });
       }
-      return uraiJawaban(json, k.model);
+      return uraiJawaban(json, model);
     }
 
     const galat = await galatDariRespons(res, k);
-    if ((galat.jenis === "server" || galat.jenis === "lokasi") && percobaan < MAKS_PERCOBAAN) {
+    if ((galat.jenis === "server" || galat.jenis === "lokasi") && percobaan < maksPercobaan) {
       await tidur(JEDA_ULANG_MS[percobaan - 1] ?? 12_000);
       continue;
     }
@@ -440,7 +489,7 @@ export async function panggilGemini(k: KonfigGemini, badan: unknown, opsi: OpsiP
 export async function pingGemini(k: KonfigGemini, opsi: OpsiPanggilan = {}) {
   const mulai = Date.now();
   const hasil = await panggilGemini(k, { contents: [{ role: "user", parts: [{ text: "Balas hanya dengan satu kata: siap" }] }], ...pengaturanGenerasi(k) }, opsi);
-  return { balasan: hasil.teks.trim().slice(0, 80), selesai: hasil.selesai, versiModel: hasil.versiModel, token: hasil.token, durasiMs: Date.now() - mulai };
+  return { balasan: hasil.teks.trim().slice(0, 80), selesai: hasil.selesai, versiModel: hasil.versiModel, token: hasil.token, durasiMs: Date.now() - mulai, cadangan: hasil.cadangan === true };
 }
 
 // ---------------------------------------------------------------------------

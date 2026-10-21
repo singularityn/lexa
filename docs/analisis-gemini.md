@@ -275,19 +275,33 @@ Yang diajarkannya, dan yang diubah:
    `POST /api/impor/ekstrak-ulang` dengan body `{"gemini": true, "uri": "/akn/id/act/uu/2020/11"}` (header `x-admin-token`; `uri`
    melewati penyaring vonis dan catatan "sudah dicoba"). Angka 130 halaman hitungan kasar dari satu pengukuran, dan antrean di
    dashboard bisa disetel berbeda.
+6. **Model penuh: HTTP 503 "This model is currently experiencing high demand"** (dilaporkan pemilik pada skrip panen, 15 Okt 2026,
+   sesudah galat lokasi teratasi). Itu pertanda baik sekaligus buruk: kunci dan lokasi sudah diterima Google, hanya model terbaru yang
+   penuh, dan lonjakan seperti itu bisa berlangsung berjam-jam. Skrip konsol sebelumnya berhenti pada galat pertama. Dibangun:
+   (a) skrip panen tak lagi berhenti pada galat sementara (503, 429, lokasi, jaringan): `geminiCek` dan `geminiUji` menunggu sesuai
+   saran Lexa (`Retry-After` Google, dibatasi 20-120 detik) lalu mencoba lagi sampai `ulangGemini` kali (bawaan 5); tombol Berhenti
+   memutus penantian tanpa memulai pembacaan baru; kunci salah, model tak ada, dan galat tetap lain tetap langsung berhenti;
+   (b) variabel opsional **`GEMINI_MODEL_CADANGAN`**: bila model utama tetap 5xx, 408, atau 429 setelah percobaannya, model cadangan
+   dicoba sekali (dua percobaan) tanpa pengaturan berpikir (bentuknya berbeda per seri); hasilnya bertanda `cadangan`, versi yang
+   menjawab tercatat di `pembacaan_ai.model`, dan bila cadangan gagal juga yang dilaporkan galat model utama; (c) pesan 503 menyebut
+   penyebabnya dan penawarnya. Antrean dan Cron tak berubah: galat sementara mengembalikan pesan dengan jeda tanpa mencatat
+   `gagal`. Nama model cadangan yang sah tak bisa diverifikasi dari lingkungan pengembangan (halaman Google tak terjangkau), jadi
+   isilah persis seperti di daftar model AI Studio; model yang salah nama menjawab 404 dan diabaikan.
 
 Belum diketahui dari satu sampel: apakah 25 pasal itu semuanya benar dan lengkap. Teksnya ada di R2 `teks-ai/akn/id/act/pp/1961/3.md`
 (bandingkan beberapa pasal dengan PDF-nya), dan `kesesuaian_dengan_teks_lama` tak berguna untuk peraturan yang lapisan teksnya nyaris kosong.
 
 ## Pengujian
 
-* Klien, pagar, dan anggaran: `test/gemini.test.ts` (87 tes, tanpa jaringan: `fetch` diganti jawaban palsu, jeda ulang diganti pencatat).
-* Penyimpanan dan keputusan di atas SQLite sungguhan dengan Worker asli: `test/integration/gemini.test.ts` (78 tes): peraturan tanpa
+* Klien, pagar, dan anggaran: `test/gemini.test.ts` (107 tes, tanpa jaringan: `fetch` diganti jawaban palsu, jeda ulang diganti pencatat).
+* Penyimpanan dan keputusan di atas SQLite sungguhan dengan Worker asli: `test/integration/gemini.test.ts` (102 tes): peraturan tanpa
   pasal, pasal tersimpan lebih utuh, halaman terlewat, PDF peraturan lain, tanpa kunci, anggaran habis, kuota, kunci salah, PDF
   ditolak, batas waktu konsumer, pesan ganda, teks bawaan yang tertimpa, uji kering, pengantrean massal, catatan di detail, PDF
-  sungguhan (pdf-lib) dibaca per potongan dan dilanjutkan, dan batas halaman total. Mode otomatis (Cron):
-  `test/integration/gemini-otomatis.test.ts` (26 tes).
-* Skrip dan antarmuka di Chromium dengan Gemini palsu: `e2e/gemini.test.mjs` (10 tes).
+  sungguhan (pdf-lib) dibaca per potongan dan dilanjutkan, batas halaman total, penolakan lokasi, serta model penuh (503) dengan dan
+  tanpa model cadangan. Mode otomatis (Cron): `test/integration/gemini-otomatis.test.ts` (34 tes).
+* Skrip dan antarmuka di Chromium dengan Gemini palsu: `e2e/gemini.test.mjs` (18 tes). Gemini palsu (`scripts/dev-node.ts`) dapat
+  berpura-pura kunci ditolak, kuota habis, model penuh (503), atau hanya model utama yang gagal, dengan `retry-after` yang bisa disetel dan
+  pencacah permintaan, sehingga skrip panen teruji menunggu, mengulang, beralih ke model cadangan, dan berhenti di tengah penantian.
 * Uji mutasi pada klien, pemeriksa, anggaran, penyimpanan, dan route: 164 perubahan kecil pada kode (batas, kondisi, nama header,
   urutan) disuntikkan satu per satu. Putaran pertama menyisakan 34 yang lolos; dari situ tes ditambah (batas anggaran tepat di
   angka, ambang `[tidak terbaca]`, status 408, jeda `Retry-After`, galat tak terduga yang tak boleh ditelan, dan lain-lain) dan satu
@@ -295,7 +309,14 @@ Belum diketahui dari satu sampel: apakah 25 pasal itu semuanya benar dan lengkap
   Gemini sendiri sudah rusak karena penanda halaman ganda, satu mutan yang salah ketik, dan pembuangan BOM yang sudah dikerjakan
   `trim()`). Batas halaman total ditambahkan belakangan dan diuji terpisah: 15 perubahan kecil (`>` menjadi `>=`, batas digeser satu,
   pemeriksaan dihapus atau dilonggarkan untuk PDF pendek, `min` diganti `max`, bawaan 119/121, batas bawah dan atas, nama variabel
-  salah, jenis galat salah, `halaman_maks` hilang dari `geminiCek`), semuanya terbunuh.
+  salah, jenis galat salah, `halaman_maks` hilang dari `geminiCek`), semuanya terbunuh. Penanganan model penuh dan model cadangan
+  diuji terpisah: 33 perubahan kecil pada pemicu cadangan (kuota, 5xx, jenis lain, lokasi), jumlah percobaan, pengaturan berpikir yang
+  ikut terkirim, penanda `cadangan`, galat yang dilaporkan, saran 503, validasi nama model, `geminiCek`, serta pada skrip panen
+  (bawaan 5 percobaan, batas percobaan, galat tetap ikut diulang, lama menunggu dan batas bawah-atasnya, tombol Berhenti, dan
+  cakupan `geminiCek` dan `geminiUji`). Dua lolos pada putaran pertama karena cacat pada tes (jawaban palsu yang sama dipakai tiga
+  kali sehingga badannya tak terbaca ulang; versi model dari jawaban tanpa `modelVersion` tak diperiksa); setelah tes diperbaiki
+  semuanya terbunuh. Satu mutan lain ternyata setara fungsional (nama model dalam pesan 404 tak pernah terlihat untuk model
+  cadangan, karena yang dilaporkan galat model utama), jadi parameter yang tak berguna itu dibuang dari kodenya.
 * Yang **tidak** teruji: Gemini sungguhan. Tak ada panggilan ke Google yang dilakukan dari lingkungan pengembangan.
 
 ## Fakta Gemini API: yang terverifikasi dan yang belum
@@ -375,6 +396,7 @@ itu salah satu alasan tidak dipilih.
 | Biaya tak terkendali | anggaran harian, batas per putaran (maks 20), tunggu selesai sebelum mengantrekan lagi, 429 diulang dengan jeda | kecil |
 | Undang-undang raksasa (1.000+ halaman) menghabiskan anggaran atau menahan antrean otomatis | `GEMINI_HALAMAN_MAKS` (bawaan 120): ditolak `terlalu_panjang` sebelum Gemini dipanggil, dicatat `gagal`, tak dipilih lagi | yang 100-120 halaman masih memakan beberapa giliran antrean; membaca yang lebih panjang adalah keputusan sadar (naikkan batasnya) |
 | Model dipensiunkan atau diganti | variabel + alias + versi dicatat | bila alias berganti model, mutu bisa berubah tanpa pemberitahuan: pantau `pembacaan_ai.model` |
+| Model penuh (HTTP 503 `This model is currently experiencing high demand`) atau kuota habis (429), dilaporkan pemilik, 15 Okt 2026 | Worker mengulang tiga kali (jeda 4 dan 12 detik); `GEMINI_MODEL_CADANGAN` (opsional) dicoba sekali; sisanya galat sementara: antrean mengembalikan pesan dengan jeda tanpa mencatat `gagal`, skrip konsol menunggu 20-120 detik lalu mencoba lagi (`ulangGemini`, bawaan 5); pesan galat menyebut penyebab dan penawarnya | lonjakan berjam-jam hanya menunda pembacaan, tak merusak apa pun. Model cadangan belum pernah diukur dan membaca tanpa pengaturan berpikir, jadi coba dulu dengan `geminiUji` dan pantau `pembacaan_ai.model` |
 | Google menolak lokasi (HTTP 400 `User location is not supported for the API use`), dilaporkan pemilik pada skrip panen, 14 Okt 2026 | Google menilai lokasi dari alamat IP keluar; Worker berjalan di pusat data Cloudflare terdekat dengan pemanggilnya, dari Asia Tenggara kadang Singapura atau Hong Kong. `placement.region: aws:us-east-1` (penangan fetch di AS Timur, dekat D1); galat digolongkan `lokasi` (sementara: tiga percobaan di tempat, lalu antrean mengulang 120 detik, tak pernah dicatat `gagal` per dokumen); `geminiCek` menyebut pusat data tempat Worker berjalan; `sync_log` job `gemini_galat` mencatat (satu per jenis per 10 menit) dengan lokasi keluar | placement hanya berlaku untuk penangan `fetch`: konsumer antrean dan Cron tidak tercakup. Bila konsumer terkena, pesan diulang sampai DLQ dan terlihat sebagai baris `gemini_galat` (`[colo=… loc=…]`); langkah berikutnya Durable Object ber-`locationHint` AS sebagai penyampai. AI Gateway tak dijamin membantu |
 | Kunci bocor | secret, header, penyamaran galat; tak ada di D1, KV, R2, log | rotasi kunci bila curiga |
 | Konsumer antrean terpotong waktu | batas giliran 8 menit untuk pesan Gemini; batas waktu 4 menit per pemanggilan, tak diulang di tempat | pesan yang terpotong diulang antrean (dan mengulang biaya satu dokumen) |
@@ -387,7 +409,8 @@ Prasyarat: secret `GEMINI_API` ada di Worker (Cloudflare > Workers > lexa > Sett
 `keep_vars` sudah aktif, tetapi variabel teks terlihat di dashboard). Migrasi 0008 (tabel `pembacaan_ai`) sudah diterapkan di
 produksi. Variabel opsional: `GEMINI_MODEL`, `GEMINI_BATAS_HARIAN`, `GEMINI_BASE_URL` (untuk AI Gateway Cloudflare), `GEMINI_BERPIKIR`
 (angka atau kata; mengecilkan token berpikir), `GEMINI_HALAMAN` (halaman per panggilan, bawaan 4), `GEMINI_PARALEL` (bawaan 3), dan
-`GEMINI_HALAMAN_MAKS` (PDF yang lebih panjang ditolak tanpa memanggil Gemini, bawaan 120).
+`GEMINI_HALAMAN_MAKS` (PDF yang lebih panjang ditolak tanpa memanggil Gemini, bawaan 120). Opsional juga `GEMINI_MODEL_CADANGAN`
+(model lain yang dicoba sekali bila model utama penuh, 503, atau kuotanya habis, 429; nama persis dari AI Studio).
 
 Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bpk-console-harvest.js`:
 
@@ -398,6 +421,8 @@ Di konsol peramban (tab situs BPK atau Lexa), setel opsi lalu tempel `scripts/bp
    (perkiraan ±420; `calon_belum_dicoba` di `/api/impor/ringkasan` menyebut yang pasti).
 1. **Cek sambungan.** `window.LEXA_PANEN = { geminiCek: true }`. Hasil yang baik mencetak model, versi model, anggaran, dan pengaturan
    yang berlaku (`berpikir`, `halaman_per_panggilan`, `paralel`, `halaman_maks`). Galat menyebut penyebabnya (kunci salah, model tak ada, kuota).
+   Galat sementara (model penuh 503, kuota 429) tidak menghentikan skrip: ia menunggu dan mencoba lagi sampai 5 kali (`ulangGemini`),
+   dan bila model cadangan terpasang dan yang menjawab, barisnya berbunyi "DIJAWAB MODEL CADANGAN".
    **Mengecilkan token berpikir:** setel `GEMINI_BERPIKIR` di dashboard (mis. `0` pada seri 2.5, atau `LOW` pada seri 3), lalu
    `geminiCek` lagi. Permintaan `geminiCek` membawa pengaturan yang sama dengan pembacaan, jadi nilai yang tak diterima model muncul
    sebagai galat 400 berisi pesan Google (mis. "Thinking level MINIMAL is not supported"), dan token berpikir turun di `token.pikir` pada
@@ -445,3 +470,18 @@ Hentikan dan periksa bila: banyak `ditolak` dengan sebab yang sama (perintah per
 * **Files API** untuk PDF di atas 14 MB, dan **Batch API** (biaya lebih rendah, hasil sampai 24 jam) bila volumenya membesar.
 * **Dua bacaan saling memeriksa per pasal** (lapisan teks vs gambar) dengan antrean tinjau manual untuk yang berselisih.
 * **AI Gateway** Cloudflare di depan Gemini (log, cache, batas laju): cukup mengisi `GEMINI_BASE_URL`, tanpa perubahan kode.
+* **Penyedia AI lain (NVIDIA NIM dengan model DeepSeek).** Ditanyakan pemilik pada 15 Oktober 2026 (kunci gratis dari NVIDIA). Kunci yang
+  ditempel di percakapan dianggap bocor: tidak dipakai, tidak disimpan di mana pun, dan harus dicabut lalu dibuat ulang. Penilaian di
+  bawah berasal dari pencarian web (halaman NVIDIA tak terjangkau dari lingkungan pengembangan), belum dicoba, dan harus dicek ulang:
+  * Titik akhir `integrate.api.nvidia.com/v1/chat/completions` berformat OpenAI, jadi penyedia kedua secara teknis kecil: satu adaptor,
+    satu secret baru (bukan variabel teks; tak pernah di kode, berkas, atau log), dan pagar penerimaan yang sama (`putuskanPenerimaanAi`).
+  * Kartu model di katalog NGC menyebut DeepSeek-V4.1-Flash multimodal (teks dan gambar masuk, teks keluar, konteks sampai 1 juta
+    token). Tak ada sumber yang menyatakannya membaca PDF langsung, dan Worker tak bisa mengubah halaman PDF menjadi gambar (tanpa
+    kanvas atau pdfium), jadi untuk pindaian ia bukan pengganti Gemini. Yang mungkin: merapikan teks yang sudah diekstrak dari lapisan
+    teks PDF, tanpa bisa memulihkan pasal yang memang tak ada di teks itu.
+  * Akses gratis NVIDIA, menurut forum dan blog pihak ketiga: ±40 permintaan per menit per akun, untuk prototipe dan pengujian (bukan
+    produksi), dan isi kiriman boleh dipakai NVIDIA. Baca syarat resminya sebelum memakainya untuk Lexa.
+  * Mutu baca pindaian hukum berbahasa Indonesia belum diukur untuk model ini (satu ulasan informal atas pendahulunya melaporkan 97-98%
+    pada sebuah tabel pindaian).
+  Bila Gemini terus penuh, jalur yang masuk akal adalah adaptor teks-saja sebagai cadangan, dimulai dari uji kering. Belum dibangun;
+  menunggu keputusan pemilik.
