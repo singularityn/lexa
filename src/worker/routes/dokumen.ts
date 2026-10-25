@@ -64,6 +64,45 @@ dokumen.get("/status", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/dokumen/minta — { uri }: pembaca meminta PDF peraturan yang belum diarsipkan
+//
+// Panen PDF hanya bisa dilakukan dari peramban pengelola (BPK menolak alamat server), jadi yang bisa dilakukan pembaca adalah
+// memberi tahu mana yang paling dibutuhkan. Permintaan dicatat (tabel `permintaan_pdf`, migrasi 0010) dan didahulukan di antrean
+// panen. Satu alamat hanya dihitung sekali per peraturan per hari (permintaan ulang dijawab 200 tanpa menambah hitungan), dan
+// paling banyak MAKS_MINTA_PER_JAM peraturan berbeda per jam, supaya antrean tak bisa dibanjiri.
+// ---------------------------------------------------------------------------
+const MAKS_MINTA_PER_JAM = 30;
+
+dokumen.post("/minta", async (c) => {
+  const body = await c.req.json<{ uri?: unknown }>().catch(() => null);
+  const uri = typeof body?.uri === "string" ? body.uri : "";
+  if (!uri) return c.json({ error: "uri_kosong", message: "Body harus memuat { uri }." }, 400);
+
+  const l = await ambilBaris(c.env.DB, uri, bacaCakupan(c.env.CAKUPAN_JENIS));
+  if (!l) return c.json({ error: "tidak_ditemukan", message: `${uri} tidak ada di indeks.` }, 404);
+  if (l.r2_pdf_key) return c.json({ status: "sudah_ada", pdf_url: `/api/dokumen/pdf?uri=${encodeURIComponent(l.frbr_uri)}` });
+
+  const ip = c.req.header("cf-connecting-ip") ?? "tanpa-ip";
+  const kunciUri = `minta-pdf:${ip}:${l.frbr_uri}`;
+  if (await c.env.CACHE.get(kunciUri)) return c.json({ status: "tercatat", ulang: true });
+  const kunciJam = `minta-pdf-jam:${ip}`;
+  const dalamJam = Number(await c.env.CACHE.get(kunciJam)) || 0;
+  if (dalamJam >= MAKS_MINTA_PER_JAM) {
+    return c.json({ error: "terlalu_sering", message: "Terlalu banyak permintaan dalam satu jam. Coba lagi nanti." }, 429);
+  }
+
+  await c.env.DB.prepare(
+    `INSERT INTO permintaan_pdf (frbr_uri) VALUES (?)
+     ON CONFLICT(frbr_uri) DO UPDATE SET jumlah = jumlah + 1, terakhir = datetime('now')`,
+  ).bind(l.frbr_uri).run();
+  await Promise.all([
+    c.env.CACHE.put(kunciUri, "1", { expirationTtl: 86_400 }),
+    c.env.CACHE.put(kunciJam, String(dalamJam + 1), { expirationTtl: 3_600 }),
+  ]).catch(() => {});
+  return c.json({ status: "tercatat" }, 201);
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/dokumen/pdf?uri= — sajikan PDF dari R2
 // ---------------------------------------------------------------------------
 dokumen.get("/pdf", async (c) => {

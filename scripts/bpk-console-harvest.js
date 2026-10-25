@@ -662,7 +662,8 @@
       terakhir = kerja;
       if (putaran === 1) {
         console.log("[Lexa panen] " + angka(kerja.total) + " peraturan masih perlu teks (" + angka(kerja.tanpa_bpk) + " di antaranya tanpa tautan BPK" +
-          (kerja.tanpa_berkas ? ", " + angka(kerja.tanpa_berkas) + " ditandai tanpa berkas di BPK" : "") + "); memproses " + kerja.daftar.length + (opsi.terus ? " per putaran." : "."));
+          (kerja.tanpa_berkas ? ", " + angka(kerja.tanpa_berkas) + " ditandai tanpa berkas di BPK" : "") +
+          (kerja.diminta_pembaca ? ", " + angka(kerja.diminta_pembaca) + " diminta pembaca lewat \"Minta PDF ini\" dan didahulukan" : "") + "); memproses " + kerja.daftar.length + (opsi.terus ? " per putaran." : "."));
         if (kerja.tanpa_bpk > 0 && !opsi.jelajah) console.log("[Lexa panen] Yang tanpa tautan BPK baru bisa dipanen sesudah penjelajahan daftar BPK: jalankan dengan { jelajah: true }.");
       }
       if (!kerja.daftar.length) { berhentiKarena = "daftar kerja habis"; break; }

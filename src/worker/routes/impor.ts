@@ -85,6 +85,8 @@ async function hitungTanpaBerkas(db: D1Database): Promise<number> {
 //   ?lama=1        sertakan juga peraturan berpasal dari teks lama (sumber yang sudah dihentikan), supaya naskah BPK
 //                  menggantikannya; didahulukan yang belum punya teks sama sekali
 //   ?semua=1       sertakan juga yang sudah ditandai "tanpa berkas" di BPK (untuk memeriksa ulang)
+// Peraturan yang diminta pembaca ("Minta PDF ini", tabel `permintaan_pdf`) selalu ikut dan didahulukan, yang paling banyak peminatnya
+// lebih dulu (`diminta` pada tiap entri, `diminta_pembaca` untuk jumlahnya).
 // Yang sudah diunggah PDF-nya (r2_pdf_key) tak muncul lagi, jadi pemanggilan berikutnya mengembalikan yang baru.
 // ---------------------------------------------------------------------------
 impor.get("/butuh-teks", async (c) => {
@@ -101,48 +103,64 @@ impor.get("/butuh-teks", async (c) => {
   }
 
   const dalam = klausaCakupan(jenis, "l.jenis");
-  // Tanpa teks sama sekali, atau (bila diminta) yang teksnya sebagian, dengan nomor pasal bercelah (`celah`), atau yang
-  // berpasal dari teks lama sumber yang sudah dihentikan, bukan dari BPK (`lama`): naskah BPK akan menggantikannya bila cukup
-  // utuh. Yang PDF-nya sudah diunggah tak diulang.
-  const kondisi = `(${[
-    "l.jumlah_pasal = 0",
-    ...(denganCelah
-      ? [`l.frbr_uri IN (
-         SELECT a.frbr_uri FROM articles a WHERE a.nomor_pasal GLOB '[0-9]*'
-          GROUP BY a.frbr_uri HAVING MAX(CAST(a.nomor_pasal AS INTEGER)) - COUNT(DISTINCT a.nomor_pasal) >= 2)`]
-      : []),
-    ...(denganLama ? ["(l.jumlah_pasal > 0 AND (l.r2_text_key IS NULL OR l.r2_text_key NOT LIKE '%.md'))"] : []),
-  ].join(" OR ")})`;
   const tanpaTanda = semua ? "" : `AND NOT EXISTS (SELECT 1 FROM sync_state s WHERE s.key = '${AWALAN_TANPA_BERKAS}' || l.frbr_uri)`;
-  const dasar = `FROM laws l WHERE ${dalam} AND ${kondisi} AND l.r2_pdf_key IS NULL ${tanpaTanda}`;
-
-  const { results } = await c.env.DB.prepare(
-    `SELECT l.frbr_uri, l.jenis, l.nomor, l.tahun, l.judul, l.bpk_id, l.sumber_url, l.jumlah_pasal, l.isi_status
-       ${dasar}
-      ORDER BY (CASE WHEN l.jumlah_pasal > 0 THEN 1 ELSE 0 END), (CASE WHEN l.bpk_id IS NOT NULL AND l.bpk_id <> '' THEN 0 ELSE 1 END),
-               ${sqlPrioritas("l.")}, l.frbr_uri
-      LIMIT ?`,
-  ).bind(batas).all<{
-    frbr_uri: string; jenis: string; nomor: string; tahun: number; judul: string; bpk_id: string | null;
-    sumber_url: string | null; jumlah_pasal: number; isi_status: string;
-  }>();
-  const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n ${dasar}`).first<{ n: number }>();
-  const tanpaBpk = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n ${dasar} AND (l.bpk_id IS NULL OR l.bpk_id = '') AND (l.sumber_url IS NULL OR l.sumber_url NOT LIKE '%bpk.go.id%')`,
-  ).first<{ n: number }>();
-
   const bpk = c.env.BPK_BASE.replace(/\/$/, "");
+
+  /**
+   * `denganPermintaan`: peraturan yang diminta pembaca (tabel `permintaan_pdf`, migrasi 0010) ikut masuk antrean walau sudah berpasal
+   * dari teks lama, dan didahulukan, yang paling banyak peminatnya lebih dulu. Tabelnya belum ada = antrean seperti sebelumnya.
+   */
+  const susun = async (denganPermintaan: boolean) => {
+    // Tanpa teks sama sekali, atau (bila diminta) yang teksnya sebagian, dengan nomor pasal bercelah (`celah`), atau yang
+    // berpasal dari teks lama sumber yang sudah dihentikan, bukan dari BPK (`lama`): naskah BPK akan menggantikannya bila cukup
+    // utuh, atau yang diminta pembaca. Yang PDF-nya sudah diunggah tak diulang.
+    const kondisi = `(${[
+      "l.jumlah_pasal = 0",
+      ...(denganCelah
+        ? [`l.frbr_uri IN (
+           SELECT a.frbr_uri FROM articles a WHERE a.nomor_pasal GLOB '[0-9]*'
+            GROUP BY a.frbr_uri HAVING MAX(CAST(a.nomor_pasal AS INTEGER)) - COUNT(DISTINCT a.nomor_pasal) >= 2)`]
+        : []),
+      ...(denganLama ? ["(l.jumlah_pasal > 0 AND (l.r2_text_key IS NULL OR l.r2_text_key NOT LIKE '%.md'))"] : []),
+      ...(denganPermintaan ? ["p.frbr_uri IS NOT NULL"] : []),
+    ].join(" OR ")})`;
+    const dasar = `FROM laws l ${denganPermintaan ? "LEFT JOIN permintaan_pdf p ON p.frbr_uri = l.frbr_uri" : ""} WHERE ${dalam} AND ${kondisi} AND l.r2_pdf_key IS NULL ${tanpaTanda}`;
+    const urutPermintaan = denganPermintaan ? "(CASE WHEN p.frbr_uri IS NOT NULL THEN 0 ELSE 1 END), COALESCE(p.jumlah, 0) DESC, " : "";
+
+    const { results } = await c.env.DB.prepare(
+      `SELECT l.frbr_uri, l.jenis, l.nomor, l.tahun, l.judul, l.bpk_id, l.sumber_url, l.jumlah_pasal, l.isi_status,
+              ${denganPermintaan ? "COALESCE(p.jumlah, 0)" : "0"} AS diminta
+         ${dasar}
+        ORDER BY ${urutPermintaan}(CASE WHEN l.jumlah_pasal > 0 THEN 1 ELSE 0 END), (CASE WHEN l.bpk_id IS NOT NULL AND l.bpk_id <> '' THEN 0 ELSE 1 END),
+                 ${sqlPrioritas("l.")}, l.frbr_uri
+        LIMIT ?`,
+    ).bind(batas).all<{
+      frbr_uri: string; jenis: string; nomor: string; tahun: number; judul: string; bpk_id: string | null;
+      sumber_url: string | null; jumlah_pasal: number; isi_status: string; diminta: number;
+    }>();
+    const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n ${dasar}`).first<{ n: number }>();
+    const tanpaBpk = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS n ${dasar} AND (l.bpk_id IS NULL OR l.bpk_id = '') AND (l.sumber_url IS NULL OR l.sumber_url NOT LIKE '%bpk.go.id%')`,
+    ).first<{ n: number }>();
+    const pembaca = denganPermintaan ? await c.env.DB.prepare(`SELECT COUNT(*) AS n ${dasar} AND p.frbr_uri IS NOT NULL`).first<{ n: number }>() : null;
+    return { results, total, tanpaBpk, pembaca };
+  };
+  const { results, total, tanpaBpk, pembaca } = await susun(true).catch((e) => {
+    if (!/permintaan_pdf/.test(String(e))) throw e;
+    return susun(false);
+  });
+
   const daftar = results.map((r) => {
     const sumberBpk = r.sumber_url && /^https:\/\/(www\.)?peraturan\.bpk\.go\.id\//i.test(r.sumber_url) ? r.sumber_url : null;
     return {
       frbr_uri: r.frbr_uri, jenis: r.jenis, nomor: r.nomor, tahun: r.tahun, judul: r.judul, jumlah_pasal: r.jumlah_pasal,
-      isi_status: r.isi_status, bpk_id: r.bpk_id || null,
+      isi_status: r.isi_status, bpk_id: r.bpk_id || null, diminta: r.diminta,
       // Alamat halaman rincian di BPK: tautan sumber bila memang BPK (memuat slug), selain itu dari bpk_id; null bila tak ada.
       detail_url: sumberBpk ?? (r.bpk_id ? `${bpk}/Details/${r.bpk_id}` : null),
     };
   });
   return c.json(
-    { cakupan: jenis, total: total?.n ?? 0, tanpa_bpk: tanpaBpk?.n ?? 0, tanpa_berkas: await hitungTanpaBerkas(c.env.DB), daftar },
+    { cakupan: jenis, total: total?.n ?? 0, tanpa_bpk: tanpaBpk?.n ?? 0, diminta_pembaca: pembaca?.n ?? 0, tanpa_berkas: await hitungTanpaBerkas(c.env.DB), daftar },
     200,
     headerCors(c),
   );
@@ -162,7 +180,15 @@ impor.get("/ringkasan", async (c) => {
             SUM(CASE WHEN jumlah_pasal = 0 AND r2_pdf_key IS NULL THEN 1 ELSE 0 END) AS perlu_pdf
        FROM laws WHERE ${klausaCakupan(cakupan, "jenis")} GROUP BY jenis`,
   ).all();
-  return c.json({ cakupan, per_jenis: results, tanpa_berkas: await hitungTanpaBerkas(c.env.DB), gemini: await ringkasanGemini(c.env) }, 200, headerCors(c));
+  // Permintaan pembaca yang PDF-nya belum masuk; tabel belum ada (migrasi 0010) = tanpa hitungan.
+  const diminta = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM permintaan_pdf p JOIN laws l ON l.frbr_uri = p.frbr_uri WHERE l.r2_pdf_key IS NULL AND ${klausaCakupan(cakupan, "l.jenis")}`,
+  ).first<{ n: number }>().catch(() => null);
+  return c.json(
+    { cakupan, per_jenis: results, tanpa_berkas: await hitungTanpaBerkas(c.env.DB), diminta_pdf: diminta?.n ?? 0, gemini: await ringkasanGemini(c.env) },
+    200,
+    headerCors(c),
+  );
 });
 
 /**

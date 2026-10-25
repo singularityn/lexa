@@ -583,7 +583,8 @@ export interface PeraturanUji {
   instansi?: string;
   bidang?: string;
   bpkId?: string;
-  pasal?: Array<{ nomor: string; ayat?: string | null; bab?: string | null; isi: string }>;
+  /** `halaman`: halaman PDF tempat pasal dimulai menurut server (articles.halaman); tak diisi = belum diketahui. */
+  pasal?: Array<{ nomor: string; ayat?: string | null; bab?: string | null; isi: string; halaman?: number | null }>;
 }
 
 /** Sisipkan peraturan dan pasal lewat SQL biasa; trigger mengisi indeks FTS5. */
@@ -605,9 +606,9 @@ export async function sisipkan(l: Lingkungan, daftar: PeraturanUji[]): Promise<v
       const id = `${p.uri}#pasal-${a.nomor}${a.ayat ? `-ayat-${a.ayat}` : ""}`;
       await l.db
         .prepare(
-          `INSERT INTO articles (id, frbr_uri, nomor_pasal, ayat, bab, isi, urutan) VALUES (?,?,?,?,?,?,?)`,
+          `INSERT INTO articles (id, frbr_uri, nomor_pasal, ayat, bab, isi, urutan, halaman) VALUES (?,?,?,?,?,?,?,?)`,
         )
-        .bind(id, p.uri, a.nomor, a.ayat ?? null, a.bab ?? null, a.isi, i)
+        .bind(id, p.uri, a.nomor, a.ayat ?? null, a.bab ?? null, a.isi, i, a.halaman ?? null)
         .run();
     }
   }

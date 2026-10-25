@@ -137,3 +137,32 @@ describe.skipIf(!sqliteAda)("halaman PDF tiap pasal", () => {
     expect(await arsip?.text()).toContain("### Page 3");
   });
 });
+
+describe.skipIf(!sqliteAda)("hasil pencarian membawa halaman PDF pasal", () => {
+  let l: Lingkungan;
+  beforeEach(() => {
+    l = buatLingkungan();
+  });
+  afterEach(() => l.tutup());
+
+  it("hasil pasal membawa `halaman` bila diketahui; yang belum diketahui, dan hasil tingkat peraturan, tak membawanya", async () => {
+    await sisipkan(l, [
+      {
+        uri: "/akn/id/act/uu/2003/13", jenis: "UU", nomor: "13", tahun: 2003, judul: "Ketenagakerjaan",
+        pasal: [
+          { nomor: "82", isi: "Pekerja perempuan berhak memperoleh istirahat melahirkan.", halaman: 6 },
+          { nomor: "156", isi: "Pekerja yang terkena pemutusan hubungan kerja berhak memperoleh pesangon istirahat.", halaman: null },
+        ],
+      },
+    ]);
+    const r = await json<{ hits: Array<{ nomor_pasal: string | null; article_id: string | null; halaman?: number }> }>(
+      await panggil(l, `/api/search?q=${encodeURIComponent("istirahat")}&mode=keyword`),
+    );
+    const pasal = r.hits.filter((h) => h.article_id !== null);
+    expect(pasal.find((h) => h.nomor_pasal === "82")?.halaman).toBe(6);
+    const tanpa = pasal.find((h) => h.nomor_pasal === "156");
+    expect(tanpa).toBeDefined();
+    expect(tanpa && "halaman" in tanpa).toBe(false);
+    for (const h of r.hits.filter((x) => x.article_id === null)) expect("halaman" in h).toBe(false);
+  });
+});

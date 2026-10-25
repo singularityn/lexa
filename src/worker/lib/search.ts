@@ -466,6 +466,8 @@ interface BarisHidrasi {
   nomor_pasal: string | null;
   ayat: string | null;
   isi: string | null;
+  /** Halaman PDF tempat pasal ini dimulai (articles.halaman); null bila tak diketahui atau bukan hasil pasal. */
+  halaman: number | null;
 }
 
 /**
@@ -492,22 +494,22 @@ async function hidrasi(
          FROM laws WHERE frbr_uri IN (${uriUnik.map(() => "?").join(",")}) AND ${klausaCakupan(cakupan, "jenis")}`,
     )
     .bind(...uriUnik)
-    .all<Omit<BarisHidrasi, "article_id" | "nomor_pasal" | "ayat" | "isi">>();
+    .all<Omit<BarisHidrasi, "article_id" | "nomor_pasal" | "ayat" | "isi" | "halaman">>();
 
   const lawMap = new Map(lawRows.results.map((r) => [r.frbr_uri, { ...r, judul: bersihkanJudul(r.judul), tentang: r.tentang === null ? null : bersihkanJudul(r.tentang) }]));
 
   // Detail pasal, bila ada kandidat level pasal.
-  const artMap = new Map<string, { nomor_pasal: string; ayat: string | null; isi: string }>();
+  const artMap = new Map<string, { nomor_pasal: string; ayat: string | null; isi: string; halaman: number | null }>();
   if (artikelUnik.length) {
     const artRows = await db
       .prepare(
-        `SELECT id, nomor_pasal, ayat, isi
+        `SELECT id, nomor_pasal, ayat, isi, halaman
            FROM articles WHERE id IN (${artikelUnik.map(() => "?").join(",")})`,
       )
       .bind(...artikelUnik)
-      .all<{ id: string; nomor_pasal: string; ayat: string | null; isi: string }>();
+      .all<{ id: string; nomor_pasal: string; ayat: string | null; isi: string; halaman: number | null }>();
     for (const r of artRows.results) {
-      artMap.set(r.id, { nomor_pasal: rapikanNomorPasal(r.nomor_pasal), ayat: r.ayat, isi: r.isi });
+      artMap.set(r.id, { nomor_pasal: rapikanNomorPasal(r.nomor_pasal), ayat: r.ayat, isi: r.isi, halaman: r.halaman ?? null });
     }
   }
 
@@ -521,6 +523,7 @@ async function hidrasi(
       nomor_pasal: art?.nomor_pasal ?? null,
       ayat: art?.ayat ?? null,
       isi: art?.isi ?? null,
+      halaman: art?.halaman ?? null,
     });
   }
 
@@ -743,7 +746,7 @@ export async function cari(
     // Vektor yatim: pasalnya sudah diganti saat peraturan diingest ulang, tetapi vektor lama
     // tidak pernah dihapus dari Vectorize. Tampilkan peraturannya, bukan "pasal" tanpa nomor.
     if (m.article_id !== null && m.nomor_pasal === null) {
-      m = { ...m, article_id: null, isi: null };
+      m = { ...m, article_id: null, isi: null, halaman: null };
     }
     const kunciHasil = m.article_id ?? m.frbr_uri;
     if (sudahAda.has(kunciHasil)) continue;
@@ -760,6 +763,7 @@ export async function cari(
       article_id: m.article_id,
       nomor_pasal: m.nomor_pasal,
       ayat: m.ayat,
+      ...(m.halaman !== null ? { halaman: m.halaman } : {}),
       score: Number(t.score.toFixed(6)),
       sources: [...t.sources],
       ...(cocokJudul(t) ? { cocok_judul: true as const } : {}),

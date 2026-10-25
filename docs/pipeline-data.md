@@ -128,8 +128,9 @@ Jadi tanpa tahap pertama, skrip tak tahu ke mana harus pergi untuk hampir semua 
 
 | Endpoint | Kegunaan |
 |---|---|
-| `GET /api/impor/butuh-teks?batas=50&jenis=UU,PP&celah=1&lama=1&semua=1` | daftar kerja: peraturan tanpa teks dan tanpa PDF; yang bertaut BPK didahulukan, lalu menurut jenis dan tahun terbaru (`lib/prioritas.ts`). Menjawab `total`, `tanpa_bpk`, `tanpa_berkas`. `celah=1` menyertakan teks yang baru sebagian; `lama=1` menyertakan peraturan berpasal dari teks lama sumber yang sudah dihentikan (didahulukan yang belum berteks sama sekali); `semua=1` menyertakan yang ditandai tanpa berkas |
-| `GET /api/impor/ringkasan` | per jenis: `total`, `bertaut_bpk`, `ber_pdf`, `berpasal`, `pdf_belum_berpasal`, `perlu_pdf`; plus `tanpa_berkas` |
+| `GET /api/impor/butuh-teks?batas=50&jenis=UU,PP&celah=1&lama=1&semua=1` | daftar kerja: peraturan tanpa teks dan tanpa PDF; **yang diminta pembaca ("Minta PDF ini") paling depan, terbanyak peminatnya dulu**, lalu yang bertaut BPK, lalu menurut jenis dan tahun terbaru (`lib/prioritas.ts`). Menjawab `total`, `tanpa_bpk`, `tanpa_berkas`, `diminta_pembaca`, dan `diminta` pada tiap entri. `celah=1` menyertakan teks yang baru sebagian; `lama=1` menyertakan peraturan berpasal dari teks lama sumber yang sudah dihentikan (didahulukan yang belum berteks sama sekali); `semua=1` menyertakan yang ditandai tanpa berkas |
+| `GET /api/impor/ringkasan` | per jenis: `total`, `bertaut_bpk`, `ber_pdf`, `berpasal`, `pdf_belum_berpasal`, `perlu_pdf`; plus `tanpa_berkas` dan `diminta_pdf` (diminta pembaca dan belum ber-PDF) |
+| `POST /api/dokumen/minta` | `{ uri }`, tanpa token: tombol "Minta PDF ini" di halaman peraturan. Dicatat di `permintaan_pdf` (migrasi 0010); satu alamat dihitung sekali per peraturan, paling banyak 30 peraturan berbeda per alamat per jam. Lihat [bagian di bawah](#permintaan-pdf-dari-pembaca) |
 | `POST /api/impor/tautan` | `{ tautan: [{ url, teks, slug?, konteks?, uri? }], buat? }` (maks 200). Jawabannya memuat status tiap entri: `ditautkan`, `sudah`, `dibuat`, `tidak_ada`, `luar_cakupan`, `tidak_dikenali`, `ambigu`, `bentrok`, `gagal`. `uri` memetakan manual ke peraturan Lexa (mis. UUD 1945 ke `/akn/id/act/uud/1945/original`) |
 | `POST /api/impor/manifest` | metadata + relasi halaman rincian. Dicocokkan menurut sitasi, bukan URI turunan; `lexa_uri` mengikat dokumen ke satu peraturan (hanya memperbarui; ditolak bila sitasinya tak cocok) |
 | `PUT /api/impor/pdf?uri=` | berkas PDF; ke R2 `pdf/…`, lalu diantrekan `ekstrak_pdf` |
@@ -173,6 +174,7 @@ tab yang tersembunyi. Urutan yang dianjurkan:
 | b. Penjelajahan | `{ jelajah: true, hanyaJelajah: true }` | seluruh daftar UUD, Tap MPR, UU, Perppu, PP ditautkan (PP ±250-500 permintaan; jeda ±3 detik) |
 | c. Uji PDF | `{ kering: true, batas: 3 }` | tiga PDF diunduh dan dibuang |
 | d. Panen | `{ batas: 200, terus: true }` | putaran demi putaran sampai daftar kerja habis, tak ada kemajuan, 5 kegagalan beruntun, atau Anda menghentikannya |
+| e. Lengkapi | `{ batas: 200, terus: true, lama: true }` | sesudah (d) habis: peraturan yang sudah berpasal dari teks lama (sumber yang dihentikan) tetap belum punya PDF, jadi tab PDF-nya kosong dan pasalnya tak punya nomor halaman. Langkah ini memanen PDF-nya dan menggantikan teks lamanya dengan naskah BPK |
 
 Jalankan lagi kapan saja untuk melanjutkan: yang sudah tertaut dan yang PDF-nya sudah terunggah tak muncul lagi. Penjelajahan
 yang terputus dilanjutkan dengan `halamanAwal` (alamat daftar dan nomor halaman tercetak di konsol).
@@ -241,6 +243,29 @@ fetch('https://lexa.<akun>.workers.dev/api/impor/tanpa-berkas', {
   method: 'POST', headers: { 'x-admin-token': T, 'content-type': 'application/json' },
   body: JSON.stringify({ uris: ['/akn/id/act/uu/2023/6'], alasan: 'unduhan gagal berulang, diselidiki manual' }),
 }).then(r => r.json()).then(console.log)
+```
+
+### Permintaan PDF dari pembaca
+
+Peraturan yang belum punya PDF menampilkan tombol **Minta PDF ini** di tab PDF-nya. Ketukan itu `POST /api/dokumen/minta`
+dan mencatat satu baris di `permintaan_pdf` (`frbr_uri`, `jumlah`): satu alamat dihitung sekali per peraturan per hari (penanda
+di KV) dan paling banyak 30 peraturan berbeda per jam, jadi satu orang tak bisa menggeser antrean. Peraturan yang
+sudah ber-PDF tak dicatat (jawabannya menunjuk ke PDF-nya), begitu pula yang di luar cakupan.
+
+Manfaatnya ada di sisi panen: `GET /api/impor/butuh-teks` menaruh yang diminta di depan (terbanyak peminatnya dulu) dan
+**memasukkannya ke daftar walau sudah berpasal dari teks lama**, tanpa harus `lama: true`. Putaran pertama skrip panen
+mencetak berapa yang diminta pembaca. Begitu PDF-nya terunggah, permintaannya hilang dari antrean (kuncinya `r2_pdf_key`), dan
+Cron uraian ulang atau antrean ekstraksi mengisi pasal beserta nomor halamannya. Yang ditandai "tanpa berkas" tetap tak diminta
+lagi walau dimintai pembaca (kecuali `semua=1`). Bila migrasi 0010 belum diterapkan, antrean bekerja seperti semula dan tombol itu
+gagal dengan pesan "Permintaan belum terkirim" (pembaca tak melihat galat teknis), jadi terapkan migrasinya sebelum deploy.
+
+Memeriksa di produksi:
+
+```sql
+-- Yang paling dicari pembaca dan belum ber-PDF
+SELECT p.frbr_uri, p.jumlah, l.jenis, l.nomor, l.tahun
+  FROM permintaan_pdf p JOIN laws l ON l.frbr_uri = p.frbr_uri
+ WHERE l.r2_pdf_key IS NULL ORDER BY p.jumlah DESC LIMIT 20;
 ```
 
 ### Biaya dan batas

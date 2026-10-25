@@ -105,6 +105,8 @@ export interface SearchHit {
   article_id: string | null;
   nomor_pasal: string | null;
   ayat: string | null;
+  /** Halaman PDF tempat pasal ini dimulai; ada hanya bila diketahui (hasil pasal dari peraturan yang PDF-nya sudah diuraikan per halaman). */
+  halaman?: number;
   /**
    * Skor RRF gabungan. Urutan hasil bukan urutan skor: peraturan yang namanya memuat kata kunci (`cocok_judul`)
    * selalu didahulukan, apa pun skornya (lihat lib/judul.ts).
