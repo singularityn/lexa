@@ -55,6 +55,8 @@ export interface Article {
   judul: string | null;
   isi: string;
   urutan: number;
+  /** Halaman PDF (mulai 1) tempat pasal ini dimulai, dari penanda halaman naskah; null/tak ada bila tak diketahui. */
+  halaman?: number | null;
 }
 
 /**

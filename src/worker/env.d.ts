@@ -79,6 +79,13 @@ interface Env {
   GEMINI_OTOMATIS_UJI_MAKS?: string;
   /** Vonis ekstraksi yang menjadi calon, dipisah koma (bawaan `tanpa_pasal,berat,gagal` pada `uji`; semua vonis pada `ya`). */
   GEMINI_OTOMATIS_VONIS?: string;
+  /**
+   * Uraian ulang otomatis (lib/uraianUlang.ts): Cron 15 menit menguraikan ulang arsip teks peraturan yang terakhir diurai dengan versi
+   * pengurai lama, supaya perbaikan pengurai sampai ke seluruh korpus tanpa skrip konsol. Menyala bawaan; `mati` mematikannya.
+   */
+  URAIAN_ULANG_OTOMATIS?: string;
+  /** Peraturan yang diuraikan ulang tiap putaran Cron (bawaan 20, 1-100). */
+  URAIAN_ULANG_BATAS?: string;
 
   // --- Secret (dipasang lewat `wrangler secret put`) ---
   ADMIN_TOKEN: string;

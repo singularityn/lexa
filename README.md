@@ -205,6 +205,7 @@ cp .dev.vars.example .dev.vars   # hanya untuk wrangler dev; berkas ini di-ignor
 | `GEMINI_BERPIKIR`, `GEMINI_HALAMAN`, `GEMINI_PARALEL`, `GEMINI_HALAMAN_MAKS` | variabel (opsional) | pengaturan berpikir model (angka = `thinkingBudget`, kata = `thinkingLevel`; tanpa bawaan, diuji `geminiCek`), halaman per panggilan untuk PDF panjang (bawaan 4, 1-20), panggilan bersamaan per PDF (bawaan 3, 1-8), dan batas panjang PDF yang mau dibaca (bawaan 120 halaman, 1-5000; yang lebih panjang ditolak `terlalu_panjang` sebelum Gemini dipanggil, supaya Cipta Kerja dan sejenisnya tak menghabiskan anggaran) |
 | `GEMINI_OTOMATIS` | variabel (opsional) | `uji` (percobaan kering atas peraturan yang teksnya bermasalah, berhenti sendiri setelah `GEMINI_OTOMATIS_UJI_MAKS`) atau `ya` (membaca sungguhan SEMUA PDF yang belum dibaca Gemini, yang paling rusak dulu) lewat Cron 15 menit; tak ada atau nilai lain: mati |
 | `GEMINI_OTOMATIS_BATAS`, `GEMINI_OTOMATIS_UJI_MAKS`, `GEMINI_OTOMATIS_VONIS` | variabel (opsional) | peraturan per putaran (bawaan 2 pada `uji` dan 5 pada `ya`, maks 20), banyak percobaan kering (bawaan 8), dan vonis calon (bawaan `tanpa_pasal,berat,gagal` pada `uji`, semua vonis pada `ya`) |
+| `URAIAN_ULANG_OTOMATIS`, `URAIAN_ULANG_BATAS` | variabel (opsional) | uraian ulang otomatis peraturan berversi pengurai lama lewat Cron 15 menit: nyala bawaan, `mati` mematikan; peraturan per putaran (bawaan 20, 1-100) |
 
 Login Google memerlukan alamat pengalihan yang terdaftar **persis** di Google Cloud Console, yaitu
 `https://<host-situs>/api/auth/google/callback` (untuk produksi:
@@ -239,9 +240,10 @@ Ringkasannya (rincian, perintah, dan SQL pemeriksaan ada di [docs/pipeline-data.
 - **Pengaman**: PDF yang judul resminya milik peraturan lain tidak menghasilkan pasal; hasil yang jelas lebih buruk tidak
   menggantikan teks yang sudah ada (dihitung dengan nomor pasal berbeda); naskah lama yang di BPK tak berkas ditandai
   (`POST /api/impor/tanpa-berkas`).
-- **Pengurai diperbarui**: `ekstraksi_log.versi_parser` mencatat versi yang menghasilkan pasal tersimpan;
-  `POST /api/impor/ekstrak-ulang {"usang": true}` (atau opsi skrip `usang: true`) menguraikan ulang yang berversi lama dari
-  arsip teksnya. `butuh-teks?lama=1` (opsi `lama`) menyertakan peraturan yang masih bertumpu pada teks lama supaya naskah
+- **Pengurai diperbarui**: `ekstraksi_log.versi_parser` mencatat versi yang menghasilkan pasal tersimpan; Cron 15 menit menguraikan
+  ulang yang berversi lama dari arsip teksnya (20 per putaran, nyala bawaan, `URAIAN_ULANG_OTOMATIS=mati` mematikan), dan
+  `POST /api/impor/ekstrak-ulang {"usang": true}` (atau opsi skrip `usang: true`) mempercepatnya. Sejak versi 5 tiap pasal juga
+  menyimpan **halaman PDF tempat ia dimulai** (`articles.halaman`), dipulihkan dari penanda halaman konversi dan bacaan Gemini. `butuh-teks?lama=1` (opsi `lama`) menyertakan peraturan yang masih bertumpu pada teks lama supaya naskah
   BPK menggantikannya.
 - **PDF pindaian**: PDF tanpa lapisan teks tak menghasilkan pasal lewat konversi bawaan. Untuk peraturan semacam itu Gemini
   dapat membaca halaman sebagai gambar (opsi skrip `geminiCek`, `geminiUji`, `gemini`; `POST /api/impor/ekstrak-ulang

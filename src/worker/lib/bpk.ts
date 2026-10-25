@@ -353,8 +353,10 @@ export function periksaKecocokanNaskah(
  * 3: catchword yang diulang di baris berikutnya ("Ayat (4)…⏎Ayat (4)"; 827 baris pasal pada 184 peraturan produksi) ikut dibuang.
  * 4: pengukur mutu menghitung pasal yang hilang dan pembukaan yang tertelan ke dalam pasal (`nilaiKualitasEkstraksi`): vonis ber-
  *    ubah untuk naskah yang sama, jadi seluruh peraturan ditawarkan ke `usang` agar vonisnya jujur dan yang `berat` menjadi calon Gemini.
+ * 5: nomor halaman PDF tempat tiap pasal dimulai (`articles.halaman`, lib/petaHalaman.ts) dari penanda "### Page n" yang tadinya dibuang.
+ *    Hasil pasalnya sama; uraian ulang `usang` mengisi halaman bagi peraturan yang sudah tersimpan.
  */
-export const VERSI_PARSER = 4;
+export const VERSI_PARSER = 5;
 
 export interface PasalTerurai {
   nomor_pasal: string;
@@ -413,6 +415,21 @@ const RE_CATCHWORD = /^[.·…]+[.\s·…]*$/;
 const RE_TITIK_TUNGGAL = /^\.$/;
 /** Sisa baris yang hanya penutup judul (".", ".-", "-", ".–"): bukan isi pasal. */
 const RE_PENUTUP_JUDUL = /^(?:\.\s*[-–—]*|[-–—]+)$/;
+
+/**
+ * Nomor pasal (dirapikan seperti yang disimpan) bila `baris` adalah judul pasal menurut aturan `uraikanPasal`: judul bernomor yang
+ * bukan catchword kaki halaman dan bukan ujung rujukan silang yang terpotong ("Pasal 9; dan/atau", "Pasal 2 ayat (2) ..."). Tak
+ * memeriksa urutan nomor, jadi judul bertitik tunggal ("Pasal 1.") diterima apa adanya; pemanggil yang punya urutan pasal
+ * terurai (lib/petaHalaman.ts) mencocokkannya terhadap urutan itu.
+ */
+export function nomorJudulPasal(baris: string): string | null {
+  const m = baris.match(RE_PASAL);
+  if (!m) return null;
+  const sisa = m[2].trim();
+  if (RE_CATCHWORD.test(sisa) && !RE_TITIK_TUNGGAL.test(sisa)) return null;
+  if (RE_RUJUKAN_AYAT.test(sisa)) return null;
+  return rapikanNomorPasal(m[1].toUpperCase());
+}
 
 /** Nilai bilangan nomor pasal ("12" dan "12A" -> 12, "IV" -> 4); null bila bukan angka maupun romawi. */
 export function nilaiNomorPasal(nomor: string): number | null {

@@ -348,8 +348,14 @@ function bersihkanKaki(teks: string): string {
   return teks.replace(RE_SK, "\n").replace(RE_SITUS, "");
 }
 
-/** Bersihkan artefak halaman dari naskah hasil konversi. */
-export function bersihkanHalaman(naskah: string): string {
+/** Satu halaman naskah yang sudah dibersihkan, menurut penanda "### Page N". */
+export interface HalamanBersih {
+  /** Nomor pada penanda; null untuk bagian sebelum penanda pertama (halaman 1 pada hasil konversi bawaan, yang tak menandai halaman pertama). */
+  nomor: number | null;
+  teks: string;
+}
+
+function bersihkanTiapHalaman(naskah: string): Halaman[] {
   const halaman = pisahHalaman(rapikanTabel(naskah));
   for (const h of halaman) h.teks = bersihkanKaki(h.teks).replace(RE_KEPALA_MENEMPEL, "");
   if (halaman.length > 1) {
@@ -357,10 +363,25 @@ export function bersihkanHalaman(naskah: string): string {
     buangBarisBerulang(halaman);
     buangCatchword(halaman);
   }
+  return halaman;
+}
+
+const rapikanTepi = (halaman: Halaman[]): HalamanBersih[] =>
+  halaman.map((h) => ({ nomor: h.nomor, teks: h.teks.replace(/^\s*\n/, "").trimEnd() })).filter((h) => h.teks.trim());
+
+/**
+ * Halaman-halaman hasil pembersihan yang sama dengan `bersihkanHalaman`, tetapi tetap terpisah menurut penanda halaman (tanpa
+ * penghapus catchword lintas-teks, yang bekerja pada teks yang sudah disambung). Dipakai memetakan pasal ke halaman PDF (petaHalaman.ts).
+ */
+export function bersihkanPerHalaman(naskah: string): HalamanBersih[] {
+  return rapikanTepi(bersihkanTiapHalaman(naskah));
+}
+
+/** Bersihkan artefak halaman dari naskah hasil konversi. */
+export function bersihkanHalaman(naskah: string): string {
   return buangCatchwordLangsung(
-    halaman
-      .map((h) => h.teks.replace(/^\s*\n/, "").trimEnd())
-      .filter((teks) => teks.trim())
+    rapikanTepi(bersihkanTiapHalaman(naskah))
+      .map((h) => h.teks)
       .join("\n")
       .replace(/\n{3,}/g, "\n\n"),
   );

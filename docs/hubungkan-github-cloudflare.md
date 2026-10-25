@@ -297,8 +297,10 @@ Alur Lexa: panen BPK mengunggah PDF ke R2 (konversi bawaan segera memberi teks s
 membaca ulang semua PDF dengan Gemini dan menggantikan teks sementara itu. Ia memakai secret `GEMINI_API` milik Worker, dan mati sampai
 Anda menambah variabel teks `GEMINI_OTOMATIS` di dashboard:
 
-1. **Uraikan ulang dulu** supaya vonis semua peraturan jujur: skrip panen `window.LEXA_PANEN = { usang: true }` (sekali, tanpa biaya
-   Gemini). Vonis `berat` kini juga berarti pasal hilang dari rangkaian atau pembukaan tertelan ke dalam pasal.
+1. **Uraikan ulang dulu** supaya vonis semua peraturan jujur. Sejak versi pengurai 5 Cron 15 menit melakukannya sendiri (20 peraturan
+   per putaran, tanpa biaya Gemini; sekitar 27 jam untuk 2.642 peraturan); kemajuannya terlihat di halaman Status dan sebagai baris
+   `uraian_ulang` di `sync_log`. Untuk mempercepat, skrip panen `window.LEXA_PANEN = { usang: true }`. Vonis `berat` kini juga berarti
+   pasal hilang dari rangkaian atau pembukaan tertelan ke dalam pasal.
 2. `GEMINI_OTOMATIS` = `uji`. Tiap 15 menit dua peraturan yang teksnya bermasalah (vonis `tanpa_pasal`, `berat`, `gagal`; UU dan PP
    terbaru lebih dulu) dibaca Gemini sebagai percobaan kering: **tak ada pasal yang ditulis**. Berhenti sendiri setelah 8 percobaan
    (`GEMINI_OTOMATIS_UJI_MAKS`). Hasilnya di D1: `SELECT frbr_uri, vonis_baru, pasal_baru, catatan FROM pembacaan_ai WHERE

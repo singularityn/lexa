@@ -262,10 +262,17 @@ api.get("/laws/detail", async (c) => {
   const uri = law.frbr_uri;
 
   const [articles, relations, penjelasan, pembacaAi] = await Promise.all([
+    // Kolom `halaman` baru ada setelah migrasi 0009; sebelum itu pasal tetap tampil, hanya tanpa nomor halaman PDF.
     c.env.DB.prepare(
-      `SELECT id, frbr_uri, nomor_pasal, ayat, bab, bagian, judul, isi, urutan
+      `SELECT id, frbr_uri, nomor_pasal, ayat, bab, bagian, judul, isi, urutan, halaman
          FROM articles WHERE frbr_uri = ? ORDER BY urutan`,
-    ).bind(uri).all<Article>(),
+    ).bind(uri).all<Article>().catch((e) => {
+      if (!/halaman/.test(String(e))) throw e;
+      return c.env.DB.prepare(
+        `SELECT id, frbr_uri, nomor_pasal, ayat, bab, bagian, judul, isi, urutan
+           FROM articles WHERE frbr_uri = ? ORDER BY urutan`,
+      ).bind(uri).all<Article>();
+    }),
 
     // LEFT JOIN supaya relasi ke peraturan yang belum ter-ingest tetap tampil,
     // hanya saja tanpa judul.

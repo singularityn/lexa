@@ -118,6 +118,9 @@ describe.skipIf(!sqliteAda)("Gemini otomatis (Cron)", () => {
     l = buatLingkungan();
     l.env.GEMINI_API = KUNCI;
     l.env.GEMINI_MODEL = "gemini-uji";
+    // Pemicu 15 menit yang sama juga menguraikan ulang peraturan berversi pengurai lama (baris log di bawah berversi 0); itu diuji di
+    // uraian-ulang.test.ts. Di sini yang diuji hanya Gemini otomatis, jadi antrean dan D1 tak boleh tercampur pekerjaan lain.
+    l.env.URAIAN_ULANG_OTOMATIS = "mati";
     for (const p of PERATURAN) {
       const kunci = `pdf/${p.uri.replace(/^\//, "")}.pdf`;
       await sisipkan(l, [{ uri: p.uri, jenis: p.jenis, nomor: p.nomor, tahun: p.tahun, judul: `Peraturan ${p.nomor}/${p.tahun}` }]);

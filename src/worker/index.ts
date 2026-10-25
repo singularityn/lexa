@@ -3,8 +3,8 @@
  *
  * Satu Worker mengerjakan tiga peran:
  *   - `fetch`     : melayani /api/* (sisanya jatuh ke static assets SPA)
- *   - `scheduled` : Cron harian, pemeliharaan (lib/pemeliharaan.ts), dan Cron 15 menit, Gemini otomatis (lib/geminiOtomatis.ts; mati
- *                   kecuali variabel GEMINI_OTOMATIS dipasang)
+ *   - `scheduled` : Cron harian, pemeliharaan (lib/pemeliharaan.ts), dan Cron 15 menit: Gemini otomatis (lib/geminiOtomatis.ts; mati
+ *                   kecuali variabel GEMINI_OTOMATIS dipasang) serta uraian ulang otomatis (lib/uraianUlang.ts)
  *   - `queue`     : konsumer antrean ingest: ekstraksi PDF hasil panen BPK, indeks vektor, dan ringkasan AI
  *
  * Worker tidak pernah menghubungi sumber data peraturan mana pun: data datang dari panen BPK yang dijalankan di
@@ -26,6 +26,7 @@ import { GalatGemini } from "./lib/gemini";
 import { catatDenyut } from "./lib/keadaan";
 import { CRON_GEMINI, CRON_HARIAN } from "./lib/jadwal";
 import { jalankanGeminiOtomatis } from "./lib/geminiOtomatis";
+import { jalankanUraianUlang } from "./lib/uraianUlang";
 import { jalankanPemeliharaan } from "./lib/pemeliharaan";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -117,12 +118,19 @@ export default {
   fetch: app.fetch,
 
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    // Gemini otomatis (tiap 15 menit): mati kecuali GEMINI_OTOMATIS dipasang, dan kembali seketika bila mati.
+    // Pemicu 15 menit: Gemini otomatis (mati kecuali GEMINI_OTOMATIS dipasang, dan kembali seketika bila mati) dan uraian ulang otomatis
+    // peraturan berversi pengurai lama (nyala bawaan, tak mengerjakan apa pun bila tak ada yang usang). Saling bebas.
     if (event.cron === CRON_GEMINI) {
       ctx.waitUntil(
         jalankanGeminiOtomatis(env).then(
           (h) => (h.dikerjakan ? console.log("Lexa: Gemini otomatis mengantrekan", h.mode, h.diantrekan.length) : undefined),
           (e) => console.error("Lexa: Gemini otomatis gagal", e),
+        ),
+      );
+      ctx.waitUntil(
+        jalankanUraianUlang(env).then(
+          (h) => (h.dikerjakan ? console.log("Lexa: uraian ulang otomatis mengantrekan", h.diantrekan.length, "usang tersisa", h.tersisa) : undefined),
+          (e) => console.error("Lexa: uraian ulang otomatis gagal", e),
         ),
       );
       return;

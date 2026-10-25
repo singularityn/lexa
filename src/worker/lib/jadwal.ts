@@ -7,7 +7,7 @@
 export const CRON_HARIAN = "0 19 * * *";
 
 /**
- * Tiap 15 menit: Gemini otomatis (lib/geminiOtomatis.ts). Tak mengerjakan apa pun, dan tak menyentuh D1, kecuali variabel
- * GEMINI_OTOMATIS dipasang di dashboard.
+ * Tiap 15 menit: Gemini otomatis (lib/geminiOtomatis.ts; tak mengerjakan apa pun, dan tak menyentuh D1, kecuali variabel
+ * GEMINI_OTOMATIS dipasang di dashboard) dan uraian ulang otomatis (lib/uraianUlang.ts; satu kueri murah bila tak ada yang usang).
  */
 export const CRON_GEMINI = "*/15 * * * *";

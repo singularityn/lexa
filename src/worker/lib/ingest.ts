@@ -21,6 +21,7 @@ import {
   type HasilBacaPdf, type KonfigGemini, type OpsiBaca, type PemakaianToken,
 } from "./gemini";
 import { bersihkanHalaman } from "./halaman";
+import { petakanHalamanPasal } from "./petaHalaman";
 import { barisPenjelasan, uraikanPenjelasan } from "./penjelasan";
 
 export type PesanIngest =
@@ -346,6 +347,8 @@ interface BarisLama {
   bab: string | null;
   bagian: string | null;
   isi: string;
+  /** Halaman PDF tempat pasal dimulai (migrasi 0009); null bila belum diketahui. */
+  halaman: number | null;
 }
 
 /** Pasal tersimpan persis sama dengan hasil penguraian: tak ada yang perlu ditulis ulang, diindeks ulang, atau dihapus. */
@@ -886,6 +889,8 @@ export async function ekstrakPdf(
 
   const pasal = uraikanPasal(markdown);
   const laporan = nilaiKualitasEkstraksi(bersihkanHalaman(markdown), pasal);
+  // Halaman PDF tempat tiap pasal dimulai, dari penanda "### Page n" yang dibuang pengurai (lib/petaHalaman.ts).
+  const halamanPasal = petakanHalamanPasal(markdown, pasal);
 
   // Untuk audit: seberapa jauh bacaan Gemini menyimpang dari arsip teks lama yang akan digantikannya ("kesesuaian a/b": bagian tiga-kata
   // bacaan Gemini yang ada di teks lama, dan sebaliknya; 1 = sama). Dibaca sebelum arsip ditimpa. Tanpa arsip lama: tanpa catatan.
@@ -930,7 +935,7 @@ export async function ekstrakPdf(
 
   // Pasal yang tersimpan, untuk memutuskan penggantian dan, bila diganti, membersihkan vektornya yang tak terpakai lagi.
   const { results: lamaBaris } = await ctx.db
-    .prepare(`SELECT id, nomor_pasal, ayat, bab, bagian, isi FROM articles WHERE frbr_uri = ? ORDER BY urutan`)
+    .prepare(`SELECT id, nomor_pasal, ayat, bab, bagian, isi, halaman FROM articles WHERE frbr_uri = ? ORDER BY urutan`)
     .bind(frbrUri)
     .all<BarisLama>();
   const nomorLama = new Set(lamaBaris.map((r) => r.nomor_pasal)).size;
@@ -990,10 +995,10 @@ export async function ekstrakPdf(
       statements.push(
         ctx.db
           .prepare(
-            `INSERT INTO articles (id, frbr_uri, nomor_pasal, ayat, bab, bagian, judul, isi, urutan)
-             VALUES (?,?,?,?,?,?,NULL,?,?)`,
+            `INSERT INTO articles (id, frbr_uri, nomor_pasal, ayat, bab, bagian, judul, isi, urutan, halaman)
+             VALUES (?,?,?,?,?,?,NULL,?,?,?)`,
           )
-          .bind(ids[i], frbrUri, p.nomor_pasal, p.ayat, p.bab, p.bagian, p.isi, p.urutan),
+          .bind(ids[i], frbrUri, p.nomor_pasal, p.ayat, p.bab, p.bagian, p.isi, p.urutan, halamanPasal[i]),
       );
     });
     for (let i = 0; i < kunciYatim.length; i += POTONGAN_DAFTAR_HAPUS) {
@@ -1012,6 +1017,12 @@ export async function ekstrakPdf(
           .bind(...potong),
       );
     }
+  } else {
+    // Pasal tak berubah (uraian ulang naskah yang sama): baris tak ditulis ulang dan tak diindeks ulang, hanya halamannya yang
+    // dilengkapi atau diperbaiki.
+    lamaBaris.forEach((r, i) => {
+      if ((r.halaman ?? null) !== halamanPasal[i]) statements.push(ctx.db.prepare(`UPDATE articles SET halaman = ? WHERE id = ?`).bind(halamanPasal[i], r.id));
+    });
   }
 
   statements.push(

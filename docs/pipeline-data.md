@@ -330,7 +330,19 @@ ulang dari BPK dan tanpa konversi PDF (Workers AI). Setiap perubahan yang mengub
 (`lib/bpk.ts`); `ekstraksi_log.versi_parser` mencatat versi yang menghasilkan pasal tersimpan (baris yang ada sebelum
 migrasi 0007 bernilai 0), dan mode `usang` menawarkan yang versinya lebih rendah.
 
-Urutannya (satu kali per versi):
+**Berjalan sendiri (sejak versi pengurai 5).** Cron 15 menit (`lib/uraianUlang.ts`) mengantrekan peraturan berversi lama, 20 per
+putaran menurut urutan alamat (`URAIAN_ULANG_BATAS`, 1-100), jadi perbaikan pengurai sampai ke seluruh korpus tanpa konsol: 2.642
+peraturan selesai dalam sekitar 27 jam. Yang gagal tetap usang diulang paling cepat 6 jam kemudian (kursor di KV), bukan tiap putaran.
+Tak ada yang usang berarti satu kueri murah. Matikan dengan variabel `URAIAN_ULANG_OTOMATIS=mati`; kemajuannya terlihat sebagai baris
+`uraian_ulang` di `sync_log` (dan di halaman Status). Langkah manual di bawah tetap ada untuk mempercepat.
+
+Versi 5 menambah **nomor halaman PDF tiap pasal** (`articles.halaman`, migrasi 0009; `lib/petaHalaman.ts`): konversi bawaan dan bacaan
+Gemini menyisipkan penanda `### Page n`, yang dulu dibuang pengurai. Kini judul pasal dicari lagi di teks tiap halaman dan dicocokkan
+berurutan dengan pasal yang sudah terurai, jadi "Lihat di PDF" membuka halamannya seketika (juga pada PDF pindaian yang tak punya lapisan
+teks untuk dipindai di peramban). Naskah tanpa penanda halaman tetap `null`; antarmuka lalu memindai PDF-nya seperti sebelumnya. Migrasi
+0009 harus diterapkan SEBELUM men-deploy rilis ini.
+
+Urutannya (satu kali per versi; dengan uraian ulang otomatis di atas, ini hanya bila ingin mempercepat):
 
 1. Terapkan migrasi 0007 (`npm run d1:migrate:remote`; pada produksi Lexa ini sudah diterapkan 14 Okt 2026) dan deploy rilis
    yang memuat pengurai baru.
