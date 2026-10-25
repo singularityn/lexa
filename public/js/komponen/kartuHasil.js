@@ -1,6 +1,7 @@
 // @ts-check
 import { cuplikan, h, tandaiIstilah } from "../dom.js";
-import { bersihkanArtefak, istilahDariKueri, jangkarDariId, judulRingkas, labelJenis, sitasi, urlPeraturan } from "../format.js";
+import { bersihkanArtefak, istilahDariKueri, jangkarDariId, judulRingkas, labelJenis, queryString, sitasi, urlPeraturan } from "../format.js";
+import { ikon } from "./ikon.js";
 import { kelasJenis } from "./jenis.js";
 import { lencanaStatus } from "./umum.js";
 import { tombolTandai } from "./tombolTandai.js";
@@ -56,15 +57,30 @@ export function kartuHasil(hit, opsi = {}) {
       ? h("p", { class: "hasil-cuplikan redup" }, hit.tentang)
       : null;
   const sumberTepat = hit.sources.includes("sitasi");
+  // Hasil pasal yang halaman PDF-nya diketahui: tautan langsung ke halaman itu (tautan terpisah dari tautan kartu yang membentang).
+  const tautanPdf = hit.halaman
+    ? h(
+        "a",
+        {
+          class: "chip-halaman hasil-pdf",
+          href: `/peraturan${queryString({ uri: hit.frbr_uri, tab: "pdf", hal: hit.halaman })}`,
+          title: `${label ?? "Peraturan ini"} di PDF, halaman ${hit.halaman}`,
+          "aria-label": `Buka halaman ${hit.halaman} PDF`,
+        },
+        ikon("dokumen"),
+        h("span", null, `hal. ${hit.halaman}`),
+      )
+    : null;
 
   const kaki =
-    sumberTepat || !label
+    sumberTepat || !label || tautanPdf
       ? h(
           "div",
           { class: "hasil-kaki" },
           label ? null : h("span", { class: "hasil-jenis" }, labelJenis(hit.jenis)),
           // Hanya sitasi yang berarti bagi pembaca ("cocok persis dengan nomor yang diketik"); kata kunci/makna adalah mesin.
           sumberTepat ? h("span", { class: "sumber-chip", title: `Ditemukan lewat ${LABEL_SUMBER.sitasi.toLowerCase()}` }, LABEL_SUMBER.sitasi) : null,
+          tautanPdf,
         )
       : null;
 

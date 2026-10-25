@@ -3,7 +3,7 @@ import { h, hapusTanda, isi, salin, tandaiIstilah, tunda } from "../dom.js";
 import { api, dibatalkan, GalatApi } from "../api.js";
 import {
   angka, bacaIsiPasal, bersihkanArtefak, celahNomorPasal, daftarCakupan, hanyaCukupJelas, istilahDariKueri, jangkarDariId, judulRingkas, kelompokkanPasal, kutipanPasal, labelJenis, labelRelasi,
-  hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, peraturanPerubahan, pratinjauPeraturan, queryString, rapikanHuruf, rapikanNomorPasal, sitasi, sitasiPasal, tanggalIndonesia, teksIsiPasal, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
+  halamanPasal, hitungPasal, namaLengkap, namaPasal, nomorTahun, pecahBidang, pecahRujukan, peraturanPerubahan, pratinjauPeraturan, queryString, rapikanHuruf, rapikanNomorPasal, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, teksIsiPasal, teksPasal, ukuranBerkas, urlPeraturan, URUTAN_RELASI,
 } from "../format.js";
 import { bacaPref, HURUF, simpanPref, terapkanPref, UKURAN } from "../bacaan.js";
 import { buatDaftarIsi } from "../komponen/daftarIsi.js";
@@ -15,7 +15,7 @@ import { bukaDialogLaporan } from "../komponen/dialogLaporan.js";
 import { buatGrafik } from "../komponen/grafik.js";
 import { buatPenampilPdf } from "../komponen/penampilPdf.js";
 import { GalatLuring, luring, luringDidukung } from "../luring.js";
-import { pantau } from "../state.js";
+import { pantau, penyimpanan } from "../state.js";
 import { riwayat } from "../riwayat.js";
 import { halamanKosong, keadaanKosong, kerangka, kotakGalat, lencanaStatus, peringatan, tombolIkon } from "../komponen/umum.js";
 
@@ -175,17 +175,12 @@ function tampilkan(ctx, d, q) {
       )
     : null;
 
-  // Status dokumen (PDF/teks) dimuat di latar belakang; hasilnya dipakai tombol PDF, menu Lainnya, dan tab Naskah.
+  // Status dokumen (PDF/teks) dimuat di latar belakang; hasilnya dipakai penampil PDF, menu Lainnya, dan tab Info.
   /** @type {{ nilai: import("../api.js").StatusDokumen | null, galat: unknown, selesai: boolean, saatSelesai: Array<() => void> }} */
   const infoStatus = { nilai: null, galat: null, selesai: false, saatSelesai: [] };
-  const tombolPdf = h("a", { class: "tombol sembunyi", target: "_blank", rel: "noopener" }, ikon("unduh"), h("span", null, "PDF"));
   api.statusDokumen(l.frbr_uri, ctx.sinyal)
     .then((st) => {
       infoStatus.nilai = st;
-      if (st.pdf_url) {
-        tombolPdf.setAttribute("href", st.pdf_url);
-        tombolPdf.classList.remove("sembunyi");
-      }
     })
     .catch((e) => {
       infoStatus.galat = e;
@@ -197,7 +192,8 @@ function tampilkan(ctx, d, q) {
 
   // --- PDF: penampil dan lompat ke pasal -------------------------------------------
   // Penampil dibuat sekali, hanya bila PDF peraturan ini diarsipkan di Lexa (infoStatus), dan dipakai bersama oleh tab PDF dan
-  // tombol "Lihat di PDF" pada tiap pasal. Dimuat (PDF.js, 2,3 MB) baru saat salah satunya dipakai.
+  // tombol "hal. N" pada tiap pasal. Dimuat (PDF.js, 2,3 MB) baru saat salah satunya dipakai.
+  const namaBerkas = `${nama.replace(/[\\/:*?"<>|]+/g, "-")}.pdf`;
   /** @type {ReturnType<typeof buatPenampilPdf> | null} */
   let penampilPdf = null;
   /** @returns {Promise<ReturnType<typeof buatPenampilPdf> | null>} */
@@ -207,7 +203,18 @@ function tampilkan(ctx, d, q) {
         const st = infoStatus.nilai;
         if (!st?.ada_pdf || !st.pdf_url) return selesai(null);
         // "Periksa pasal" membandingkan judul pasal di PDF dengan batang tubuh yang tersimpan (tanpa penjelasan).
-        penampilPdf ??= buatPenampilPdf({ url: st.pdf_url, nomorPasalLexa: () => kelompok.filter((g) => !g.penjelasan).map((g) => g.nomor) });
+        penampilPdf ??= buatPenampilPdf({
+          url: st.pdf_url,
+          namaBerkas,
+          struktur: strukturDaftarIsi(kelompok),
+          nomorPasalLexa: () => kelompok.filter((g) => !g.penjelasan).map((g) => g.nomor),
+          halamanAwal: halAwalPdf,
+          saatHalaman: (no) => {
+            // Posisi baca ikut tertulis di alamat (tab=pdf&hal=N) supaya tautan yang dibagikan atau dimuat ulang kembali ke halaman ini.
+            if (panel.pdf.hidden) return;
+            ctx.perbaruiUrl(`${location.pathname}${queryString({ uri: l.frbr_uri, q: q || null, tab: "pdf", hal: no > 1 ? no : null })}${location.hash}`);
+          },
+        });
         selesai(penampilPdf);
       };
       if (infoStatus.selesai) buat();
@@ -216,19 +223,16 @@ function tampilkan(ctx, d, q) {
   ctx.saatKeluar(() => penampilPdf?.hancurkan());
   const halAwalPdf = Number(ctx.params.get("hal")) || 0;
 
-  /** @param {string} nomor nomor pasal, mis. "156" atau "5A" */
-  const lihatDiPdf = async (nomor) => {
+  /** @param {string} nomor nomor pasal, mis. "156" atau "5A" @param {number | null} [saran] halaman PDF pasal itu menurut server */
+  const lihatDiPdf = async (nomor, saran = null) => {
     pilihTab("pdf");
     const p = await sediakanPenampilPdf();
     if (!p) {
       toast("PDF peraturan ini belum diarsipkan di Lexa.");
       return;
     }
-    await p.muat();
-    const hasil = await p.keHalamanPasal(nomor);
-    if ("halaman" in hasil) toast(`Pasal ${nomor} dimulai di halaman ${hasil.halaman} PDF.`);
-    else if (hasil.alasan === "pindaian") toast("PDF ini hasil pindaian tanpa lapisan teks, jadi halaman pasalnya tak bisa dicari otomatis. Ketik nomor halaman atau gulir.", { durasi: 7000 });
-    else if (hasil.alasan === "tidak_ada") toast(`Pasal ${nomor} tidak ditemukan di teks PDF. Ketik nomor halaman atau gulir.`, { durasi: 6000 });
+    await p.muat({ pulih: false });
+    await p.bukaPasal(nomor, saran);
   };
   const akses = {
     /** Apakah PDF-nya ada (diketahui setelah statusnya termuat). */
@@ -241,17 +245,9 @@ function tampilkan(ctx, d, q) {
   const luringBisa = luringDidukung();
   let luringAda = false;
   const lencanaLuring = h("span", { class: "lencana-luring", hidden: true }, ikon("centang"), "Tersedia luring");
-  const tombolLuring = luringBisa
-    ? /** @type {HTMLButtonElement} */ (tombolIkon("simpanLuring", "Simpan luring", { "aria-pressed": "false", title: "Simpan agar terbaca tanpa jaringan" }))
-    : null;
   const segarkanLuring = async () => {
     luringAda = await luring.tersimpan(l.frbr_uri);
     lencanaLuring.hidden = !luringAda;
-    if (!tombolLuring) return;
-    tombolLuring.setAttribute("aria-pressed", String(luringAda));
-    tombolLuring.classList.toggle("aktif", luringAda);
-    const teks = tombolLuring.querySelector("span");
-    if (teks) teks.textContent = luringAda ? "Tersimpan luring" : "Simpan luring";
   };
   const alihkanLuring = async () => {
     try {
@@ -267,37 +263,30 @@ function tampilkan(ctx, d, q) {
     }
     await segarkanLuring();
   };
-  tombolLuring?.addEventListener("click", alihkanLuring);
   if (luringBisa) {
     void segarkanLuring();
     ctx.saatKeluar(pantau("luring", () => void segarkanLuring()));
   }
 
   // --- Aksi -----------------------------------------------------------------
-  // Layar lebar: semua aksi berjajar. Ponsel: Simpan dan Salin sitasi, sisanya di lembar "Lainnya".
+  // Dua aksi yang paling sering dipakai (Simpan dan Salin sitasi) tampil di bilah; sisanya satu lembar "Lainnya".
   const bpk = tautanAman(d.bpk_url);
   const salinSitasi = async () => toast((await salin(nama)) ? `Disalin: ${nama}` : "Penyalinan gagal");
   const salinTautan = async () => toast((await salin(location.origin + urlPeraturan(l.frbr_uri))) ? "Tautan disalin." : "Penyalinan gagal");
   const lapor = () => bukaDialogLaporan({ uri: l.frbr_uri, sitasi: nama });
   const bagikanPeraturan = () => bagikan({ teks: `${nama} tentang ${topik}`, url: location.origin + urlPeraturan(l.frbr_uri) });
-  const cetak = () => window.print();
+  // Yang dicetak adalah teksnya: tab lain disembunyikan, jadi tab Teks dibuka dulu.
+  const cetak = () => {
+    pilihTab("isi", { simpan: false });
+    window.print();
+  };
 
   const aksi = h(
     "div",
     { class: "aksi-bar" },
     tombolTandai({ uri: l.frbr_uri, sitasi: nama, judul: l.judul }, { denganTeks: true }),
-    // Di ponsel labelnya menyusut menjadi "Sitasi" supaya tiga tombol utama muat sebaris; nama aksesibelnya tetap lengkap.
+    // Di ponsel labelnya menyusut menjadi "Sitasi" supaya tiga tombol muat sebaris; nama aksesibelnya tetap lengkap.
     h("button", { type: "button", class: "tombol", "aria-label": "Salin sitasi", onclick: salinSitasi }, ikon("salin"), h("span", { class: "teks-lebar" }, "Salin sitasi"), h("span", { class: "teks-sempit", "aria-hidden": "true" }, "Sitasi")),
-    h(
-      "span",
-      { class: "aksi-lain" },
-      tombolIkon("tautan", "Salin tautan", { onclick: salinTautan }),
-      bisaBagikan ? tombolIkon("bagikan", "Bagikan", { onclick: bagikanPeraturan }) : null,
-      tombolLuring,
-      bpk ? h("a", { class: "tombol", href: bpk, target: "_blank", rel: "noopener noreferrer" }, ikon("luar"), h("span", null, "Naskah resmi (BPK)")) : null,
-      tombolPdf,
-      tombolIkon("bendera", "Laporkan kesalahan", { onclick: lapor }),
-    ),
     h(
       "button",
       {
@@ -311,8 +300,8 @@ function tampilkan(ctx, d, q) {
             aksi: [
               { ikon: "bagikan", label: "Bagikan…", keterangan: "Kirim lewat WhatsApp, Telegram, dan lainnya", saat: bagikanPeraturan, tampil: bisaBagikan },
               { ikon: "tautan", label: "Salin tautan", saat: salinTautan },
+              { ikon: "unduh", label: "Unduh PDF", keterangan: "Salinan yang diarsipkan Lexa", href: pdf, unduh: namaBerkas, tampil: Boolean(pdf) },
               { ikon: "luar", label: "Naskah resmi (BPK)", keterangan: "peraturan.bpk.go.id", href: bpk, tampil: Boolean(bpk) },
-              { ikon: "unduh", label: "Buka PDF", keterangan: "Salinan yang diarsipkan Lexa", href: pdf, tampil: Boolean(pdf) },
               {
                 ikon: "simpanLuring",
                 label: luringAda ? "Hapus dari simpanan luring" : "Simpan untuk dibaca luring",
@@ -331,47 +320,32 @@ function tampilkan(ctx, d, q) {
     ),
   );
 
-  // --- Keterangan -----------------------------------------------------------
-  const bidang = pecahBidang(l.bidang);
-  const polos = (/** @type {string} */ t) => t.toLowerCase().replace(/\s+/g, " ").trim();
-  // "Tentang" hanya berguna bila memuat sesuatu yang tidak sudah ada di judul atau bidang.
-  const tentang = l.tentang && ![l.judul, topik, l.bidang ?? ""].some((x) => polos(x) === polos(/** @type {string} */ (l.tentang))) ? rapikanHuruf(l.tentang) : null;
-  const metadata = h(
-    "dl",
-    { class: "metadata" },
-    ...[
-      ["Jenis", labelJenis(l.jenis)],
-      ["Nomor / tahun", nomorResmi(l)],
-      l.tanggal_penetapan ? ["Ditetapkan", tanggalIndonesia(l.tanggal_penetapan)] : null,
-      l.tanggal_berlaku ? ["Berlaku", tanggalIndonesia(l.tanggal_berlaku)] : null,
-      l.instansi ? ["Instansi", l.instansi] : null,
-      bidang.length ? ["Bidang", h("span", { class: "tautan-bidang" }, bidang.map((b) => h("a", { href: `/telusuri${queryString({ bidang: b.nama })}` }, b.label)))] : null,
-      tentang ? ["Tentang", tentang] : null,
-      tautanAman(l.sumber_url) ? ["Sumber data", h("a", { href: /** @type {string} */ (tautanAman(l.sumber_url)), target: "_blank", rel: "noopener noreferrer" }, new URL(/** @type {string} */ (tautanAman(l.sumber_url))).hostname)] : null,
-    ].flatMap((baris) => (baris ? [h("dt", null, baris[0]), h("dd", null, baris[1])] : [])),
-  );
-
   // --- Tab ---------------------------------------------------------------
   const tabTersedia = [
-    ["isi", "Isi"],
+    ["isi", "Teks"],
     ["pdf", "PDF"],
     ["relasi", `Relasi${d.relations.length ? ` (${d.relations.length})` : ""}`],
-    ["naskah", "Naskah"],
+    ["info", "Info"],
   ];
-  const tabAwal = tabTersedia.some(([k]) => k === ctx.params.get("tab")) ? /** @type {string} */ (ctx.params.get("tab")) : "isi";
+  // Alamat lama (?tab=naskah) kini bermuara di Info.
+  const tabMinta = ctx.params.get("tab") === "naskah" ? "info" : ctx.params.get("tab");
+  const tabAwal = tabTersedia.some(([k]) => k === tabMinta) ? /** @type {string} */ (tabMinta) : "isi";
+  // Pembaca yang sudah memilih tab sendiri (juga lewat alamat) tak dipindahkan lagi oleh penyesuaian otomatis (lihat bawah).
+  let tabDipilih = ctx.params.has("tab");
   const isiPanel = panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus);
   /** @type {Record<string, HTMLElement>} */
   const panel = {
     isi: h("div", { role: "tabpanel", id: "panel-isi", "aria-labelledby": "tab-isi" }, isiPanel.el),
     pdf: h("div", { role: "tabpanel", id: "panel-pdf", "aria-labelledby": "tab-pdf", hidden: true }),
     relasi: h("div", { role: "tabpanel", id: "panel-relasi", "aria-labelledby": "tab-relasi", hidden: true }),
-    naskah: h("div", { role: "tabpanel", id: "panel-naskah", "aria-labelledby": "tab-naskah", hidden: true }),
+    info: h("div", { role: "tabpanel", id: "panel-info", "aria-labelledby": "tab-info", hidden: true }),
   };
   /** @type {Record<string, boolean>} */
   const termuat = { isi: true };
 
-  /** @param {string} kunci */
+  /** @param {string} kunci @param {{ fokus?: boolean, simpan?: boolean }} [opsi] simpan: false untuk perpindahan otomatis (bukan pilihan pembaca) */
   function pilihTab(kunci, { fokus = false, simpan = true } = {}) {
+    if (simpan) tabDipilih = true;
     for (const [k] of tabTersedia) {
       const tombol = /** @type {HTMLElement} */ (daftarTab.querySelector(`#tab-${k}`));
       const aktif = k === kunci;
@@ -381,11 +355,12 @@ function tampilkan(ctx, d, q) {
       if (aktif && fokus) tombol.focus();
     }
     isiPanel.saatTabBerubah(kunci === "isi");
+    if (kunci === "pdf") penampilPdf?.tampilkanDiLayar();
     if (!termuat[kunci]) {
       termuat[kunci] = true;
-      if (kunci === "pdf") isi(panel.pdf, panelPdf(d, infoStatus, sediakanPenampilPdf, halAwalPdf));
+      if (kunci === "pdf") isi(panel.pdf, panelPdf(d, infoStatus, sediakanPenampilPdf));
       if (kunci === "relasi") isi(panel.relasi, ...panelRelasi(d, ctx));
-      if (kunci === "naskah") isi(panel.naskah, panelNaskah(d, ctx, infoStatus));
+      if (kunci === "info") isi(panel.info, panelInfo(d, ctx, infoStatus));
     }
     if (simpan) ctx.perbaruiUrl(`${location.pathname}${queryString({ uri: l.frbr_uri, q: q || null, tab: kunci === "isi" ? null : kunci })}${location.hash}`);
   }
@@ -410,23 +385,26 @@ function tampilkan(ctx, d, q) {
     ),
   );
 
+  // Peraturan yang teksnya belum diekstrak tetapi PDF-nya ada: PDF-lah yang dibuka, bukan halaman kosong.
+  if (!d.articles.length && !tabDipilih) {
+    const sesuaikan = () => {
+      if (!tabDipilih && akses.tersedia() && !location.hash) pilihTab("pdf", { simpan: false });
+    };
+    if (infoStatus.selesai) sesuaikan();
+    else infoStatus.saatSelesai.push(sesuaikan);
+  }
+
   const jumlahPasal = hitungPasal(kelompok);
-  const adaPenjelasan = kelompok.some((g) => g.penjelasan) || (d.penjelasan?.length ?? 0) > 0;
   const kepala = h(
     "header",
     { class: "kepala-peraturan" },
-    h(
-      "nav",
-      { class: "remah", "aria-label": "Remah roti" },
-      h("ol", null, h("li", null, h("a", { href: "/" }, "Beranda")), h("li", null, h("a", { href: "/telusuri" }, "Telusuri")), h("li", null, h("a", { href: `/telusuri${queryString({ jenis: l.jenis })}` }, labelJenis(l.jenis))), h("li", { "aria-current": "page" }, nama)),
-    ),
     h("p", { class: "kicker" }, namaLengkap(l)),
     h("h1", { class: "judul-peraturan" }, topik),
     h(
       "div",
       { class: "meta-baris" },
       lencanaStatus(l.status),
-      jumlahPasal ? h("span", { class: "redup" }, `${angka(jumlahPasal)} pasal${adaPenjelasan ? " dan penjelasannya" : ""}`) : null,
+      jumlahPasal ? h("span", { class: "redup" }, `${angka(jumlahPasal)} pasal`) : null,
       celah
         ? h(
             "button",
@@ -445,24 +423,10 @@ function tampilkan(ctx, d, q) {
           )
         : null,
       lencanaLuring,
-      l.tanggal_penetapan ? h("span", { class: "redup" }, `Ditetapkan ${tanggalIndonesia(l.tanggal_penetapan)}`) : null,
     ),
   );
 
-  isi(
-    ctx.akar,
-    kepala,
-    spanduk,
-    catatanAi,
-    aksi,
-    l.ringkasan ? kartuRingkasan(l.ringkasan) : null,
-    h("details", { class: "info-peraturan" }, h("summary", null, "Informasi peraturan"), metadata),
-    daftarTab,
-    panel.isi,
-    panel.pdf,
-    panel.relasi,
-    panel.naskah,
-  );
+  isi(ctx.akar, kepala, spanduk, catatanAi, aksi, daftarTab, panel.isi, panel.pdf, panel.relasi, panel.info);
 
   pilihTab(tabAwal, { simpan: false });
   if (location.hash) {
@@ -586,7 +550,7 @@ function blokPenjelasanUmum(isi, peta) {
  * @param {string} q
  * @param {ReturnType<typeof kelompokkanPasal>} kelompok
  * @param {ReturnType<typeof celahNomorPasal>} celah
- * @param {{ tersedia: () => boolean, buka: (nomor: string) => Promise<void> }} akses akses ke PDF peraturan ini (tombol "Lihat di PDF")
+ * @param {{ tersedia: () => boolean, buka: (nomor: string, saran?: number | null) => Promise<void> }} akses akses ke PDF peraturan ini (tombol "Lihat di PDF")
  * @param {{ selesai: boolean, saatSelesai: Array<() => void> }} infoStatus
  * @returns {{ el: HTMLElement, saatTabBerubah: (aktif: boolean) => void }}
  */
@@ -664,11 +628,6 @@ function panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus) {
       g.penjelasan
         ? null
         : h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Salin kutipan lengkap (nama peraturan, teks pasal, dan tautan)", "aria-label": `Salin kutipan lengkap ${namaPs}`, onclick: salinKutipan }, ikon("kutip")),
-      // Hanya batang tubuh: penjelasan memakai ulang nomor pasal, jadi halamannya tak bisa ditebak dari nomornya. Tombol ini
-      // baru tampil setelah diketahui PDF-nya ada (kelas `ada-pdf` pada daftar, dipasang di bawah).
-      g.penjelasan
-        ? null
-        : h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon pasal-pdf", title: "Lihat pasal ini di PDF", "aria-label": `Lihat ${namaPs} di PDF`, onclick: () => void akses.buka(g.nomor) }, ikon("dokumen")),
       h("button", { type: "button", class: "tombol tombol-kecil tombol-hantu tombol-ikon", title: "Laporkan kesalahan pasal ini", "aria-label": `Laporkan kesalahan ${namaPs}`, onclick: laporPasal }, ikon("bendera")),
     );
     const lainnyaPasal = h(
@@ -683,7 +642,6 @@ function panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus) {
             judul: sitasiPs,
             aksi: [
               { ikon: "bagikan", label: "Bagikan pasal ini", keterangan: "Kirim lewat WhatsApp, Telegram, dan lainnya", saat: bagikanPasal, tampil: bisaBagikan },
-              { ikon: "dokumen", label: "Lihat di PDF", keterangan: "Bandingkan dengan naskah aslinya", saat: () => void akses.buka(g.nomor), tampil: !g.penjelasan && akses.tersedia() },
               { ikon: "salin", label: "Salin teks pasal", keterangan: "Dengan sitasinya", saat: salinTeks },
               { ikon: "kutip", label: "Salin kutipan lengkap", keterangan: "Nama peraturan, teks pasal, dan tautan", saat: salinKutipan, tampil: !g.penjelasan },
               { ikon: "kutip", label: "Salin pasal beserta penjelasannya", keterangan: "Kutipan lengkap dan penjelasan resminya", saat: salinDenganPenjelasan, tampil: Boolean(isiPenjelasan) && !hanyaCukupJelas(isiPenjelasan) },
@@ -696,11 +654,30 @@ function panelIsi(ctx, d, q, kelompok, celah, akses, infoStatus) {
       ikon("lainnya"),
     );
 
+    // Halaman PDF tempat pasal ini dimulai (menurut server; kosong bila belum diketahui, lalu dicari di teks PDF saat dibuka). Hanya
+    // batang tubuh: penjelasan memakai ulang nomor pasal, jadi halamannya tak bisa ditebak dari nomornya. Tombolnya baru tampil setelah
+    // diketahui PDF-nya ada (kelas `ada-pdf` pada daftar, dipasang di bawah).
+    const halamanPs = halamanPasal(g);
+    const chipHalaman = g.penjelasan
+      ? null
+      : h(
+          "button",
+          {
+            type: "button",
+            class: "chip-halaman pasal-pdf",
+            title: "Lihat pasal ini di PDF",
+            "aria-label": halamanPs ? `Lihat ${namaPs} di halaman ${halamanPs} PDF` : `Lihat ${namaPs} di PDF`,
+            onclick: () => void akses.buka(g.nomor, halamanPs),
+          },
+          ikon("dokumen"),
+          h("span", null, halamanPs ? `hal. ${halamanPs}` : "PDF"),
+        );
+
     const el = h(
       "article",
       { class: "pasal", id: g.jangkar },
       // Penanda pasal selalu terlihat (juga di layar sentuh); aksi lain muncul saat disorot atau lewat tombol "⋯".
-      h("div", { class: "pasal-kepala" }, h("h3", null, namaPs), h("div", { class: "pasal-alat" }, tandaiPasal, aksiPasal, lainnyaPasal)),
+      h("div", { class: "pasal-kepala" }, h("h3", null, namaPs), chipHalaman, h("div", { class: "pasal-alat" }, tandaiPasal, aksiPasal, lainnyaPasal)),
       g.judul ? h("p", { class: "pasal-judul" }, g.judul) : null,
       satuTeks
         ? bacaIsiPasal(g.butir[0].isi).map((blok) => renderBlok(blok, peta))
@@ -1041,14 +1018,59 @@ function panelRelasi(d, ctx) {
 }
 
 /**
+ * Tombol "Minta PDF ini" untuk peraturan yang belum punya PDF: mencatat permintaan di server (didahulukan di antrean panen
+ * pengelola). Yang sudah diminta dari perangkat ini diingat, supaya tombolnya tak mengajak mengulang.
+ * @param {string} uri
+ */
+function tombolMinta(uri) {
+  const kunci = `lexa:minta-pdf:${uri}`;
+  const catatan = h("p", { class: "bantu", role: "status", "aria-live": "polite" });
+  const tombol = /** @type {HTMLButtonElement} */ (
+    h(
+      "button",
+      {
+        type: "button",
+        class: "tombol tombol-utama",
+        onclick: async () => {
+          tombol.disabled = true;
+          try {
+            const r = await api.mintaPdf(uri);
+            if (r.status === "sudah_ada") {
+              toast("PDF peraturan ini ternyata sudah tersedia. Muat ulang halaman untuk melihatnya.");
+              tombol.disabled = false;
+              return;
+            }
+            penyimpanan.tulis(kunci, "1");
+            tandai();
+            toast("Terima kasih, permintaan Anda dicatat.");
+          } catch (e) {
+            tombol.disabled = false;
+            toast(e instanceof GalatApi && e.status === 429 ? e.message : "Permintaan belum terkirim. Coba lagi sebentar lagi.", { galat: true });
+          }
+        },
+      },
+      ikon("kirim"),
+      h("span", null, "Minta PDF ini"),
+    )
+  );
+  function tandai() {
+    tombol.disabled = true;
+    tombol.classList.remove("tombol-utama");
+    tombol.replaceChildren(ikon("centang"), h("span", null, "Sudah diminta"));
+    catatan.textContent = "PDF ini akan didahulukan pada pengambilan berikutnya dari BPK.";
+  }
+  if (penyimpanan.baca(kunci) === "1") tandai();
+  return h("span", { class: "minta-pdf" }, tombol, catatan);
+}
+
+/**
  * Panel "PDF": naskah yang diarsipkan Lexa, untuk memeriksa teks hasil ekstraksi terhadap aslinya. PDF hanya ada untuk
  * peraturan yang sudah dipanen dari BPK; selebihnya panel ini menjelaskan itu dan menunjuk ke naskah resmi.
  * @param {Detail} d
  * @param {{ nilai: import("../api.js").StatusDokumen | null, galat: unknown, selesai: boolean, saatSelesai: Array<() => void> }} info
  * @param {() => Promise<ReturnType<typeof buatPenampilPdf> | null>} sediakan
- * @param {number} halamanAwal halaman yang dibuka pertama (0 = awal)
  */
-function panelPdf(d, info, sediakan, halamanAwal) {
+function panelPdf(d, info, sediakan) {
   const wadah = h("div", { "aria-live": "polite" });
 
   async function gambar() {
@@ -1067,17 +1089,17 @@ function panelPdf(d, info, sediakan, halamanAwal) {
         wadah,
         keadaanKosong(
           "PDF belum diarsipkan di Lexa",
-          h("p", null, "Lexa baru menyimpan PDF peraturan yang sudah dipanen dari situs resmi BPK. Peraturan ini belum, jadi teks pasalnya (bila ada) tidak bisa dibandingkan dengan naskah aslinya di sini."),
-          bpk
-            ? h("a", { class: "tombol tombol-utama", href: bpk, target: "_blank", rel: "noopener noreferrer" }, ikon("luar"), h("span", null, "Buka naskah resmi (BPK)"))
-            : h("p", { class: "redup" }, "Tautan ke naskah resmi belum diketahui untuk peraturan ini."),
+          h("p", null, bpk ? "Naskah resminya dapat dibaca di situs BPK. Lexa menyimpan PDF dari sana atas permintaan pembaca." : "Tautan ke naskah resmi belum diketahui untuk peraturan ini. Lexa menyimpan PDF atas permintaan pembaca."),
+          h("div", { class: "baris tengah-baris" }, bpk ? h("a", { class: "tombol", href: bpk, target: "_blank", rel: "noopener noreferrer" }, ikon("luar"), h("span", null, "Buka naskah resmi (BPK)")) : null, tombolMinta(d.law.frbr_uri)),
         ),
       );
       return;
     }
     isi(wadah, penampil.el);
+    // Penampil mengisi layar di bawah tab: halaman web digulir sampai ia berada tepat di bawahnya. Ditunda satu bingkai: router
+    // menggulir ke atas sesaat setelah halaman tergambar, dan status dokumen bisa sudah ada saat itu.
+    requestAnimationFrame(() => penampil.tampilkanDiLayar());
     await penampil.muat();
-    if (halamanAwal > 0) penampil.keHalaman(halamanAwal);
   }
 
   void gambar();
@@ -1086,48 +1108,65 @@ function panelPdf(d, info, sediakan, halamanAwal) {
 }
 
 /**
- * Panel "Naskah": tautan resmi, PDF yang diarsipkan, dan teks hasil konversi.
+ * Panel "Info": ringkasan, keterangan peraturan, dan sumbernya (naskah resmi, PDF, teks hasil konversi).
  * @param {Detail} d
  * @param {import("../router.js").Konteks} ctx
  * @param {{ nilai: import("../api.js").StatusDokumen | null, galat: unknown, selesai: boolean, saatSelesai: Array<() => void> }} info
  */
-function panelNaskah(d, ctx, info) {
-  const wadah = h("div");
+function panelInfo(d, ctx, info) {
+  const l = d.law;
+  const topik = judulRingkas(l.judul);
+  const bpk = tautanAman(d.bpk_url);
+  const bidang = pecahBidang(l.bidang);
+  const polos = (/** @type {string} */ t) => t.toLowerCase().replace(/\s+/g, " ").trim();
+  // "Tentang" hanya berguna bila memuat sesuatu yang tidak sudah ada di judul atau bidang.
+  const tentang = l.tentang && ![l.judul, topik, l.bidang ?? ""].some((x) => polos(x) === polos(/** @type {string} */ (l.tentang))) ? rapikanHuruf(l.tentang) : null;
+  const sumberData = tautanAman(l.sumber_url);
+  const metadata = h(
+    "dl",
+    { class: "metadata" },
+    ...[
+      ["Jenis", labelJenis(l.jenis)],
+      ["Nomor / tahun", nomorResmi(l)],
+      l.tanggal_penetapan ? ["Ditetapkan", tanggalIndonesia(l.tanggal_penetapan)] : null,
+      l.tanggal_berlaku ? ["Berlaku", tanggalIndonesia(l.tanggal_berlaku)] : null,
+      l.instansi ? ["Instansi", l.instansi] : null,
+      bidang.length ? ["Bidang", h("span", { class: "tautan-bidang" }, bidang.map((b) => h("a", { href: `/telusuri${queryString({ bidang: b.nama })}` }, b.label)))] : null,
+      tentang ? ["Tentang", tentang] : null,
+      sumberData ? ["Sumber data", h("a", { href: sumberData, target: "_blank", rel: "noopener noreferrer" }, new URL(sumberData).hostname)] : null,
+    ].flatMap((baris) => (baris ? [h("dt", null, baris[0]), h("dd", null, baris[1])] : [])),
+  );
+
+  const naskah = h("div", { class: "tumpuk" });
   const teksWadah = h("div", { "aria-live": "polite" });
 
-  function gambar() {
+  function gambarNaskah() {
     const st = info.nilai;
-    const bpk = tautanAman(d.bpk_url);
     isi(
-      wadah,
-      h(
-        "div",
-        { class: "tumpuk" },
-        h("div", { class: "kartu" }, h("h3", { class: "kartu-judul" }, "Naskah resmi"), bpk ? h("p", null, "Rujukan yang berlaku adalah naskah di situs resmi BPK.") : h("p", { class: "redup" }, "Tautan ke naskah resmi belum diketahui untuk peraturan ini."), bpk ? h("a", { class: "tombol", href: bpk, target: "_blank", rel: "noopener noreferrer" }, ikon("luar"), h("span", null, "Buka di peraturan.bpk.go.id")) : null),
-        h(
-          "div",
-          { class: "kartu" },
-          h("h3", { class: "kartu-judul" }, "Salinan di Lexa"),
-          !info.selesai
-            ? kerangka(2)
-            : info.galat
-              ? kotakGalat(info.galat)
-              : [
-                  st?.ada_pdf && st.pdf_url ? h("p", null, h("a", { class: "tombol", href: st.pdf_url, target: "_blank", rel: "noopener" }, ikon("unduh"), h("span", null, "Buka PDF"))) : h("p", { class: "redup" }, "Berkas PDF peraturan ini belum diarsipkan di Lexa."),
-                  st?.ada_teks && st.teks_url
-                    ? h("p", null, h("button", { type: "button", class: "tombol", onclick: muatTeks }, "Lihat teks hasil konversi"))
-                    : h("p", { class: "redup" }, "Teks hasil konversi belum tersedia."),
-                  teksWadah,
-                ],
-        ),
-      ),
+      naskah,
+      bpk ? h("a", { class: "tombol", href: bpk, target: "_blank", rel: "noopener noreferrer" }, ikon("luar"), h("span", null, "Naskah resmi (BPK)")) : h("p", { class: "redup" }, "Tautan ke naskah resmi belum diketahui untuk peraturan ini."),
+      !info.selesai
+        ? kerangka(2)
+        : info.galat
+          ? kotakGalat(info.galat)
+          : [
+              st?.ada_pdf && st.pdf_url
+                ? h("a", { class: "tombol", href: st.pdf_url, target: "_blank", rel: "noopener" }, ikon("dokumen"), h("span", null, "Buka PDF di tab baru"))
+                : h("p", { class: "redup" }, "PDF peraturan ini belum diarsipkan di Lexa."),
+              st?.ada_teks && st.teks_url
+                ? h("details", { class: "teks-konversi", ontoggle: (/** @type {Event} */ e) => { if (/** @type {HTMLDetailsElement} */ (e.currentTarget).open) void muatTeks(); } }, h("summary", null, "Teks hasil konversi"), teksWadah)
+                : null,
+            ],
     );
   }
 
+  let teksDimuat = false;
   async function muatTeks() {
+    if (teksDimuat) return;
     isi(teksWadah, kerangka(4));
     try {
-      const teks = await api.teksDokumen(d.law.frbr_uri, ctx.sinyal);
+      const teks = await api.teksDokumen(l.frbr_uri, ctx.sinyal);
+      teksDimuat = true;
       isi(
         teksWadah,
         peringatan("info", h("p", null, "Teks ini hasil konversi otomatis dari PDF dan dapat mengandung kesalahan. Untuk kebutuhan resmi, rujuk naskah asli.")),
@@ -1138,7 +1177,14 @@ function panelNaskah(d, ctx, info) {
     }
   }
 
-  gambar();
-  if (!info.selesai) info.saatSelesai.push(gambar);
-  return wadah;
+  gambarNaskah();
+  if (!info.selesai) info.saatSelesai.push(gambarNaskah);
+
+  return h(
+    "div",
+    { class: "tumpuk" },
+    l.ringkasan ? kartuRingkasan(l.ringkasan) : null,
+    h("div", { class: "kartu" }, h("h3", { class: "kartu-judul" }, "Keterangan"), metadata),
+    h("div", { class: "kartu" }, h("h3", { class: "kartu-judul" }, "Naskah"), naskah),
+  );
 }

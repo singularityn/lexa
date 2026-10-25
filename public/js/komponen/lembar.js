@@ -52,6 +52,7 @@ export function bukaLembar(opsi) {
  *   label: string,
  *   keterangan?: string,
  *   href?: string | null,
+ *   unduh?: string,
  *   saat?: () => void | Promise<void>,
  *   tampil?: boolean,
  * }} AksiLembar
@@ -59,7 +60,8 @@ export function bukaLembar(opsi) {
 
 /**
  * Daftar aksi sebagai lembar: tiap baris tombol besar yang mudah diketuk. `href` membuka tautan di tab
- * baru, `saat` menjalankan fungsi lalu menutup lembar. Aksi dengan `tampil: false` dilewati.
+ * baru (atau mengunduhnya dengan nama `unduh`, untuk berkas di asal yang sama), `saat` menjalankan fungsi
+ * lalu menutup lembar. Aksi dengan `tampil: false` dilewati.
  *
  * @param {{ judul: string, aksi: AksiLembar[], saatTutup?: () => void }} opsi
  */
@@ -74,7 +76,11 @@ export function bukaLembarAksi(opsi) {
         h("span", { class: "aksi-teks" }, h("span", null, a.label), a.keterangan ? h("small", null, a.keterangan) : null),
       ];
       return a.href
-        ? h("a", { class: "aksi-baris", href: a.href, target: "_blank", rel: "noopener noreferrer", "data-luar": "", onclick: () => lembar.tutup() }, ...isi)
+        ? h(
+            "a",
+            { class: "aksi-baris", href: a.href, ...(a.unduh ? { download: a.unduh } : { target: "_blank", rel: "noopener noreferrer", "data-luar": "" }), onclick: () => lembar.tutup() },
+            ...isi,
+          )
         : h(
             "button",
             {

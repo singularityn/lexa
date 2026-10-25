@@ -396,7 +396,7 @@ describe("halaman peraturan", () => {
     await page.waitForFunction((n) => document.querySelectorAll(".pasal:not(.tidak-cocok)").length === n, total);
   });
 
-  it("tab PDF, Relasi, dan Naskah dapat dicapai dengan papan ketik dan tersimpan di URL", async () => {
+  it("tab PDF, Relasi, dan Info dapat dicapai dengan papan ketik dan tersimpan di URL", async () => {
     await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
     await page.focus("#tab-isi");
     await page.keyboard.press("ArrowRight");
@@ -407,21 +407,21 @@ describe("halaman peraturan", () => {
     expect(page.url()).toContain("tab=relasi");
     await page.waitForSelector("svg.grafik");
     await page.keyboard.press("ArrowRight");
-    await page.waitForSelector("#panel-naskah:not([hidden])");
-    expect(await page.textContent("#panel-naskah")).toContain("Naskah resmi");
+    await page.waitForSelector("#panel-info:not([hidden])");
+    expect(await page.textContent("#panel-info")).toContain("Naskah resmi");
     await page.reload({ waitUntil: "networkidle" });
-    expect(await page.getAttribute("#tab-naskah", "aria-selected")).toBe("true");
+    expect(await page.getAttribute("#tab-info", "aria-selected")).toBe("true");
   });
 
-  it("tab Naskah: PDF yang diarsipkan terbuka, teks hasil konversi dimuat dengan peringatan", async () => {
-    await page.goto(BASE + urlUU(UU13, "&tab=naskah"), { waitUntil: "networkidle" });
-    await page.waitForSelector("#panel-naskah a:has-text('Buka PDF')");
-    const href = await page.getAttribute("#panel-naskah a:has-text('Buka PDF')", "href");
+  it("tab Info: PDF yang diarsipkan terbuka, teks hasil konversi dimuat dengan peringatan", async () => {
+    await page.goto(BASE + urlUU(UU13, "&tab=info"), { waitUntil: "networkidle" });
+    await page.waitForSelector("#panel-info a:has-text('Buka PDF')");
+    const href = await page.getAttribute("#panel-info a:has-text('Buka PDF')", "href");
     const res = await fetch(BASE + href);
     expect(res.headers.get("content-type")).toBe("application/pdf");
-    await page.click("button:has-text('Lihat teks hasil konversi')");
+    await page.click("#panel-info summary:has-text('Teks hasil konversi')");
     await page.waitForSelector("pre.teks-naskah");
-    expect(await page.textContent("#panel-naskah")).toContain("hasil konversi otomatis");
+    expect(await page.textContent("#panel-info")).toContain("hasil konversi otomatis");
   });
 
   it("peta relasi menggambar simpul dan sisi, dan klik simpul membuka peraturan itu", async () => {
@@ -437,7 +437,8 @@ describe("halaman peraturan", () => {
   it("dialog laporan: terkirim dan tercatat di server", async () => {
     await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
     await page.waitForSelector(".pasal");
-    await page.click(".aksi-bar button:has-text('Laporkan kesalahan')");
+    await page.click(".tombol-lainnya");
+    await page.click("dialog.lembar-aksi .aksi-baris:has-text('Laporkan kesalahan')");
     // Di layar lebar daftar isi adalah <dialog open> permanen di samping teks; yang dituju dialog laporan.
     await page.waitForSelector("dialog.dialog-laporan[open]");
     await page.selectOption("dialog.dialog-laporan select", "teks_salah");
@@ -814,7 +815,7 @@ describe("cakupan peraturan (UUD, Tap MPR, UU, Perppu, PP)", () => {
 
     await page.goto(BASE + "/status", { waitUntil: "networkidle" });
     await page.waitForSelector(".statistik");
-    expect(await page.textContent("main")).toContain(`Cakupan Lexa saat ini: ${CAKUPAN}.`);
+    expect(await page.textContent("main")).toContain(`Cakupan saat ini: ${CAKUPAN}.`);
 
     await page.goto(BASE + "/tentang", { waitUntil: "networkidle" });
     expect(await page.textContent("main")).toContain("Cakupan dibatasi.");
@@ -980,14 +981,15 @@ describe("halaman peraturan: teks yang tersimpan sebagian", () => {
     d.bpk_url = null;
     d.law.sumber_url = "javascript:alert(1)";
     await page.route((url) => url.pathname === "/api/laws/detail", (route) => route.fulfill({ json: d }));
-    await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
+    // UU 13/2003 di pratinjau ber-PDF: tanpa ?tab=isi, tab PDF yang terbuka sendiri (lihat penampil-pdf.test.mjs).
+    await page.goto(BASE + urlUU(UU13, "&tab=isi"), { waitUntil: "networkidle" });
     await page.waitForSelector("text=Teks pasal belum tersedia di Lexa");
     expect(await page.textContent("main")).toContain("pasal-pasalnya belum berhasil diambil");
     expect(await page.locator("main a[href^='javascript:']").count()).toBe(0);
 
     d.law.sumber_url = "https://peraturan.go.id/id/uu-no-13-tahun-2003";
     await page.goto(BASE + "/tentang", { waitUntil: "networkidle" });
-    await page.goto(BASE + urlUU(UU13), { waitUntil: "networkidle" });
+    await page.goto(BASE + urlUU(UU13, "&tab=isi"), { waitUntil: "networkidle" });
     await page.waitForSelector("text=Teks pasal belum tersedia di Lexa");
     expect(await page.locator("main a", { hasText: "Buka naskah di sumber" }).getAttribute("href")).toBe("https://peraturan.go.id/id/uu-no-13-tahun-2003");
   });

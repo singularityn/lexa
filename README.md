@@ -26,17 +26,23 @@ Pencarian dan penelusuran peraturan perundang-undangan Indonesia, dibangun di at
   tingkatnya menurut seberapa besar bagian judul yang dibicarakan kata itu, bukan BM25; "uu perikanan" atau
   "pp kelautan" membatasi tingkat judul pada jenisnya.
 - **Telusur** dengan filter dan facet: jenis, tahun, status, instansi, bidang.
-- **Detail peraturan**: pasal dan ayat, pencarian di dalam peraturan, relasi antar-peraturan (mengubah,
-  mencabut, dasar hukum, dan seterusnya) beserta peta relasi dua arah, tautan ke naskah resmi di
-  peraturan.bpk.go.id, PDF dan teks hasil konversi bila sudah diarsipkan, lapor kesalahan data.
-- **Tab PDF**: naskah asli yang diarsipkan Lexa ditampilkan di dalam halaman peraturan (PDF.js, digambar per halaman
-  dengan lapisan teks, perbesar/perkecil, loncat ke halaman; berjalan juga di ponsel, yang tak bisa menampilkan PDF
-  di dalam halaman). Tombol **Lihat di PDF** pada tiap pasal membuka halaman tempat pasal itu dimulai, dicari di teks
-  PDF-nya, supaya hasil ekstraksi yang meragukan bisa dibandingkan dengan aslinya. Tombol **Periksa pasal** memindai
-  seluruh batang tubuh PDF (penjelasan tidak dihitung) dan membandingkan nomor pasal yang judulnya tampak di sana dengan
-  pasal yang tersimpan: yang ada di PDF tetapi tak ada di Lexa kemungkinan terlewat oleh ekstraksi, dan tiap nomor membuka
-  halamannya. PDF hanya ada untuk peraturan yang dipanen dari BPK; selebihnya tab ini menjelaskan itu. PDF.js dimuat
-  hanya saat tab dibuka (`public/vendor/pdfjs`).
+- **Detail peraturan**: empat tab: **Teks** (pasal dan ayat, pencarian di dalam peraturan), **PDF**, **Relasi**
+  (mengubah, mencabut, dasar hukum, dan seterusnya, beserta peta relasi dua arah), dan **Info** (ringkasan, metadata,
+  tautan ke naskah resmi di peraturan.bpk.go.id, teks hasil konversi). Aksi lain (bagikan, salin tautan, unduh PDF, simpan
+  luring, cetak, lapor kesalahan) ada di satu menu "Lainnya".
+- **PDF resmi di dalam halaman** (tab PDF): naskah asli yang diarsipkan Lexa dibaca langsung, tanpa unduhan. Penampilnya
+  (`public/js/komponen/penampilPdf.js`) dibangun di atas PDF.js dan berjalan juga di ponsel, yang tak bisa menampilkan PDF
+  di dalam halaman: halaman digulir mulus dan hanya yang terlihat yang digambar; teksnya bisa diseleksi. **Pasal** membuka
+  daftar pasal beserta nomor halamannya (satu ketukan melompat ke sana; indeks halaman berasal dari ekstraksi, dan bila
+  belum ada dipindai dari teks PDF-nya di peramban). **Cari di PDF** menandai semua kecocokan dan melompat di antaranya.
+  Cubit atau ketuk dua kali untuk memperbesar (Ctrl+roda di komputer; titik yang dicubit tetap di tempatnya), **Pas lebar**,
+  layar penuh, halaman gelap untuk malam hari, dan halaman terakhir dibaca diingat per PDF di perangkat. Tombol **Lihat di
+  PDF** pada tiap pasal, dan tautan "hal. N" pada hasil pencarian, membuka halaman tempat pasal itu dimulai. **Periksa
+  pasal** memindai batang tubuh PDF (penjelasan tidak dihitung) dan membandingkan nomor pasal yang judulnya tampak di sana
+  dengan pasal yang tersimpan: yang ada di PDF tetapi tak ada di Lexa kemungkinan terlewat oleh ekstraksi, dan tiap nomor
+  membuka halamannya. PDF hanya ada untuk peraturan yang dipanen dari BPK; untuk yang belum, tombol **Minta PDF ini**
+  mencatat permintaan pembaca (satu per alamat per peraturan, paling banyak 30 peraturan per jam) dan mendahulukan
+  peraturan itu pada panen berikutnya. PDF.js dimuat hanya saat tab dibuka (`public/vendor/pdfjs`).
 - **Membaca di ponsel**: halaman peraturan dengan daftar isi dan lompat ke pasal, lima ukuran huruf, **Penjelasan resmi di
   bawah pasal yang dijelaskannya** (lipatan tertutup; "Penjelasan: cukup jelas" bila hanya itu; Penjelasan Umum di awal;
   ikut dicari), rujukan antarpasal yang bisa diketuk ("Pasal 156 ayat (2)"), lanjutkan membaca dari posisi terakhir,
@@ -75,17 +81,19 @@ ketiga mana pun: satu-satunya panggilan keluar adalah Google (login) dan layanan
 | `ASSETS` | Static Assets | `public/` | cangkang SPA yang dipakai `/peraturan` untuk pratinjau tautan |
 
 Cron: dua pemicu. `0 19 * * *` (pemeliharaan harian, 02:00 WIB) mengosongkan daftar hapus (berkas R2 dan vektor yatim),
-memangkas log lama, dan membuang sisa keadaan sumber lama. `*/15 * * * *` menjalankan Gemini otomatis
-(`src/worker/lib/geminiOtomatis.ts`): tak mengerjakan apa pun, dan tak menyentuh D1 maupun Gemini, kecuali variabel
-`GEMINI_OTOMATIS` dipasang. Data peraturan tidak dijemput Cron; ia masuk dari panen BPK lewat `/api/impor/*`. Skema D1 dan
-alasan desainnya ada di `migrations/`.
+memangkas log lama, dan membuang sisa keadaan sumber lama. `*/15 * * * *` melakukan dua hal: **uraian ulang otomatis**
+(peraturan yang pasalnya dihasilkan pengurai versi lama diuraikan ulang dari arsip teksnya di R2, sehingga indeks pasal
+dan nomor halamannya ikut membaik tanpa panen ulang; `src/worker/lib/uraianUlang.ts`) dan Gemini otomatis
+(`src/worker/lib/geminiOtomatis.ts`), yang tak menyentuh D1 maupun Gemini kecuali variabel `GEMINI_OTOMATIS` dipasang. Data
+peraturan tidak dijemput Cron; ia masuk dari panen BPK lewat `/api/impor/*`. Skema D1 dan alasan desainnya ada di
+`migrations/`.
 
 ### Endpoint API
 
 | Kelompok | Endpoint |
 |---|---|
 | Pencarian dan telusur | `GET /api/search`, `GET /api/laws`, `GET /api/laws/detail?uri=`, `GET /api/suggest`, `GET /api/bidang`, `GET /api/relasi/graf`, `GET /api/stats` |
-| Dokumen | `GET /api/dokumen/status`, `GET /api/dokumen/pdf`, `GET /api/dokumen/teks` |
+| Dokumen | `GET /api/dokumen/status`, `GET /api/dokumen/pdf` (mendukung Range, dicache lama), `GET /api/dokumen/teks`, `POST /api/dokumen/minta` ("Minta PDF ini", dibatasi per alamat) |
 | Tanya Lexa | `POST /api/tanya` (dibatasi laju per IP) |
 | Akun | `GET /api/auth/status`, `GET /api/auth/google`, `GET /api/auth/google/callback`, `PATCH /api/auth/profil`, `POST /api/auth/keluar`; koleksi: `GET/PUT/DELETE /api/koleksi`, `POST /api/koleksi/gabung` |
 | Laporan | `POST /api/laporan` |
@@ -153,7 +161,8 @@ src/worker/env.d.ts      tipe global Env (binding, variabel, secret)
 src/shared/types.ts      tipe bersama
 public/                  antarmuka (index.html, css/, js/, _headers, favicon, ikon/, og/, vendor/pdfjs: salinan PDF.js, lihat README-nya)
 migrations/              migrasi D1: 0000-0004 direkonstruksi dari skema produksi, 0005-0006 kolom isi_* (kini tak dipakai) dan daftar hapus,
-                         0007 tabel penjelasan dan ekstraksi_log.versi_parser, 0008 tabel pembacaan_ai
+                         0007 tabel penjelasan dan ekstraksi_log.versi_parser, 0008 tabel pembacaan_ai, 0009 kolom articles.halaman
+                         (halaman PDF tempat pasal dimulai), 0010 tabel permintaan_pdf ("Minta PDF ini")
 test/                    tes unit; test/integration: Worker asli di atas SQLite sungguhan
 e2e/                     tes antarmuka di Chromium
 scripts/                 pratinjau lokal (dev-node.ts), data contoh, pembuat ikon dan gambar pratinjau, pembaruan sw.js
@@ -229,7 +238,8 @@ Ringkasannya (rincian, perintah, dan SQL pemeriksaan ada di [docs/pipeline-data.
 
 - **Sumber**: hanya naskah resmi BPK. Peraturan baru (dan tautan BPK-nya) masuk lewat **penjelajahan** daftar BPK
   (`jelajah: true`, sesekali untuk menangkap peraturan baru); teksnya lewat **panen PDF** (`GET /api/impor/butuh-teks`
-  memberi daftar kerja: yang bertaut ke BPK dulu, lalu UUD < Tap MPR < UU < Perppu < PP, terbaru dulu).
+  memberi daftar kerja: yang **diminta pembaca** dulu (tombol "Minta PDF ini", terbanyak peminatnya di depan), lalu yang
+  bertaut ke BPK, lalu UUD < Tap MPR < UU < Perppu < PP, terbaru dulu).
 - **Ekstraksi**: `PUT /api/impor/pdf` menyimpan PDF di R2 dan mengantrekan ekstraksi; konsumer antrean mengubahnya menjadi
   teks (Workers AI), pasal dan ayat, lalu mencatat mutu hasilnya (`ekstraksi_log`). Teks konversi diarsipkan di R2 (`teks/…md`)
   sehingga perbaikan pengurai cukup menguraikan ulang arsip (`POST /api/impor/ekstrak-ulang` dengan `dariTeks: true`), tanpa
@@ -293,8 +303,9 @@ Berkas di `migrations/` diberi nomor berurutan. **Jangan mengubah berkas yang su
 dengan yang tercatat di tabel `d1_migrations` produksi, sehingga dianggap sudah diterapkan di sana (0005 dan 0006
 diterapkan pada 11 Okt 2026: kolom `isi_*` dan penanda arsip pada `laws`, indeks antrean parsial, pemicu FTS yang hanya
 menyala untuk kolom yang diindeks, dan tabel `daftar_hapus`; kolom `isi_*` kini tak dipakai lagi tetapi dibiarkan; 0007
-menambah tabel `penjelasan` dan kolom `ekstraksi_log.versi_parser`, dan 0008 tabel `pembacaan_ai`, keduanya kompatibel
-mundur: kode menahan galatnya bila belum diterapkan). Perubahan
+menambah tabel `penjelasan` dan kolom `ekstraksi_log.versi_parser`, 0008 tabel `pembacaan_ai`, 0009 kolom
+`articles.halaman`, dan 0010 tabel `permintaan_pdf`, semuanya kompatibel mundur: kode menahan galatnya bila belum
+diterapkan). Perubahan
 skema baru = berkas baru, lalu terapkan secara sengaja **sebelum** men-deploy kode yang membutuhkannya:
 
 ```bash
@@ -423,6 +434,8 @@ Ditemukan lewat tes integrasi pada kode v0.1, semuanya sudah diperbaiki dan puny
   terhadap kode (terbukti, sebagian, sudah ada, atau keliru), apa yang dikerjakan, dan yang ditunda.
 - [docs/analisis-ux-dan-fitur.md](docs/analisis-ux-dan-fitur.md): analisis lanjutan UI/UX dan fitur (temuan,
   tindakan, peta jalan), memakai Claude Design, memasang ke layar utama, dan daftar periksa di perangkat asli.
+- [docs/audit-pdf-dan-ux.md](docs/audit-pdf-dan-ux.md): audit 25 Okt 2026 (keadaan data produksi, temuan antarmuka, rencana),
+  hasilnya (penampil PDF baru, halaman peraturan, antarmuka, mekanisme indeks), dan yang tetap di tangan pemilik.
 - [docs/analisis-lanjutan-pencarian-login-pdf-panen.md](docs/analisis-lanjutan-pencarian-login-pdf-panen.md): analisis
   lanjutan 12 Okt 2026 atas empat catatan pemilik (pencarian berdasarkan judul peraturan, `redirect_uri_mismatch`,
   menu PDF dan fitur lanjutannya, panen lanjutan BPK), temuan data produksi, tindakan yang hanya bisa Anda lakukan,

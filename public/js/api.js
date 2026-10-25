@@ -205,6 +205,15 @@ export const api = {
     return minta("/api/dokumen/status", { sinyal, params: { uri } });
   },
 
+  /**
+   * Minta PDF peraturan yang belum diarsipkan (didahulukan pada panen berikutnya).
+   * @param {string} uri
+   * @returns {Promise<{ status: "tercatat" | "sudah_ada", ulang?: boolean, pdf_url?: string }>}
+   */
+  mintaPdf(uri) {
+    return minta("/api/dokumen/minta", { metode: "POST", badan: { uri } });
+  },
+
   /** @param {string} uri @param {AbortSignal} [sinyal] @returns {Promise<string>} */
   teksDokumen(uri, sinyal) {
     return minta("/api/dokumen/teks", { sinyal, params: { uri }, teks: true });

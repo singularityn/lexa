@@ -66,3 +66,51 @@ bahasanya untuk pembaca.
 pembaca" mengurutkan panen; panduan panen dan pembacaan Gemini yang satu ketukan.
 
 **D. Mutu**: tes unit, integrasi, dan e2e untuk semuanya; uji mutasi pada logika baru; dokumen dan penerapan migrasi ke produksi.
+
+## 4. Hasil (25 Oktober 2026)
+
+**A. PDF sebagai fitur utama**
+
+* *Indeks pasal per halaman* (migrasi 0009, sudah di produksi): tiap pasal menyimpan halaman PDF tempat ia dimulai. Cron 15 menit
+  menguraikan ulang peraturan berpengurai lama dari arsip teksnya (20 peraturan per putaran; `URAIAN_ULANG_BATAS` sampai 100,
+  `URAIAN_ULANG_OTOMATIS=mati` mematikan). Diverifikasi di produksi: 33 peraturan dan 408 baris pasal sudah bernomor halaman setelah
+  dua putaran. Sisa ±2.600 peraturan selesai sendiri dalam ±33 jam pada pengaturan bawaan.
+* *Penampil PDF baru* (`public/js/komponen/penampilPdf.js`, dengan `pdfZoom.js`, `pdfCari.js`, `pdfGestur.js`, `indeksPasalPdf.js` dan
+  tiga lembar: pasal, cari, periksa): penggulir sendiri yang mengisi sisa layar; halaman digambar hanya bila terlihat (naskah 501
+  halaman: buka <1 dtk, loncat ke halaman 400 ±150 ms, cari seluruh naskah ±1 dtk, 2-5 kanvas hidup, memori JS tetap 10 MB); daftar
+  **Pasal** bernomor halaman (dari server, diverifikasi terhadap teks PDF, dan tetap bekerja untuk PDF pindaian); **cari di PDF**
+  dengan penanda semua kecocokan (CSS Custom Highlight); cubit dua jari, ketuk dua kali, dan Ctrl+roda dengan titik fokus yang tetap
+  di tempatnya; **Pas lebar**; layar penuh (tombol Kembali menutupnya); halaman gelap; halaman terakhir diingat per PDF dan ikut di
+  alamat (`tab=pdf&hal=N`); unduh dan buka di tab baru; **Periksa pasal**.
+* *Halaman peraturan dirampingkan*: judul, status, tiga tombol (Simpan, Salin sitasi, Lainnya), lalu **Teks | PDF | Relasi | Info**.
+  Ringkasan AI, metadata, dan sumber pindah ke Info; tab Naskah dan tombol PDF ganda dibuang. Isi mulai di layar pertama ponsel
+  (sebelumnya sekitar 1.250 px di bawahnya). Tiap pasal punya tombol "hal. N" yang selalu terlihat; hasil pencarian pasal juga
+  membawanya. Peraturan yang pasalnya belum terbaca tetapi PDF-nya ada langsung membuka tab PDF.
+* *Peraturan tanpa PDF*: tombol **Buka naskah resmi (BPK)** dan **Minta PDF ini** (lihat C).
+
+**B. Kebersihan antarmuka**: beranda tanpa pemilih mode dan kartu Tanya yang kecil; Telusuri tanpa kartu statistik; Status berbahasa
+pembaca (tabel dan riwayat pekerjaan dilipat) dengan tiga kartu angka yang ringkas di ponsel; Tentang dipadatkan; Koleksi dan Akun tanpa
+kalimat berulang; Tanya Lexa dengan contoh pertanyaan yang membungkus dan, di layar lebar, judul-contoh-kotak tulis sebagai satu kelompok
+di tengah; bilah bawah berlabel untuk semua tujuan. Teks yang mengulang judul atau menjelaskan yang sudah jelas dibuang di semua halaman.
+
+**C. Mekanisme indeks otomatis**: tombol **Minta PDF ini** (`POST /api/dokumen/minta`, migrasi 0010) mencatat peminat per peraturan,
+dibatasi per alamat; `GET /api/impor/butuh-teks` mendahulukan yang diminta (terbanyak dulu) dan memasukkannya walau sudah berpasal dari
+teks lama; skrip panen mencetak jumlahnya; panduan panen satu ketukan (`{ batas: 200, terus: true, lama: true }`) dan bagian
+"Permintaan PDF dari pembaca" ada di [pipeline-data.md](pipeline-data.md).
+
+**D. Mutu**: 1.712 tes unit dan integrasi; 277 tes e2e di Chromium (ui 86, pwa 27, baca 49, penampil PDF 62, panen 33, cakupan lebar 2,
+gemini 18), termasuk axe terang dan gelap dan konsol bebas galat dan pelanggaran CSP. Uji mutasi atas logika baru (rumus zoom dan
+halaman terlihat, pencarian di PDF, indeks pasal, "Minta PDF", urutan antrean, halaman pada hasil pencarian): 95 mutan, 72 terbunuh pada
+percobaan pertama; 20 dari 23 yang selamat dibunuh dengan tes tambahan, 3 sisanya setara (kodenya tak terjangkau: penjepit yang
+berlebih, penjumlahan yang tak berpengaruh, dan reset yang sudah dilakukan hasil kueri).
+
+## 5. Yang tetap di tangan pemilik, dan batasnya
+
+* **Panen BPK** hanya bisa dari peramban pemilik (BPK menolak alamat server). Baru 37% peraturan punya PDF; tab PDF dan nomor halaman
+  pasal hanya ada untuk yang sudah dipanen. Jalankan lagi skrip panen (opsi ada di bagian 3 [pipeline-data.md](pipeline-data.md)), lalu
+  `{ batas: 200, terus: true, lama: true }` sampai antrean habis. Peraturan yang paling diminta pembaca otomatis di depan.
+* **Kunci yang tertempel di obrolan** (Gemini dan NVIDIA) harus dicabut dan diganti; kunci baru hanya di secret Cloudflare.
+* Opsional: `GEMINI_OTOMATIS=uji`, lalu `ya`, untuk PDF pindaian; `URAIAN_ULANG_BATAS` lebih besar bila paket Cloudflare mengizinkan
+  (paket gratis: 100.000 baris tulis D1 per hari).
+* Belum teruji dengan PDF BPK sungguhan (sandbox tak bisa menjangkau BPK ataupun produksi): penampil diuji dengan PDF buatan tes dan
+  naskah 501 halaman; PDF aneh (font tak tertanam, halaman sangat besar) baru ketahuan setelah dipakai.

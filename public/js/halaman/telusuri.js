@@ -4,7 +4,7 @@ import { api, dibatalkan } from "../api.js";
 import { angka, bacaFilter, daftarCakupan, kodeJenis, queryString } from "../format.js";
 import { buatPanelFilter } from "../komponen/panelFilter.js";
 import { kartuPeraturan } from "../komponen/kartuHasil.js";
-import { bilahTampilan, hierarkiJenis, papanJenis, statistikTelusuri, tampilanDariUrl } from "../komponen/papanJenis.js";
+import { bilahTampilan, hierarkiJenis, papanJenis, tampilanDariUrl } from "../komponen/papanJenis.js";
 import { keadaanKosong, kerangkaHasil, kotakGalat, paginasi } from "../komponen/umum.js";
 
 const PER_HALAMAN = 20;
@@ -90,7 +90,6 @@ export default async function telusuri(ctx) {
     ctx.akar,
     h("h1", null, "Telusuri peraturan"),
     cakupanInfo,
-    statistikTelusuri(ctx.sinyal),
     bilahTampilan(keadaan.tampil, (t) => terapkan(t, true)),
     daftarTampil,
     papan.el,

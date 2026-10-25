@@ -128,7 +128,7 @@ export default async function tanya(ctx) {
         h("a", { href: "/tentang" }, "Selengkapnya"),
       ),
       log,
-      h("div", { class: "contoh gulir-chip", id: "contoh-tanya" }, CONTOH.map((c) => h("button", { type: "button", class: "chip", onclick: () => { input.value = c; sesuaikan(); input.focus(); } }, c))),
+      h("div", { class: "contoh-tanya", id: "contoh-tanya" }, CONTOH.map((c) => h("button", { type: "button", class: "chip", onclick: () => { input.value = c; sesuaikan(); input.focus(); } }, c))),
       form,
     ),
   );

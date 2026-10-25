@@ -279,15 +279,15 @@ mark { background: var(--tanda-bg); color: var(--tanda-fg); padding: 0 2px; bord
     height: 62px; padding: 7px; border-radius: 31px; background: color-mix(in srgb, var(--permukaan) 90%, transparent);
     backdrop-filter: saturate(1.4) blur(14px); border: 1px solid var(--kaca-garis); box-shadow: 0 12px 34px rgba(90, 70, 20, 0.18);
   }
+  /* Ikon di atas, label di bawahnya, selalu terbaca: kelima tujuan sama lebar, yang aktif berlatar tinta. */
   .nav-bawah a {
-    position: relative; display: flex; align-items: center; justify-content: center; gap: 7px; flex: none; height: 48px; min-width: 44px; padding: 0 11px;
-    border-radius: 24px; color: var(--teks); text-decoration: none; font-size: 0.8rem; font-weight: 600;
+    position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; flex: 1 1 0; height: 50px; min-width: 44px; padding: 0 2px;
+    border-radius: 25px; color: var(--teks); text-decoration: none; font-size: 0.68rem; font-weight: 650; line-height: 1.1;
   }
-  .nav-bawah a[aria-current="page"] { background: var(--tinta); color: var(--tinta-teks); padding: 0 15px; }
+  .nav-bawah a[aria-current="page"] { background: var(--tinta); color: var(--tinta-teks); }
   .nav-bawah .tab-ikon { position: relative; display: grid; place-items: center; }
   .nav-bawah .ikon { width: 21px; height: 21px; }
-  .nav-bawah .tab-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-  .nav-bawah a[aria-current="page"] .tab-label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+  .nav-bawah .tab-label { white-space: nowrap; }
   .nav-bawah .lencana-jumlah { position: absolute; top: -7px; right: -10px; margin: 0; min-width: 18px; padding: 0 5px; font-size: 0.68rem; line-height: 18px; }
 
   /* Kotak yang sedang diketik memakai seluruh layar: bilah bawah menyingkir selama papan ketik terbuka. */
@@ -298,8 +298,6 @@ mark { background: var(--tanda-bg); color: var(--tanda-fg); padding: 0 2px; bord
 @media (max-width: 400px) {
   .merek { font-size: 1.3rem; }
   .nav-bawah { left: 8px; right: 8px; padding: 6px; }
-  .nav-bawah a { padding: 0 9px; }
-  .nav-bawah a[aria-current="page"] { padding: 0 13px; }
 }
 
 /* Tablet lanskap dan desktop: header menjadi sidebar kartu melayang di kiri; konten dan footer di kolom kanan. */
@@ -460,33 +458,27 @@ label.bidang { display: block; font-weight: 600; margin-bottom: 4px; font-size: 
 main { flex: 1; width: 100%; padding-block: 18px 40px; }
 main:focus { outline: none; }
 .beranda { display: grid; gap: 26px; }
-.hero-tata { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; align-items: stretch; }
 .hero { display: flex; flex-direction: column; gap: 14px; padding: 14px 6px 4px; }
 .hero h1 { font-size: clamp(2rem, 1.3rem + 2.8vw, 3.4rem); line-height: 1.04; letter-spacing: -0.03em; margin: 0; text-wrap: balance; }
-.hero p.lead { color: var(--teks-redup); margin: 0; max-width: 48ch; text-wrap: pretty; }
-.hero .kotak-cari { margin-top: 4px; }
-.opsi-cari { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; font-size: 0.85rem; }
-.hero-samping { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.kartu-tanya {
-  flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 22px; min-height: 230px; padding: 22px;
-  border-radius: var(--radius-besar); background: var(--koral-kuat); color: var(--koral-fg); text-decoration: none;
+.hero .kotak-cari { margin-top: 4px; max-width: 760px; }
+.hero .info-indeks { margin: 0; font-size: 0.85rem; text-align: start; }
+/* Jalan pintas ke Tanya Lexa: satu baris di bawah kotak cari, bukan kartu setinggi satu layar. */
+.tautan-tanya {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 16px 0 12px; border-radius: 999px;
+  background: var(--koral-bg); color: var(--koral-fg); text-decoration: none; font-size: 0.92rem;
 }
-.kt-ikon { width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; background: var(--tinta); color: var(--tinta-teks); }
-.kt-ikon .ikon { width: 21px; height: 21px; }
-.kt-teks { display: flex; flex-direction: column; gap: 8px; }
-.kt-teks strong { font-size: 1.3rem; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; }
-.kt-teks span { font-size: 0.92rem; line-height: 1.5; max-width: 34ch; }
-.kt-aksi {
-  align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 18px; border-radius: 999px;
-  background: var(--tinta); color: var(--tinta-teks); font-weight: 600; font-size: 0.88rem;
-}
-.kartu-tanya:hover .kt-aksi { filter: brightness(1.15); }
+.tautan-tanya:hover { filter: brightness(0.97); }
+.tautan-tanya .ikon { width: 18px; height: 18px; }
 
 /* Baris chip yang digulir menyamping di ponsel (dipakai juga oleh contoh pertanyaan di Tanya Lexa). */
 .contoh { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .gulir-chip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: -16px; padding: 2px 16px; scroll-padding-inline: 16px; scroll-snap-type: x proximity; }
 .gulir-chip::-webkit-scrollbar { display: none; }
 .gulir-chip > * { flex: none; scroll-snap-align: start; }
+/* Contoh pertanyaan di Tanya Lexa: daftar yang membungkus, bukan baris yang terpotong di tepi layar. */
+.contoh-tanya { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 12px 0 0; }
+.contoh-tanya .chip { justify-content: flex-start; text-align: start; white-space: normal; min-height: 44px; padding: 8px 16px; border-radius: 18px; line-height: 1.35; }
+@media (min-width: 700px) { .contoh-tanya { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 .statistik { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 16px 0 8px; }
 .statistik .kartu { display: flex; flex-direction: column; gap: 4px; padding: 18px 20px; border-radius: 26px; border: 0; box-shadow: none; }
@@ -496,6 +488,12 @@ main:focus { outline: none; }
 .statistik .angka { font-size: 2.4rem; font-weight: 400; letter-spacing: -0.03em; line-height: 1.05; display: block; }
 .statistik .label { font-size: 0.9rem; font-weight: 600; display: block; }
 .statistik .catatan { font-size: 0.78rem; font-weight: 500; display: block; }
+/* Di ponsel tiga kartu angka menjadi tiga baris ringkas, bukan tiga kartu setinggi layar. */
+@media (max-width: 560px) {
+  .statistik { gap: 8px; }
+  .statistik .kartu { flex-direction: row; align-items: baseline; gap: 12px; padding: 12px 18px; border-radius: 22px; }
+  .statistik .angka { font-size: 1.8rem; min-width: 3.4ch; }
+}
 .prosa .kartu-judul { margin-top: 0; }
 
 .bagian { margin-top: 28px; }
@@ -551,13 +549,7 @@ main:focus { outline: none; }
 .daftar-ringkas.kisi-lanjut .sitasi { min-width: 0; }
 .kisi-lanjut .judul { color: var(--teks); font-weight: 600; font-size: 0.98rem; line-height: 1.28; letter-spacing: -0.01em; -webkit-line-clamp: 3; }
 .kisi-lanjut .lanjut-di { margin-top: auto; color: var(--teks-redup); font-size: 0.8rem; }
-.info-indeks { margin-top: 6px; font-size: 0.85rem; text-align: center; }
-@media (max-width: 1000px) { .hero-tata { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 520px) {
-  .opsi-cari > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-  .opsi-cari .segmen { width: 100%; }
-  .opsi-cari .segmen label { flex: 1; text-align: center; }
-}
+.info-indeks { margin-top: 6px; font-size: 0.85rem; }
 @media (min-width: 861px) {
   main { padding-block: 28px 56px; }
   .gulir-chip { flex-wrap: wrap; overflow: visible; margin-inline: 0; padding: 0; }
@@ -678,6 +670,7 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
 .hasil-pasal-tipe .hasil-cuplikan { -webkit-line-clamp: 5; }
 .hasil-kaki { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 4px; font-size: 0.8rem; color: var(--teks-redup); }
 .hasil-kepala .tombol { position: relative; z-index: 1; margin-inline-end: -6px; }
+.hasil-kaki .chip-halaman { position: relative; z-index: 1; text-decoration: none; }
 .hasil .lencana { font-size: 0.72rem; padding: 1px 8px; }
 .hasil .lencana::before { width: 6px; height: 6px; }
 .hasil .lencana-berlaku { background: none; padding-inline: 0; }
@@ -729,15 +722,11 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
 .paginasi .nonaktif { opacity: 0.45; }
 
 /* --- Detail peraturan ----------------------------------------------------- */
-.remah { font-size: 0.88rem; color: var(--teks-redup); margin-bottom: 14px; }
-.remah ol { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 0; padding: 0; }
-.remah li + li::before { content: "›"; margin-inline-end: 8px; color: var(--garis-kuat); }
-.remah a { color: inherit; }
 .kepala-peraturan { margin-bottom: 4px; }
 .judul-peraturan { margin-bottom: 8px; font-size: clamp(1.55rem, 1.2rem + 1.6vw, 2.3rem); line-height: 1.2; }
 .kicker { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--aksen); margin-bottom: 4px; }
 .meta-baris { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; margin-bottom: 14px; font-size: 0.92rem; }
-.aksi-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.aksi-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 4px; }
 .lencana-luring { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8rem; font-weight: 650; color: var(--berlaku-fg); }
 .lencana-luring[hidden] { display: none; }
 .lencana-luring .ikon { width: 14px; height: 14px; }
@@ -745,8 +734,6 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
 .daftar-luring li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--garis); }
 .daftar-luring li > a { flex: 1; min-width: 0; font-weight: 650; }
 .daftar-luring li > .bantu { flex: none; }
-.aksi-lain { display: contents; }
-.tombol-lainnya { display: none; }
 .teks-sempit { display: none; }
 .metadata { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0; }
 .metadata dt { color: var(--teks-redup); font-size: 0.9rem; }
@@ -758,12 +745,17 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
 .ringkasan-ai p.terpotong { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .tombol-teks { background: none; border: 0; padding: 8px 0 0; font: inherit; font-weight: 600; color: var(--aksen); cursor: pointer; }
 .ringkasan-ai .tombol-teks { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
-.info-peraturan { margin-top: 12px; border: 1px solid var(--kaca-garis); border-radius: 22px; background: var(--kaca); }
-.info-peraturan > summary { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; font-weight: 650; cursor: pointer; list-style: none; }
-.info-peraturan > summary::-webkit-details-marker { display: none; }
-.info-peraturan > summary::after { content: ""; width: 8px; height: 8px; border: solid var(--teks-redup); border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform 0.15s; margin-right: 4px; }
-.info-peraturan[open] > summary::after { transform: rotate(-135deg); }
-.info-peraturan .metadata { padding: 2px 14px 14px; }
+/* Rincian untuk pengelola di halaman Status: tertutup dulu supaya pembaca biasa tak tenggelam dalam tabel. */
+.rincian-status { margin-top: 14px; border-top: 1px solid var(--garis); padding-top: 4px; }
+.rincian-status > summary { min-height: 44px; display: flex; align-items: center; font-weight: 650; cursor: pointer; }
+.rincian-status[open] > summary { margin-bottom: 6px; }
+.riwayat-status { margin-top: 22px; }
+.tengah-baris { justify-content: center; }
+.minta-pdf { display: inline-flex; flex-direction: column; align-items: center; gap: 6px; }
+.minta-pdf .bantu { margin: 0; }
+.teks-konversi { margin-top: 4px; }
+.teks-konversi > summary { min-height: 40px; display: flex; align-items: center; font-weight: 650; cursor: pointer; }
+.teks-konversi[open] > summary { margin-bottom: 8px; }
 
 /* Tab lengket di bawah header: berpindah antara Isi, Relasi, dan Naskah tanpa menggulir ke atas. */
 .tab-daftar {
@@ -775,36 +767,89 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
 .tab-daftar button:hover { color: var(--teks); }
 [role="tabpanel"] { padding-top: 14px; }
 
-/* --- Penampil PDF (tab PDF di halaman peraturan) ----------------------------------------------------------------- */
-.penampil-pdf { --tinggi-tab-pdf: 53px; } /* diukur ulang dari .tab-daftar oleh penampilPdf.js */
-.pdf-bilah {
-  position: sticky; top: calc(var(--tinggi-header, 52px) + var(--tinggi-tab-pdf)); z-index: 15; display: flex; align-items: center; gap: 6px;
-  margin: 0 0 10px; padding: 6px 8px; overflow-x: auto; border: 1px solid var(--garis); border-radius: 18px;
-  background: color-mix(in srgb, var(--permukaan) 92%, transparent); backdrop-filter: blur(8px);
+/* --- Penampil PDF (tab PDF di halaman peraturan) -----------------------------------------------------------------
+   Penampil mengisi layar di bawah header dan tab yang lengket (tingginya dihitung di sini; --tinggi-tab-pdf diukur ulang oleh
+   penampilPdf.js) dan menggulir sendiri, supaya cubit-zoom dan penggulirannya bisa dikendalikan. Layar penuh menutup seluruh jendela. */
+.penampil-pdf {
+  --tinggi-tab-pdf: 50px;
+  --pdf-sisa: calc(var(--tinggi-header, 0px) + var(--tinggi-tab-pdf) + var(--tinggi-nav-bawah) + var(--aman-bawah) + 30px);
+  display: flex; flex-direction: column; height: max(420px, calc(100vh - var(--pdf-sisa))); height: max(420px, calc(100dvh - var(--pdf-sisa)));
+  border: 1px solid var(--garis); border-radius: 22px; overflow: hidden; background: var(--permukaan-2);
+  /* Isinya berubah-ubah (bilah cari, halaman yang digambar): jangan biarkan peramban menggeser gulir halaman web karenanya. */
+  overflow-anchor: none;
 }
+.penampil-pdf.layar-penuh {
+  position: fixed; inset: 0; z-index: 70; height: 100vh; height: 100dvh; padding: var(--aman-atas) var(--aman-kanan) var(--aman-bawah) var(--aman-kiri);
+  border: 0; border-radius: 0; background: var(--bg);
+}
+html.pdf-penuh, html.pdf-penuh body { overflow: hidden; }
+.pdf-bilah {
+  flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 8px; overflow-x: auto; scrollbar-width: none;
+  background: var(--permukaan); border-bottom: 1px solid var(--garis);
+}
+.pdf-bilah::-webkit-scrollbar { display: none; }
 .pdf-bilah > * { flex: none; }
+.pdf-bilah .tombol-ikon { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
 .pdf-spasi { flex: 1 1 0; min-width: 4px; }
+.pdf-tombol-pasal { gap: 6px; padding: 0 12px; }
 .pdf-hal { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--teks-redup); font-size: 0.9rem; }
-.pdf-hal-input { width: 4.4em; min-height: 34px; padding: 0 8px; text-align: center; }
+.pdf-hal-input { width: 4.2em; min-height: 34px; padding: 0 8px; text-align: center; }
 .pdf-zoom { min-width: 3.3em; text-align: center; font-size: 0.85rem; color: var(--teks-redup); }
-/* Layar sempit: bilah alat harus muat tanpa terpotong, jadi tombol dirapatkan, "Buka" tinggal ikon, dan persen zoom disembunyikan. */
+@media (pointer: coarse) { .pdf-bilah .tombol-ikon { width: 40px; min-width: 40px; height: 40px; min-height: 40px; } }
+/* Layar sempit: cubitan dan gulir menggantikan tombol halaman dan zoom (yang pindah ke menu), supaya bilah alat muat tanpa terpotong. */
 @media (max-width: 560px) {
-  .pdf-bilah { gap: 4px; padding: 5px 6px; }
-  .pdf-bilah .tombol-ikon { min-width: 36px; width: 36px; min-height: 36px; }
-  .pdf-bilah .pdf-buka { min-width: 36px; width: 36px; padding: 0; justify-content: center; }
-  .pdf-buka-teks, .pdf-zoom, .pdf-spasi { display: none; }
-  .pdf-bilah .pdf-hal-input { width: 3.6em; }
+  .pdf-nav-halaman, .pdf-zoom-grup { display: none; }
+  .pdf-hal-input { width: 3.6em; }
   .pdf-hal { gap: 3px; }
 }
 @media (max-width: 380px) {
-  .pdf-bilah .tombol-ikon, .pdf-bilah .pdf-buka { min-width: 34px; width: 34px; min-height: 34px; }
-  .pdf-bilah .pdf-hal-input { width: 3.2em; padding: 0 4px; }
+  .pdf-tombol-pasal { padding: 0 10px; }
+  .pdf-tombol-pasal .pdf-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 }
-/* Periksa pasal: perbandingan judul pasal di PDF dengan pasal di Lexa. */
-.pdf-periksa { margin: 0 0 10px; }
-.pdf-periksa-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
-.pdf-periksa-petunjuk { font-size: 0.85rem; }
-.pdf-periksa-hasil { margin-top: 8px; padding: 12px 14px; border-radius: 14px; background: var(--permukaan-2); font-size: 0.92rem; }
+.pdf-cari { flex: none; display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--permukaan); border-bottom: 1px solid var(--garis); }
+.pdf-cari[hidden] { display: none; }
+.pdf-cari-input { flex: 1 1 120px; min-width: 0; min-height: 38px; }
+.pdf-cari-input::-webkit-search-cancel-button { display: none; }
+.pdf-cari-hitung { flex: none; min-width: 4.4em; padding: 0 4px; font-size: 0.82rem; color: var(--teks-redup); text-align: center; white-space: nowrap; }
+.pdf-cari .tombol-ikon { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
+/* Status memuat/galat melayang di atas penggulir: menampilkan atau menyembunyikannya tak menggeser tata letak (dan tak memicu penjangkaran gulir peramban). */
+.pdf-badan { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.pdf-status { position: absolute; inset: 8px 8px auto 8px; z-index: 3; padding: 12px 14px; border-radius: 14px; background: var(--permukaan); box-shadow: var(--bayangan); }
+.pdf-status[hidden] { display: none; }
+.pdf-status-galat { background: var(--dicabut-bg); color: var(--dicabut-fg); }
+.pdf-status .tombol { margin-inline-start: 6px; }
+.pdf-gulir {
+  position: relative; flex: 1 1 0; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch; background: var(--permukaan-2);
+}
+.pdf-gulir:focus-visible { outline-offset: -3px; }
+.pdf-lapis { --pdf-bantalan: 8px; position: relative; display: flex; flex-direction: column; width: max-content; min-width: 100%; padding: var(--pdf-bantalan); }
+@media (min-width: 561px) { .pdf-lapis { --pdf-bantalan: 16px; } }
+/* Halaman PDF putih, juga di tema gelap: yang digambar adalah naskah aslinya ("Halaman gelap" di menu membaliknya atas permintaan).
+   margin auto memusatkan halaman yang lebih sempit dan, pada halaman yang lebih lebar dari layar (diperbesar), membiarkannya digulir ke
+   kiri-kanan tanpa terpotong. */
+.pdf-halaman { position: relative; flex: none; margin: 0 auto 10px; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.22); }
+.pdf-halaman:last-child { margin-bottom: 0; }
+.pdf-halaman .pdf-kanvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.pdf-gelap .pdf-halaman { background: #17160f; }
+.pdf-gelap .pdf-kanvas { filter: invert(0.9) hue-rotate(180deg); }
+.pdf-halaman-galat::after { content: attr(data-galat); position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; color: #555; font-size: 0.9rem; text-align: center; }
+/* Hasil pencarian di PDF: Custom Highlight API (rentang persis); .pdf-cocok adalah cadangan untuk peramban tanpa API itu. */
+::highlight(pdf-cari) { background-color: rgba(255, 214, 0, 0.5); color: transparent; }
+::highlight(pdf-cari-aktif) { background-color: rgba(255, 128, 0, 0.65); color: transparent; }
+.pdf-cocok { background-color: rgba(255, 214, 0, 0.5); }
+.pdf-cocok-aktif { background-color: rgba(255, 128, 0, 0.65); }
+/* Lembar "Pasal" dan "Periksa pasal". */
+.kisi-pasal-pdf { gap: 6px; }
+.chip-pasal {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 56px; min-height: 44px; padding: 4px 10px;
+  border: 1px solid var(--garis-kuat); border-radius: 14px; background: var(--permukaan); color: var(--teks); font: inherit; line-height: 1.15; cursor: pointer;
+}
+.chip-pasal b { font-size: 0.95rem; font-weight: 650; }
+.chip-pasal small { color: var(--teks-redup); font-size: 0.72rem; }
+.chip-pasal:hover { border-color: var(--aksen); background: var(--aksen-lembut); }
+.pdf-periksa-hasil { padding: 12px 14px; border-radius: 14px; background: var(--permukaan-2); font-size: 0.92rem; }
+.pdf-periksa-hasil[hidden] { display: none; }
 .pdf-periksa-hasil p { margin: 0 0 8px; }
 .pdf-periksa-hasil p:last-child, .pdf-periksa-hasil .pdf-nomor-daftar:last-child { margin-bottom: 0; }
 .pdf-periksa-baik { display: flex; align-items: center; gap: 6px; font-weight: 650; color: var(--berlaku-fg); }
@@ -814,15 +859,6 @@ dialog:modal::backdrop { background: rgba(10, 14, 22, 0.55); }
 .pdf-nomor { min-height: 32px; padding: 0 12px; }
 .pdf-nomor-polos { cursor: default; }
 .pdf-nomor-polos:hover { background: var(--permukaan); border-color: var(--garis-kuat); }
-.pdf-status { margin: 0 0 10px; padding: 12px 14px; border-radius: 14px; background: var(--permukaan-2); }
-.pdf-status-galat { background: var(--dicabut-bg); color: var(--dicabut-fg); }
-.pdf-status .tombol { margin-inline-start: 6px; }
-.pdf-daftar { display: flex; flex-direction: column; overflow-x: auto; padding: 12px 0 4px; border-radius: 18px; background: var(--permukaan-2); }
-/* Halaman PDF selalu putih, juga di tema gelap: yang digambar adalah naskah aslinya. margin auto memusatkan halaman yang lebih sempit dan,
-   pada halaman yang lebih lebar dari layar (diperbesar), membiarkannya digulir ke kiri-kanan tanpa terpotong. */
-.pdf-halaman { position: relative; flex: none; margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.22); }
-.pdf-halaman .pdf-kanvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
-.pdf-halaman-galat::after { content: attr(data-galat); position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; color: #555; font-size: 0.9rem; text-align: center; }
 /* Lapisan teks PDF.js (dari pdf_viewer.css, Apache-2.0), ditulis tanpa CSS bersarang agar jalan di peramban ponsel yang lebih tua. */
 .textLayer {
   position: absolute; inset: 0; z-index: 0; overflow: clip; opacity: 1; line-height: 1; letter-spacing: normal; word-spacing: normal; text-align: initial;
@@ -912,8 +948,15 @@ dialog.daftar-isi:not([open]) { display: none; }
 .pasal-aksi { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
 .pasal:hover .pasal-aksi, .pasal:focus-within .pasal-aksi, .pasal:target .pasal-aksi { opacity: 1; }
 .pasal-lainnya { display: none; }
-/* "Lihat di PDF" pada pasal: baru ada setelah diketahui PDF peraturannya diarsipkan (kelas ada-pdf pada .isi-peraturan). */
+/* "hal. N" pada pasal: membuka PDF di halaman pasal itu. Baru ada setelah diketahui PDF peraturannya diarsipkan (kelas ada-pdf pada .isi-peraturan). */
 .isi-peraturan:not(.ada-pdf) .pasal-pdf { display: none; }
+.chip-halaman {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 10px; border: 1px solid var(--garis-kuat); border-radius: 999px;
+  background: var(--permukaan); color: var(--teks-redup); font: inherit; font-family: var(--font-badan); font-size: 0.76rem; font-weight: 650; line-height: 1; cursor: pointer;
+}
+.chip-halaman .ikon { width: 13px; height: 13px; }
+.chip-halaman:hover, .chip-halaman:focus-visible { border-color: var(--aksen); color: var(--aksen); background: var(--aksen-lembut); }
+@media (pointer: coarse) { .chip-halaman { min-height: 34px; padding-inline: 12px; } }
 /* Penanda pasal: samar sampai disorot atau ditandai, tetapi selalu ada (juga untuk layar sentuh). */
 .pasal-alat > .tombol[aria-pressed="false"] { color: var(--teks-redup); opacity: 0.7; }
 .pasal-alat > .tombol[aria-pressed="false"]:hover, .pasal-alat > .tombol[aria-pressed="false"]:focus-visible { opacity: 1; }
@@ -989,7 +1032,12 @@ pre.teks-naskah { white-space: pre-wrap; overflow-wrap: anywhere; font-family: v
 .tanya-tata > .percakapan { flex: 1; }
 body[data-halaman="tanya"] .footer { display: none; }
 body[data-halaman="tanya"] main { padding-bottom: 0; }
-@media (min-width: 861px) { .tanya-tata { min-height: calc(100dvh - 60px - 36px); } }
+@media (min-width: 861px) {
+  .tanya-tata { min-height: calc(100dvh - 60px - 36px); }
+  /* Belum ada percakapan: judul, contoh, dan kotak tulis satu kelompok di tengah layar, bukan terpisah jauh. */
+  .tanya-tata:has(> .percakapan:empty) { justify-content: center; padding-bottom: 6vh; }
+  .tanya-tata > .percakapan:empty { flex: 0 0 auto; margin: 0; padding: 0; }
+}
 .kepala-halaman { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .kepala-halaman h1 { margin-bottom: 6px; }
 .catatan-kecil { font-size: 0.86rem; line-height: 1.5; color: var(--teks-redup); margin: 0 0 14px; }
@@ -1070,15 +1118,12 @@ body[data-halaman="tanya"] main { padding-bottom: 0; }
 .huruf-sans { font-family: var(--font-badan); }
 .contoh-teks { padding: 12px 14px; border: 1px solid var(--garis); border-radius: 10px; background: var(--bg); margin: 0; }
 
-/* Ponsel: ringkas di atas, aksi utama selebar layar, aksi sisanya di lembar. */
+/* Ponsel: aksi utama selebar layar, aksi sisanya di lembar "Lainnya" (di layar lebar tombolnya tetap sebesar isinya). */
 @media (max-width: 860px) {
-  .remah { display: none; }
   .aksi-bar { flex-wrap: nowrap; gap: 6px; }
   .aksi-bar > .tombol { flex: 1 1 0; min-width: 0; padding-inline: 8px; white-space: nowrap; }
-  .aksi-lain { display: none; }
-  .tombol-lainnya { display: inline-flex; }
-  .info-peraturan .metadata { grid-template-columns: 1fr; gap: 0; }
-  .info-peraturan .metadata dt { margin-top: 10px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .metadata { grid-template-columns: 1fr; gap: 0; }
+  .metadata dt { margin-top: 10px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
 }
 
 /* Telepon sempit: "Salin sitasi" menjadi "Sitasi" agar tiga tombol utama muat sebaris. */
@@ -1232,9 +1277,9 @@ dialog h2 { margin: 0; font-size: 1.25rem; }
   :root { color-scheme: light; }
   body { background: #fff; color: #000; }
   #app { display: block; }
-  .header, .progres-baca, .lewati, .nav-bawah, .footer, .toast-area, .pita-luring, .pita-dev, .remah, .aksi-bar, .tab-daftar, .alat-baca,
-  .rel-daftar-isi, .fab-daftar-isi, .lanjut-baca, .ajakan-pasang, .ringkasan-ai .tombol-teks, .info-peraturan, .pasal-aksi, .pasal-lainnya,
-  .cari-dalam, dialog, [role="tabpanel"][hidden] { display: none !important; }
+  .header, .progres-baca, .lewati, .nav-bawah, .footer, .toast-area, .pita-luring, .pita-dev, .aksi-bar, .tab-daftar, .alat-baca,
+  .rel-daftar-isi, .fab-daftar-isi, .lanjut-baca, .ajakan-pasang, .ringkasan-ai .tombol-teks, .chip-halaman, .pasal-aksi, .pasal-lainnya,
+  .cari-dalam, dialog, .penampil-pdf, [role="tabpanel"][hidden] { display: none !important; }
   .bungkus, main, main.bungkus { max-width: none; padding: 0; margin: 0; }
   .baca-tata, .baca-tata.dengan-daftar-isi { display: block; }
   .isi-peraturan { max-width: none; font-size: 11pt; line-height: 1.5; color: #000; }

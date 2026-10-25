@@ -1,7 +1,7 @@
 // @ts-check
 import { h, isi } from "../dom.js";
 import { api } from "../api.js";
-import { angka, bersihkanArtefak, judulRingkas, kodeJenis, queryString, sitasi, tanggalIndonesia, urlPeraturan } from "../format.js";
+import { angka, bersihkanArtefak, judulRingkas, queryString, sitasi, tanggalIndonesia, urlPeraturan } from "../format.js";
 import { ikon } from "./ikon.js";
 import { kelasJenis } from "./jenis.js";
 import { tombolTandai } from "./tombolTandai.js";
@@ -56,29 +56,6 @@ export function bilahTampilan(awal, saatPilih) {
     daftar.push([kode, b]);
     el.appendChild(b);
   }
-  return el;
-}
-
-/** Tiga kartu pastel: jumlah peraturan, pasal dan ayat, dan cakupan pencarian makna. @param {AbortSignal} sinyal */
-export function statistikTelusuri(sinyal) {
-  const el = h("section", { class: "statistik sembunyi", "aria-label": "Ringkasan indeks" });
-  /** @param {string} nilai @param {string} label @param {string} [catatan] */
-  const kartu = (nilai, label, catatan) =>
-    h("div", { class: "kartu" }, h("span", { class: "angka" }, nilai), h("span", { class: "label" }, label), catatan ? h("span", { class: "catatan" }, catatan) : null);
-  api
-    .statistik()
-    .then((s) => {
-      if (sinyal.aborted || !s.total_peraturan) return;
-      const persen = Math.round((s.terindeks_vektor / s.total_peraturan) * 100);
-      el.classList.remove("sembunyi");
-      isi(
-        el,
-        kartu(angka(s.total_peraturan), "peraturan", s.per_jenis.map((j) => `${kodeJenis(j.jenis)} ${angka(j.n)}`).join(" · ")),
-        kartu(angka(s.total_pasal), "pasal dan ayat"),
-        kartu(`${persen}%`, "terindeks untuk pencarian makna", `${angka(s.terindeks_vektor)} peraturan`),
-      );
-    })
-    .catch(() => {});
   return el;
 }
 

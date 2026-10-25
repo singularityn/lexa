@@ -106,7 +106,6 @@ export default async function halamanKoleksi(ctx) {
   isi(
     ctx.akar,
     h("h1", null, "Koleksi"),
-    h("p", { class: "redup" }, "Peraturan yang Anda simpan, lengkap dengan catatan pribadi."),
     tamu
       ? peringatan(
           "info",

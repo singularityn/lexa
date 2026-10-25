@@ -149,7 +149,7 @@ export default async function akun(ctx) {
         pesanGalat,
         h("div", { class: "kartu kartu-pastel p-ungu" },
           h("h2", { class: "kartu-judul" }, "Anda memakai Lexa sebagai tamu"),
-          h("p", null, "Semua fitur, termasuk pencarian, membaca pasal, tanya jawab, dan koleksi, berfungsi tanpa akun. Akun hanya menambah satu hal: koleksi dan riwayat tanya jawab Anda tersinkron antarperangkat."),
+          h("p", null, "Semua fitur berfungsi tanpa akun. Masuk hanya menyinkronkan koleksi dan riwayat tanya jawab Anda antarperangkat."),
           tersedia
             ? [
                 h("p", null, h("a", { class: "tombol tombol-utama", href: `/api/auth/google?kembali=${encodeURIComponent("/koleksi")}`, "data-luar": "" }, "Masuk dengan Google")),

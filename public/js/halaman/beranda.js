@@ -6,7 +6,7 @@ import { ajakanPasang } from "../komponen/ajakanPasang.js";
 import { ikon } from "../komponen/ikon.js";
 import { jenisDariSitasi, kelasJenis } from "../komponen/jenis.js";
 import { kotakCari } from "../komponen/kotakCari.js";
-import { modeTersimpan, pilihMode } from "../komponen/pilihMode.js";
+import { modeTersimpan } from "../komponen/pilihMode.js";
 import { riwayat } from "../riwayat.js";
 
 const MAKS_BIDANG = 10;
@@ -46,29 +46,15 @@ export default async function beranda(ctx) {
       "div",
       { class: "beranda" },
       h(
-        "div",
-        { class: "hero-tata" },
-        h(
-          "section",
-          { class: "hero" },
-          h("h1", null, "Cari peraturan Indonesia"),
-          h("p", { class: "lead" }, "Ketik kata kunci, nomor peraturan, atau pertanyaan sehari-hari. Hasilnya selalu bisa ditelusuri ke pasalnya."),
-          kotak,
-          h("div", { class: "opsi-cari" }, h("span", { class: "redup" }, "Cara mencari"), pilihMode(mode, (m) => (mode = m), "mode-beranda")),
-        ),
-        h(
-          "div",
-          { class: "hero-samping" },
-          ajakanPasang(),
-          h(
-            "a",
-            { class: "kartu-tanya", href: "/tanya" },
-            h("span", { class: "kt-ikon", "aria-hidden": "true" }, ikon("tanya")),
-            h("span", { class: "kt-teks" }, h("strong", null, "Punya pertanyaan hukum?"), h("span", null, "Tanya Lexa. Jawabannya hanya dari pasal yang ada di indeks, lengkap dengan sumbernya.")),
-            h("span", { class: "kt-aksi" }, "Tanya Lexa", ikon("kirim")),
-          ),
-        ),
+        "section",
+        { class: "hero" },
+        h("h1", null, "Cari peraturan Indonesia"),
+        kotak,
+        // Jumlah dan cakupan indeks (diisi sesudah statistik tiba): pembaca perlu tahu jenis apa yang tak akan ditemukan di sini.
+        info,
+        h("a", { class: "tautan-tanya", href: "/tanya" }, ikon("tanya"), h("span", null, "Punya pertanyaan hukum? ", h("strong", null, "Tanya Lexa")), ikon("kanan")),
       ),
+      ajakanPasang(),
       dilihat.length
         ? h(
             "section",
@@ -96,7 +82,6 @@ export default async function beranda(ctx) {
           )
         : null,
       h("div", { class: "dua-bagian" }, terbaru, bidang),
-      info,
     ),
   );
 
@@ -116,8 +101,8 @@ export default async function beranda(ctx) {
     isi(
       info,
       s.total_peraturan === 0
-        ? "Indeks masih kosong: peraturan masuk lewat sinkronisasi terjadwal dan impor dari BPK."
-        : `${angka(s.total_peraturan)} peraturan dan ${angka(s.total_pasal)} pasal dan ayat di indeks.`,
+        ? "Indeks masih kosong: peraturan masuk lewat panen naskah resmi dari BPK."
+        : `${angka(s.total_peraturan)} peraturan di indeks.`,
       s.cakupan?.length ? ` Cakupan saat ini: ${daftarCakupan(s.cakupan)}.` : null,
     );
   }

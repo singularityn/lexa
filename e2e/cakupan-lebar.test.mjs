@@ -25,7 +25,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   masalah = [];
-  ctx = await browser.newContext({ serviceWorkers: "block", viewport: { width: 1280, height: 900 } });
+  ctx = await browser.newContext({ serviceWorkers: "block", viewport: { width: 1280, height: 900 }, permissions: ["clipboard-read", "clipboard-write"] });
   page = await ctx.newPage();
   pasangPengumpul(page, masalah);
 });
@@ -84,7 +84,10 @@ describe("cakupan dilebarkan", () => {
     // Halaman detail memakai label yang sama pada tombol salin sitasi dan judul halaman.
     await page.goto(BASE + urlUU("/akn/id/act/pojk/2016/48-pojk-04-2016"), { waitUntil: "networkidle" });
     await page.waitForSelector("main h1");
-    expect(await page.textContent("main")).toContain("POJK 48/POJK.04/2016");
+    expect(await page.title()).toContain("POJK 48/POJK.04/2016");
+    expect(await page.title()).not.toContain("48-pojk-04-2016");
+    await page.click("button:has-text('Salin sitasi')");
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("POJK 48/POJK.04/2016");
     expect(await page.textContent("main")).not.toContain("48-pojk-04-2016");
     await reset();
   });

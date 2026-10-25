@@ -89,7 +89,7 @@ export function buatRouter({ rute, akar, pengumuman, tidakDitemukan, saatBerubah
       },
       pergi: (tujuan, o) => navigasi(tujuan, o),
       perbaruiUrl(tujuan) {
-        history.replaceState(null, "", tujuan);
+        history.replaceState(history.state, "", tujuan);
         const u = new URL(location.href);
         kunciSaatIni = normal(u.pathname) + u.search;
       },
@@ -174,7 +174,7 @@ export function buatRouter({ rute, akar, pengumuman, tidakDitemukan, saatBerubah
     pergi: navigasi,
     /** @param {string} tujuan */
     perbaruiUrl(tujuan) {
-      history.replaceState(null, "", tujuan);
+      history.replaceState(history.state, "", tujuan);
       const u = new URL(location.href);
       kunciSaatIni = normal(u.pathname) + u.search;
     },

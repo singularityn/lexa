@@ -8,11 +8,12 @@ const lolos = (t) => t.replace(/[^\x20-\x7e]/g, "?").replace(/([()\\])/g, "\\$1"
 
 /**
  * @param {string[][]} halaman baris-baris teks tiap halaman
- * @param {{ lebar?: number, tinggi?: number, tanpaTeks?: boolean }} [opsi]
- *   tanpaTeks: halaman hanya berisi gambar vektor (kotak), tanpa teks sama sekali: meniru PDF hasil pindaian
+ * @param {{ lebar?: number, tinggi?: number, tanpaTeks?: boolean, ukuran?: Array<[number, number] | undefined> }} [opsi]
+ *   tanpaTeks: halaman hanya berisi gambar vektor (kotak), tanpa teks sama sekali: meniru PDF hasil pindaian;
+ *   ukuran: [lebar, tinggi] per halaman (yang kosong memakai `lebar` dan `tinggi`): halaman lanskap dan lampiran
  * @returns {Buffer}
  */
-export function buatPdf(halaman, { lebar = 595, tinggi = 842, tanpaTeks = false } = {}) {
+export function buatPdf(halaman, { lebar: lebarBawaan = 595, tinggi: tinggiBawaan = 842, tanpaTeks = false, ukuran = [] } = {}) {
   const jumlah = halaman.length;
   const idFont = 3 + jumlah * 2;
   /** @type {string[]} */
@@ -20,6 +21,7 @@ export function buatPdf(halaman, { lebar = 595, tinggi = 842, tanpaTeks = false 
   objek[1] = "<< /Type /Catalog /Pages 2 0 R >>";
   objek[2] = `<< /Type /Pages /Kids [${halaman.map((_, i) => `${3 + i * 2} 0 R`).join(" ")}] /Count ${jumlah} >>`;
   halaman.forEach((baris, i) => {
+    const [lebar, tinggi] = ukuran[i] ?? [lebarBawaan, tinggiBawaan];
     const idHalaman = 3 + i * 2;
     const idIsi = idHalaman + 1;
     const isi = tanpaTeks

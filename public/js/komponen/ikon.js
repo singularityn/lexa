@@ -8,6 +8,8 @@ import { s } from "../dom.js";
  */
 const BENTUK = {
   kurang: [["path", { d: "M5 12h14" }]],
+  layarPenuh: [["path", { d: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" }]],
+  layarKecil: [["path", { d: "M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" }]],
   lebarHalaman: [["path", { d: "M4 12h16" }], ["path", { d: "m8 8-4 4 4 4" }], ["path", { d: "m16 8 4 4-4 4" }]],
   cari: [["circle", { cx: "11", cy: "11", r: "7" }], ["path", { d: "m20 20-3.5-3.5" }]],
   tandai: [["path", { d: "M6 3h12v18l-6-4-6 4z" }]],

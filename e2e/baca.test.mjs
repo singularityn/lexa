@@ -121,7 +121,7 @@ describe("ponsel: halaman baca", () => {
       pasal: document.querySelector(".pasal").getBoundingClientRect().top,
       tinggi: innerHeight,
     }));
-    expect(letak.tab, "tab Isi/Relasi/Naskah harus sudah terlihat").toBeLessThan(letak.tinggi * 0.75);
+    expect(letak.tab, "tab Teks/PDF/Relasi/Info harus sudah terlihat").toBeLessThan(letak.tinggi * 0.75);
     expect(letak.pasal, "pasal pertama harus sudah mulai terlihat").toBeLessThan(letak.tinggi);
 
     const terlihat = (await p.locator(".aksi-bar > .tombol:visible").allInnerTexts()).map((t) => t.trim());
@@ -129,20 +129,24 @@ describe("ponsel: halaman baca", () => {
     // Tiga tombol utama muat sebaris tanpa isi yang meluap dari tombolnya.
     const meluap = await p.locator(".aksi-bar > .tombol:visible").evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth + 1).length);
     expect(meluap).toBe(0);
-    expect(await p.locator(".remah").isVisible(), "remah roti tidak memakan tempat di ponsel").toBe(false);
+    expect(await p.locator(".remah").count(), "tak ada remah roti: sidebar dan bilah bawah sudah menunjukkan tempat Anda").toBe(0);
     expect(await p.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   });
 
-  it("'Informasi peraturan' tertutup dulu, dibuka dengan ketukan, dan memuat metadata", async () => {
+  it("tab Info memuat ringkasan, metadata, dan sumber naskah; tak ada akordeon yang menahan isi di bawah tombol", async () => {
     const p = await halaman({ hp: true });
     await bukaPeraturan(p);
-    expect(await p.locator(".info-peraturan").evaluate((el) => el.open)).toBe(false);
-    expect(await p.locator(".info-peraturan .metadata").isVisible()).toBe(false);
-    await p.locator(".info-peraturan > summary").tap();
-    await p.locator(".info-peraturan .metadata").waitFor();
-    const teks = await p.locator(".info-peraturan .metadata").innerText();
+    expect(await p.locator(".info-peraturan, .ringkasan-ai").count(), "ringkasan dan metadata tak memakan tempat di atas teks").toBe(0);
+    await p.locator("#tab-info").tap();
+    await p.locator("#panel-info:not([hidden]) .metadata").waitFor();
+    const teks = await p.locator("#panel-info .metadata").innerText();
     expect(teks).toContain("13 / 2003");
     expect(teks).toContain("Undang-Undang");
+    expect(await p.locator("#panel-info .ringkasan-ai").count()).toBe(1);
+    expect(await p.locator("#panel-info").getByRole("link", { name: "Naskah resmi (BPK)" }).count()).toBe(1);
+    // Tautan lama ke tab Naskah bermuara di Info.
+    await p.goto(BASE + urlUU(UU13, "&tab=naskah"), { waitUntil: "networkidle" });
+    expect(await p.locator('[role="tab"][aria-selected="true"]').textContent()).toBe("Info");
   });
 
   it("lembar 'Lainnya' naik dari bawah, menyalin tautan, dan Esc mengembalikan fokus ke tombolnya", async () => {
@@ -301,8 +305,8 @@ describe("ponsel: halaman baca", () => {
       header: document.querySelector("#app > header").getBoundingClientRect().bottom,
     }));
     expect(Math.abs(tab - header), `tab ${tab}, header ${header}`).toBeLessThanOrEqual(1.5);
-    await p.locator("#tab-naskah").tap();
-    await p.waitForSelector("#panel-naskah:not([hidden])");
+    await p.locator("#tab-info").tap();
+    await p.waitForSelector("#panel-info:not([hidden])");
     await reset();
   });
 
@@ -339,7 +343,7 @@ describe("ponsel: halaman baca", () => {
     });
     await bukaPeraturan(p);
 
-    expect(await p.locator(".meta-baris").innerText()).toContain("5 pasal dan penjelasannya");
+    expect(await p.locator(".meta-baris").innerText()).toContain("5 pasal");
     const judulBab = await p.locator("h2.bab").allTextContents();
     expect(judulBab).toHaveLength(4);
     expect(judulBab.at(-1)).toBe("Penjelasan");
@@ -707,7 +711,7 @@ describe("ponsel: halaman baca", () => {
     expect(pasal156).toContain("Disahkan di Jakarta");
     expect(pasal156, "naskah penjelasan tidak lagi menempel di pasalnya").not.toMatch(/PENJELASAN|UMUM|Page 80/);
     expect(await p.locator("h2.bab").allTextContents()).toContain("Penjelasan");
-    expect(await p.locator(".meta-baris").innerText()).toContain("5 pasal dan penjelasannya");
+    expect(await p.locator(".meta-baris").innerText()).toContain("5 pasal");
 
     await p.locator(".tombol-daftar-isi").tap();
     const terakhir = p.locator("dialog.daftar-isi .grup-bab").last();
@@ -725,6 +729,7 @@ describe("ponsel: halaman baca", () => {
       json.law.ringkasan = kalimat.repeat(6).trim();
     });
     await bukaPeraturan(p);
+    await p.locator("#tab-info").tap();
     const tombol = p.locator(".ringkasan-ai .tombol-teks");
     expect(await tombol.textContent()).toBe("Selengkapnya");
     expect(await tombol.getAttribute("aria-expanded")).toBe("false");
@@ -792,9 +797,9 @@ describe("ponsel: halaman baca", () => {
     const lembar = p.locator("dialog.lembar-aksi[open]");
     await lembar.waitFor();
     expect(await lembar.locator("h2").textContent()).toBe("UU 13/2003 Pasal 82");
-    // "Lihat di PDF" ikut tampil karena pratinjau menyimpan PDF contoh untuk UU 13/2003 (peraturan tanpa PDF tidak punya butir ini).
+    // Membuka PDF di halaman pasal ini ada di kepala pasal ("hal. N"), bukan di lembar ini.
     expect((await lembar.locator(".aksi-baris .aksi-teks > span:first-child").allTextContents())).toEqual([
-      "Lihat di PDF", "Salin teks pasal", "Salin kutipan lengkap", "Salin pasal beserta penjelasannya", "Salin sitasi", "Salin tautan ke pasal ini", "Laporkan kesalahan",
+      "Salin teks pasal", "Salin kutipan lengkap", "Salin pasal beserta penjelasannya", "Salin sitasi", "Salin tautan ke pasal ini", "Laporkan kesalahan",
     ]);
     await lembar.locator(".aksi-baris", { hasText: "Salin teks pasal" }).tap();
     await p.waitForFunction(() => !document.querySelector("dialog.lembar"));
@@ -810,7 +815,7 @@ describe("ponsel: halaman baca", () => {
 
   it("tanpa gulir mendatar pada layar sangat sempit (320px) di semua tab", async () => {
     const p = await halaman({ hp: true, lebar: 320, tinggi: 640 });
-    for (const tab of ["", "&tab=relasi", "&tab=naskah"]) {
+    for (const tab of ["", "&tab=pdf", "&tab=relasi", "&tab=info"]) {
       await p.goto(BASE + urlUU(UU13, tab), { waitUntil: "networkidle" });
       await p.waitForTimeout(150);
       expect(await p.evaluate(() => document.documentElement.scrollWidth), tab || "isi").toBeLessThanOrEqual(320);
@@ -828,8 +833,9 @@ describe("ponsel: halaman baca", () => {
       };
       await periksa("halaman");
 
-      await p.locator(".info-peraturan > summary").tap();
-      await periksa("informasi terbuka");
+      await p.locator("#tab-info").tap();
+      await periksa("tab Info");
+      await p.locator("#tab-isi").tap();
 
       await p.locator(".tombol-lainnya").tap();
       await tungguLembar(p, "dialog.lembar-aksi");
@@ -1054,11 +1060,8 @@ describe("layar lebar: halaman baca", () => {
     await p.hover("#pasal-82");
     await p.waitForFunction(() => getComputedStyle(document.querySelector("#pasal-82 .pasal-aksi")).opacity === "1");
     expect(await p.locator("#pasal-82 .pasal-lainnya").isVisible()).toBe(false);
-    expect(await p.locator(".tombol-lainnya").isVisible()).toBe(false);
-    // Semua aksi peraturan berjajar di layar lebar.
-    expect((await p.locator(".aksi-bar .tombol:visible").allInnerTexts()).map((t) => t.trim()).join("|")).toBe(
-      "Simpan|Salin sitasi|Salin tautan|Simpan luring|Naskah resmi (BPK)|PDF|Laporkan kesalahan",
-    );
+    // Di layar lebar pun hanya tiga aksi di bilah (yang paling sering dipakai); sisanya satu lembar "Lainnya".
+    expect((await p.locator(".aksi-bar .tombol:visible").allInnerTexts()).map((t) => t.trim()).join("|")).toBe("Simpan|Salin sitasi|Lainnya");
   });
 
   it("cetak: hanya judul dan teks seluruh pasal, tanpa navigasi, tombol, atau daftar isi", async () => {

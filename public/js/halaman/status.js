@@ -1,7 +1,7 @@
 // @ts-check
 import { h, isi } from "../dom.js";
 import { api, dibatalkan } from "../api.js";
-import { angka, daftarCakupan, judulRingkas, kodeJenis, labelJenis, sitasi, urlPeraturan } from "../format.js";
+import { angka, daftarCakupan, kodeJenis } from "../format.js";
 import { kerangka, kotakGalat } from "../komponen/umum.js";
 
 const NAMA_PEKERJAAN = /** @type {Record<string, string>} */ ({
@@ -80,6 +80,10 @@ function panelKelengkapan(isi, cakupan) {
       ...meterKemajuan("peraturan sudah punya teks pasal", berisi, total, "Peraturan yang sudah punya teks pasal"),
       ...meterKemajuan("peraturan sudah punya PDF resmi dari BPK", berPdf, total, "Peraturan yang sudah punya PDF dari BPK"),
       h(
+        "details",
+        { class: "rincian-status" },
+        h("summary", null, "Rincian per jenis"),
+      h(
         "div",
         { class: "tabel-gulir", tabindex: "0", role: "region", "aria-label": "Kelengkapan data per jenis, dapat digulir" },
         h(
@@ -108,7 +112,7 @@ function panelKelengkapan(isi, cakupan) {
       h(
         "p",
         { class: "redup kelengkapan-catatan" },
-        "Teks peraturan hanya bersumber dari naskah resmi di peraturan.bpk.go.id. \"Menunggu PDF\" belum punya PDF maupun teks pasal; \"PDF belum terurai\" sudah punya PDF tetapi pasalnya belum terbaca (biasanya pindaian atau susunan naskah yang belum dikenali). Panen dilakukan lewat peramban pengelola, UUD dan Tap MPR lebih dulu, lalu UU, Perppu, dan PP, yang terbaru lebih dulu.",
+        "Teks peraturan hanya bersumber dari naskah resmi di peraturan.bpk.go.id. \"Menunggu PDF\" belum punya PDF maupun teks pasal; \"PDF belum terurai\" sudah punya PDF tetapi pasalnya belum terbaca (biasanya pindaian).",
       ),
       teksLama
         ? h(
@@ -122,6 +126,7 @@ function panelKelengkapan(isi, cakupan) {
         : null,
       perluPdf + belumTerurai === 0 && total > 0 ? h("p", { class: "redup kelengkapan-catatan" }, "Semua peraturan dalam cakupan sudah punya teks atau PDF.") : null,
       h("p", { class: "redup kelengkapan-catatan" }, `Pemeliharaan harian terakhir berjalan ${waktuIso(isi.pemeliharaan_terakhir)}.`),
+      ),
     ),
   );
 }
@@ -145,8 +150,7 @@ export default async function status(ctx) {
     isi(
       ctx.akar,
       h("h1", null, "Status data"),
-      h("p", { class: "redup" }, "Keadaan indeks Lexa saat ini. Data berasal dari sinkronisasi terjadwal dan impor manual, sehingga belum tentu mencakup semua peraturan yang termasuk cakupan."),
-      s.cakupan?.length ? h("p", { class: "redup" }, `Cakupan Lexa saat ini: ${daftarCakupan(s.cakupan)}. Peraturan jenis lain tidak dimuat.`) : null,
+      h("p", { class: "redup" }, s.cakupan?.length ? `Cakupan saat ini: ${daftarCakupan(s.cakupan)}. Jenis lain tidak dimuat.` : "Seberapa lengkap indeks Lexa saat ini."),
       h(
         "section",
         { class: "statistik", "aria-label": "Ringkasan" },
@@ -156,33 +160,13 @@ export default async function status(ctx) {
       ),
       s.isi ? panelKelengkapan(s.isi, s.cakupan ?? []) : null,
       h(
-        "div",
-        { class: "dua-sama" },
-        h(
-          "section",
-          { class: "kartu" },
-          h("h2", { class: "kartu-judul" }, "Menurut jenis"),
-          s.per_jenis.length
-            ? h("div", { class: "tabel-gulir", tabindex: "0", role: "region", "aria-label": "Tabel jenis peraturan, dapat digulir" }, h("table", { class: "tabel" }, h("thead", null, h("tr", null, h("th", null, "Jenis"), h("th", null, "Jumlah"))), h("tbody", null, s.per_jenis.map((j) => h("tr", null, h("td", null, h("a", { href: `/telusuri?jenis=${encodeURIComponent(j.jenis)}` }, `${kodeJenis(j.jenis)} · ${labelJenis(j.jenis)}`)), h("td", null, angka(j.n)))))))
-            : h("p", { class: "redup" }, "Belum ada data."),
-        ),
-        h(
-          "section",
-          { class: "kartu" },
-          h("h2", { class: "kartu-judul" }, "Baru ditambahkan"),
-          s.terbaru.length
-            ? h("ul", { class: "daftar-ringkas" }, s.terbaru.map((l) => h("li", null, h("a", { href: urlPeraturan(l.frbr_uri) }, h("span", { class: "sitasi" }, sitasi(l)), h("span", { class: "judul" }, judulRingkas(l.judul))))))
-            : h("p", { class: "redup" }, "Belum ada data."),
-        ),
-      ),
-      h(
-        "section",
-        { class: "bagian" },
-        h("h2", null, "Riwayat pekerjaan data"),
+        "details",
+        { class: "rincian-status riwayat-status" },
+        h("summary", null, "Riwayat pekerjaan data"),
         s.sinkronisasi_terakhir.length
           ? h(
               "div",
-              { class: "tabel-gulir kartu", tabindex: "0", role: "region", "aria-label": "Riwayat pekerjaan data, dapat digulir" },
+              { class: "tabel-gulir", tabindex: "0", role: "region", "aria-label": "Riwayat pekerjaan data, dapat digulir" },
               h(
                 "table",
                 { class: "tabel" },

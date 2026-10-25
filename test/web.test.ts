@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   angka, bacaFilter, bacaTeksModel, bersihkanArtefak, blokKeTeks, daftarBidang, daftarCakupan, istilahDariKueri, jangkarDariId,
-  hitungPasal, judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, namaPasal, nomorTahun, pisahJudul,
+  halamanPasal, hitungPasal, judulRingkas, kelompokkanPasal, kodeJenis, labelJenis, labelRelasi, labelStatus, namaLengkap, namaPasal, nomorTahun, pisahJudul,
   bacaIsiPasal, celahNomorPasal, hanyaCukupJelas, kutipanPasal, pecahRujukan, peraturanPerubahan, pisahPenjelasanTertanam, pratinjauPeraturan, queryString, rapikanNomorPasal, rapikanHuruf, sisiUnik, sitasi, sitasiPasal, strukturDaftarIsi, tanggalIndonesia, tataLetakGraf, teksIsiPasal, teksPasal, pecahUriKoleksi, ukuranBerkas, urlEntriKoleksi, urlPeraturan,
 } from "../public/js/format.js";
 import { labelSitasi, nomorTahun as nomorTahunServer, rapikanNomorPasal as rapikanNomorPasalServer } from "../src/shared/label";
@@ -412,7 +412,30 @@ describe("namaPasal dan hitungPasal", () => {
   });
 });
 
+describe("halamanPasal", () => {
+  it("halaman baris pertama pasal; null bila belum diketahui, tak sah, atau pasal penjelasan", () => {
+    expect(halamanPasal({ penjelasan: false, butir: [{ halaman: 7 }, { halaman: 8 }] })).toBe(7);
+    expect(halamanPasal({ penjelasan: false, butir: [{ halaman: null }, { halaman: 8 }] })).toBeNull();
+    expect(halamanPasal({ penjelasan: false, butir: [{}] })).toBeNull();
+    expect(halamanPasal({ penjelasan: false, butir: [] })).toBeNull();
+    expect(halamanPasal({ penjelasan: true, butir: [{ halaman: 7 }] })).toBeNull();
+    for (const tidakSah of [0, -3, 2.5, Number.NaN]) expect(halamanPasal({ penjelasan: false, butir: [{ halaman: tidakSah }] }), String(tidakSah)).toBeNull();
+  });
+});
+
 describe("strukturDaftarIsi", () => {
+  it("tiap pasal membawa halaman PDF baris pertamanya; pasal tanpa halaman dan penjelasan null", () => {
+    const kembar = (nomor: string, halaman: number) => ({ ...artikel(nomor, null, "BAB II"), id: `/akn/id/act/uu/2003/13#pasal-${nomor}~2`, halaman });
+    const s = strukturDaftarIsi(kelompokkanPasal([
+      { ...artikel("1", null, "BAB I"), halaman: 1 },
+      { ...artikel("2", "1", "BAB I", 1), halaman: 3 },
+      { ...artikel("2", "2", "BAB I", 2), halaman: 4 },
+      artikel("3", null, "BAB II", 3),
+      kembar("1", 20), kembar("2", 21), kembar("3", 22),
+    ]));
+    expect(s.map((x) => [x.penjelasan, x.pasal.map((p) => p.halaman)])).toEqual([[false, [1, 3]], [false, [null]], [true, [null, null, null]]]);
+  });
+
   it("mengelompokkan pasal menurut BAB, mempertahankan pasal tanpa BAB di awal", () => {
     const s = strukturDaftarIsi(kelompokkanPasal([artikel("1", null, null), artikel("2", null, "BAB I"), artikel("3", null, "BAB I"), artikel("4", null, "BAB II")]));
     expect(s.map((x) => [x.bab, x.pasal.map((p) => p.nomor)])).toEqual([[null, ["1"]], ["BAB I", ["2", "3"]], ["BAB II", ["4"]]]);

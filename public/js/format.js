@@ -747,13 +747,24 @@ export function celahNomorPasal(kelompok, judul) {
 }
 
 /**
+ * Halaman PDF tempat sebuah pasal dimulai menurut server (baris pertamanya); null bila belum diketahui atau pasal penjelasan.
+ * @param {{ penjelasan: boolean, butir: Array<{ halaman?: number | null }> }} g
+ * @returns {number | null}
+ */
+export function halamanPasal(g) {
+  const n = g.penjelasan ? null : g.butir[0]?.halaman;
+  return typeof n === "number" && Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
  * Daftar isi: pasal dikelompokkan menurut BAB menurut urutan kemunculannya. Pasal yang tidak punya BAB
  * (peraturan tanpa struktur BAB, atau sebelum BAB pertama) masuk ke kelompok tanpa judul.
+ * Tiap pasal membawa halaman PDF tempatnya dimulai bila server sudah mengetahuinya (articles.halaman; null bila belum).
  * @param {ReturnType<typeof kelompokkanPasal>} kelompok
- * @returns {Array<{ bab: string | null, penjelasan: boolean, pasal: Array<{ nomor: string, jangkar: string }> }>}
+ * @returns {Array<{ bab: string | null, penjelasan: boolean, pasal: Array<{ nomor: string, jangkar: string, halaman: number | null }> }>}
  */
 export function strukturDaftarIsi(kelompok) {
-  /** @type {Array<{ bab: string | null, penjelasan: boolean, pasal: Array<{ nomor: string, jangkar: string }> }>} */
+  /** @type {Array<{ bab: string | null, penjelasan: boolean, pasal: Array<{ nomor: string, jangkar: string, halaman: number | null }> }>} */
   const hasil = [];
   /** @type {(typeof hasil)[number] | null} */
   let saatIni = null;
@@ -771,7 +782,7 @@ export function strukturDaftarIsi(kelompok) {
       saatIni = { bab: null, penjelasan: false, pasal: [] };
       hasil.push(saatIni);
     }
-    saatIni.pasal.push({ nomor: g.nomor, jangkar: g.jangkar });
+    saatIni.pasal.push({ nomor: g.nomor, jangkar: g.jangkar, halaman: halamanPasal(g) });
   }
   return hasil;
 }

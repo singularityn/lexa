@@ -28,57 +28,49 @@ export default function tentang(ctx) {
   const luar = (/** @type {string} */ href, /** @type {string} */ teks) => h("a", { href, target: "_blank", rel: "noopener noreferrer" }, teks);
 
   const artikel = h(
-      "article",
-      { class: "prosa tentang" },
-      h("h1", null, "Tentang Lexa"),
-      h("p", { class: "lead redup" }, "Lexa membantu menemukan dan membaca peraturan perundang-undangan Indonesia, dan setiap jawabannya bisa ditelusuri sampai ke pasal."),
+    "article",
+    { class: "prosa tentang" },
+    h("h1", null, "Tentang Lexa"),
+    h("p", { class: "lead redup" }, "Lexa membantu menemukan dan membaca peraturan perundang-undangan Indonesia, sampai ke pasal dan PDF resminya."),
 
-      h("h2", null, "Batasan yang perlu Anda ketahui"),
-      h(
-        "ul",
-        null,
-        h("li", null, h("strong", null, "Bukan nasihat hukum. "), "Lexa alat bantu riset. Untuk keputusan penting, rujuk naskah resmi dan konsultasikan dengan ahli hukum."),
-        h("li", null, h("strong", null, "Data bisa tertinggal atau keliru. "), "Status “berlaku/dicabut/diubah” dan isi pasal bersumber dari data pihak lain dan hasil konversi PDF otomatis. Perubahan terbaru mungkin belum tercermin. Gunakan tombol ", h("em", null, "Laporkan kesalahan"), " bila menemukan yang janggal."),
-        h("li", null, h("strong", null, "AI bisa salah. "), "Ringkasan peraturan dan jawaban Tanya Lexa disusun model bahasa. Lexa membatasinya pada pasal yang ditemukan dan menampilkan sumbernya, tetapi tetap periksa pasal yang dikutip."),
-        h("li", null, h("strong", null, "Cakupan dibatasi. "), "Untuk saat ini Lexa hanya memuat undang-undang dasar dan ketetapan MPR, undang-undang (termasuk Perppu), dan peraturan pemerintah. Peraturan di bawahnya (Perpres, peraturan menteri, POJK, Perda, dan seterusnya) belum dimuat supaya aplikasi tetap ringan. Halaman ", h("a", { href: "/status" }, "Status data"), " menunjukkan jumlah peraturan yang saat ini terindeks."),
-      ),
+    h("h2", null, "Batasan"),
+    h(
+      "ul",
+      null,
+      h("li", null, h("strong", null, "Bukan nasihat hukum. "), "Lexa alat bantu riset. Untuk keputusan penting, rujuk naskah resmi dan ahli hukum."),
+      h("li", null, h("strong", null, "Data bisa tertinggal atau keliru. "), "Status dan isi pasal berasal dari naskah BPK dan hasil konversi PDF otomatis. Menemukan yang janggal? Pakai ", h("em", null, "Laporkan kesalahan"), "."),
+      h("li", null, h("strong", null, "AI bisa salah. "), "Ringkasan dan jawaban Tanya Lexa disusun model bahasa dari pasal yang ditemukan, lengkap dengan sumbernya. Periksa pasal yang dikutip."),
+      h("li", null, h("strong", null, "Cakupan dibatasi. "), "Saat ini UUD dan ketetapan MPR, undang-undang (termasuk Perppu), dan peraturan pemerintah. Peraturan di bawahnya belum dimuat. Jumlahnya ada di ", h("a", { href: "/status" }, "Status data"), "."),
+    ),
 
-      h("h2", null, "Dari mana datanya"),
-      h(
-        "ul",
-        null,
-        h("li", null, "Naskah resmi, metadata, dan relasi antarperaturan: ", luar("https://peraturan.bpk.go.id", "Database Peraturan BPK"), ". Teks pasal diekstrak otomatis dari PDF resminya, dan Lexa menautkan setiap peraturan ke halaman resminya."),
-        h("li", null, "Sebagian peraturan masih memakai teks pasal lama yang tersimpan sebelum panen dari BPK dimulai. Teks itu digantikan naskah BPK secara bertahap; jumlahnya terlihat di halaman ", h("a", { href: "/status" }, "Status data"), "."),
-        h("li", null, "Peraturan perundang-undangan bukan objek hak cipta (Pasal 42 UU 28/2014 tentang Hak Cipta), sehingga bebas dibaca dan dikutip."),
-      ),
+    h("h2", null, "Sumber data"),
+    h(
+      "ul",
+      null,
+      h("li", null, "Naskah, metadata, dan relasi: ", luar("https://peraturan.bpk.go.id", "Database Peraturan BPK"), ". Teks pasal diekstrak dari PDF resminya, dan PDF yang sudah diarsipkan bisa dibaca langsung di Lexa."),
+      h("li", null, "Peraturan perundang-undangan bukan objek hak cipta (Pasal 42 UU 28/2014), jadi bebas dibaca dan dikutip."),
+    ),
 
-      h("h2", null, "Cara pencarian bekerja"),
-      h(
-        "ul",
-        null,
-        h("li", null, h("strong", null, "Sitasi: "), "ketik “UU 13/2003” atau “PP 35/2021” untuk langsung menuju peraturannya."),
-        h("li", null, h("strong", null, "Kata persis: "), "pencarian teks penuh pada judul dan isi pasal, dengan pelucutan imbuhan bahasa Indonesia dan sinonim istilah hukum (mis. “cuti” juga mencari “istirahat”)."),
-        h("li", null, h("strong", null, "Makna: "), "kemiripan makna lewat model embedding, berguna bila Anda tidak tahu istilah resminya."),
-        h("li", null, "Mode ", h("em", null, "Otomatis"), " memadukan ketiganya dengan Reciprocal Rank Fusion; sitasi selalu diutamakan, dan hasil yang memuat kata yang Anda ketik didahulukan atas yang hanya memuat sinonimnya."),
-        h("li", null, "Untuk kalimat panjang yang tak ada satu pasal pun memuat semua katanya, Lexa menampilkan pasal yang memuat sebagian kata dan menyatakannya terus terang."),
-      ),
+    h("h2", null, "Cara kerja"),
+    h(
+      "ul",
+      null,
+      h("li", null, h("strong", null, "Pencarian: "), "ketik sitasi (“UU 13/2003”), kata kunci, atau pertanyaan sehari-hari. Lexa memadukan sitasi, kata persis (dengan pelucutan imbuhan dan sinonim hukum), dan kemiripan makna."),
+      h("li", null, h("strong", null, "Tanya Lexa: "), "pertanyaan dicari dulu di indeks. Hanya pasal yang relevan diberikan kepada model, yang wajib menyebut sumber dan tidak boleh menambah ketentuan. Bila dasarnya tak cukup, Lexa mengatakannya."),
+    ),
 
-      h("h2", null, "Cara Tanya Lexa bekerja"),
-      h("p", null, "Pertanyaan Anda dicari dulu di indeks. Hanya pasal yang cukup relevan yang diberikan kepada model, dengan perintah tegas untuk tidak menambah ketentuan di luar kutipan, menyebut sumber, dan menandai peraturan yang dicabut atau diubah. Bila tidak ada dasar yang cukup, model tidak dipanggil dan Lexa menyatakannya terus terang."),
+    h("h2", null, "Privasi"),
+    h(
+      "ul",
+      null,
+      h("li", null, "Tanpa pelacak, iklan, atau skrip pihak ketiga. Kata yang dicari dicatat tanpa identitas untuk memperbaiki pencarian."),
+      h("li", null, "Sebagai tamu, koleksi dan halaman terakhir dibaca hanya tersimpan di peramban Anda. Bila masuk dengan Google, Lexa menyimpan nama, email, foto, koleksi, dan riwayat tanya jawab Anda."),
+      h("li", null, "Pertanyaan Tanya Lexa diproses oleh Cloudflare Workers AI."),
+    ),
 
-      h("h2", null, "Privasi"),
-      h(
-        "ul",
-        null,
-        h("li", null, "Tidak ada pelacak, iklan, atau skrip pihak ketiga."),
-        h("li", null, "Kata yang Anda cari dicatat tanpa identitas untuk memperbaiki pencarian."),
-        h("li", null, "Sebagai tamu, koleksi hanya disimpan di peramban Anda. Bila masuk dengan Google, Lexa menyimpan nama, email, foto, koleksi, dan riwayat tanya jawab Anda; sesi memakai cookie HttpOnly."),
-        h("li", null, "Pertanyaan Tanya Lexa diproses oleh Cloudflare Workers AI."),
-      ),
-
-      h("h2", null, "Kode sumber"),
-      h("p", null, "Lexa berjalan di Cloudflare Workers (D1, KV, R2, Queues, Vectorize, Workers AI). Kode dan dokumentasinya ada di ", luar("https://github.com/singularityn/lexa", "GitHub"), "."),
-    );
+    h("h2", null, "Kode sumber"),
+    h("p", null, "Lexa berjalan di Cloudflare Workers. Kode dan dokumentasinya ada di ", luar("https://github.com/singularityn/lexa", "GitHub"), "."),
+  );
   kelompokkan(artikel);
   isi(ctx.akar, artikel);
 }
